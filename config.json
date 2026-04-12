@@ -1,0 +1,11 @@
+{
+  "bot": {
+    "prefixes": ["!", "l", "L"],
+    "defaultCooldown": 3
+  },
+  "economy": {
+    "startingCash": 10000,
+    "dailyBaseReward": 5000,
+    "dailyStreakBonus": 1000
+  }
+}

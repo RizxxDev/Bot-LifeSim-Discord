@@ -2,16 +2,15 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 
 module.exports = {
     name: 'help',
-    aliases: ['h', 'bantuan', 'cmd'], // Pemain bisa ketik !h atau !bantuan
+    aliases: ['h', 'commands', 'cmd'],
     prefix: true,
     slash: true,
-    cooldown: 5, // Cooldown agak lama agar tidak di-spam
+    cooldown: 5, 
     data: new SlashCommandBuilder()
         .setName('help')
-        .setDescription('Menampilkan daftar semua command yang tersedia di kota.'),
+        .setDescription('Displays a list of all available commands in the city.'),
 
     async executeSlash(interaction) {
-        // Mengambil semua data command yang ada di memory bot
         const commands = interaction.client.commands;
         const embed = generateHelpEmbed(commands, interaction.user);
         
@@ -22,58 +21,42 @@ module.exports = {
         const commands = message.client.commands;
         const embed = generateHelpEmbed(commands, message.author);
         
-        await message.reply({ embeds: [embed] });
+        // Menggunakan channel.send() agar bersih
+        await message.channel.send({ embeds: [embed] });
     }
 };
 
-// ==========================================
-// FUNGSI PEMBUAT TAMPILAN EMBED (UI)
-// ==========================================
 function generateHelpEmbed(commandsCollection, user) {
     const embed = new EmbedBuilder()
-        .setColor('#2b2d31') // Warna abu-abu gelap khas Discord
-        .setTitle('📚 Pusat Bantuan The Real Life Sim')
-        .setDescription('Selamat datang di panduan kota! Berikut adalah daftar command yang bisa kamu gunakan. Kamu bisa menggunakan awalan `!`, `L`, atau `/` (Slash Command).')
-        .setThumbnail(user.displayAvatarURL({ dynamic: true }))
-        .setFooter({ text: `Diminta oleh ${user.username}`, iconURL: user.displayAvatarURL({ dynamic: true }) })
+        .setColor('#ffa601')
+        .setTitle('📚 Help Menu 📚')
+        .setDescription('Here is a list of commands you can use. You can use the prefix `L` or `/` (Slash Command).')
+        .setFooter({ text: `Requested by ${user.username}`, iconURL: user.displayAvatarURL({ dynamic: true }) })
         .setTimestamp();
 
-    // 🌟 KATEGORI 1: EKONOMI & BANK
-    const economyCommands = ['bank', 'work', 'balance']; // Tambahkan nama command barumu di sini nanti
+    const economyCommands = ['bank', 'work', 'balance', 'daily', 'profile']; 
     let economyText = '';
     
-    // 🌟 KATEGORI 2: UTILITAS & AKUN
     const utilityCommands = ['help', 'ping', 'register']; 
     let utilityText = '';
 
-    // Loop melalui semua command yang terdaftar di bot
     commandsCollection.forEach(cmd => {
-        // Jika command tersebut ada di daftar kategori Ekonomi
         if (economyCommands.includes(cmd.name)) {
-            // Ambil deskripsi dari SlashCommandBuilder, jika tidak ada pakai teks default
-            const desc = cmd.data ? cmd.data.description : 'Tidak ada deskripsi.';
+            const desc = cmd.data ? cmd.data.description : 'No description available.';
             economyText += `🔹 **\`/${cmd.name}\`** - ${desc}\n`;
         }
-        // Jika command tersebut ada di daftar kategori Utilitas
         else if (utilityCommands.includes(cmd.name)) {
-            const desc = cmd.data ? cmd.data.description : 'Tidak ada deskripsi.';
+            const desc = cmd.data ? cmd.data.description : 'No description available.';
             utilityText += `🔹 **\`/${cmd.name}\`** - ${desc}\n`;
         }
     });
 
-    // Masukkan kategori ke dalam Embed jika teksnya tidak kosong
-    if (economyText) {
-        embed.addFields({ name: '💰 Keuangan & Pekerjaan', value: economyText });
-    }
-    
-    if (utilityText) {
-        embed.addFields({ name: '🛠️ Utilitas & Akun', value: utilityText });
-    }
+    if (economyText) embed.addFields({ name: '💰 Economy & Jobs', value: economyText });
+    if (utilityText) embed.addFields({ name: '🛠️ Utility & Account', value: utilityText });
 
-    // Tambahan Tips
     embed.addFields({ 
         name: '💡 Tips', 
-        value: 'Beberapa command memiliki "Alias" (nama panggilan). Misalnya untuk bank, kamu bisa ketik `!atm` atau `!bal` alih-alih `!bank`.' 
+        value: 'Some commands have "Aliases" (nicknames). For example, to access the bank, you can type `!atm` or `!bal` instead of `!bank`.' 
     });
 
     return embed;

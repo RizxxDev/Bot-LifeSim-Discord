@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const pool = require('../../database/mariadb');
+const db = require('../../botHandlers/mysqlHandler');
 
 module.exports = {
     name: 'profile',
@@ -8,54 +8,49 @@ module.exports = {
     slash: true,
     data: new SlashCommandBuilder()
         .setName('profile')
-        .setDescription('Melihat statistik lengkap karaktermu'),
+        .setDescription('View your character\'s full statistics'),
 
     async executeSlash(interaction) {
-        await runProfile(interaction, interaction.user);
+        await runProfile(interaction, interaction.user, true);
     },
 
     async executePrefix(message, args) {
-        await runProfile(message, message.author);
+        await runProfile(message, message.author, false);
     }
 };
 
-async function runProfile(context, user) {
-    const userId = user.id;
-
+async function runProfile(context, user, isSlash) {
     try {
-        // Mengambil data uang, bank, energi, dan lapar dari tabel users
-        const [rows] = await pool.query('SELECT uang, bank, energi, lapar FROM users WHERE user_id = ?', [userId]);
+        const rows = await db.query('SELECT cash, bank, energy, hunger FROM users WHERE user_id = ?', [user.id]);
         
-        if (rows.length === 0) {
-            const failMsg = '❌ Karakter tidak ditemukan. Gunakan `/register` terlebih dahulu.';
-            if (context.reply) return context.reply({ content: failMsg, ephemeral: true });
+        if (!rows || rows.length === 0) {
+            const failMsg = `❌ **${user.username}**, character not found. Please use \`/register\` first.`;
+            if (isSlash) return context.reply({ content: failMsg, ephemeral: true });
             return context.channel.send(failMsg);
         }
 
         const userData = rows[0];
-
         const embed = new EmbedBuilder()
             .setColor('#2196F3')
-            .setTitle(`👤 Profil Warga: ${user.username}`)
+            .setTitle(`👤 Citizen Profile: ${user.username}`)
             .setThumbnail(user.displayAvatarURL())
             .addFields(
-                { name: '💵 Uang Tunai', value: `Lp${userData.uang.toLocaleString()}`, inline: true },
-                { name: '🏦 Saldo Bank', value: `Lp${userData.bank.toLocaleString()}`, inline: true },
-                { name: '\u200B', value: '\u200B', inline: true }, // Spacer agar baris rapi
-                { name: '⚡ Energi', value: `${userData.energi}/100`, inline: true },
-                { name: '🍔 Lapar', value: `${userData.lapar}/100`, inline: true },
+                { name: '💵 Cash', value: `Lp ${userData.cash.toLocaleString()}`, inline: true },
+                { name: '🏦 Bank Balance', value: `Lp ${userData.bank.toLocaleString()}`, inline: true },
+                { name: '\u200B', value: '\u200B', inline: true },
+                { name: '⚡ Energy', value: `${userData.energy}/100`, inline: true },
+                { name: '🍔 Hunger', value: `${userData.hunger}/100`, inline: true },
                 { name: '\u200B', value: '\u200B', inline: true }
             )
-            .setFooter({ text: 'Gunakan !work untuk bekerja atau !buy untuk membeli makanan' })
+            .setFooter({ text: 'Use !work to earn money or !buy to get food' })
             .setTimestamp();
 
-        if (context.reply) await context.reply({ embeds: [embed] });
+        if (isSlash) await context.reply({ embeds: [embed] });
         else await context.channel.send({ embeds: [embed] });
-
     } catch (error) {
         console.error('Profile error:', error);
-        const errMsg = '❌ Terjadi kesalahan saat mengambil data profil.';
-        if (context.reply) await context.reply(errMsg);
+        const errMsg = `❌ **${user.username}**, an error occurred while retrieving profile data.`;
+        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
         else await context.channel.send(errMsg);
     }
 }

@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 
 module.exports = {
     name: 'ping',
-    aliases: ['p', 'pong', 'test'], // 🌟 Support Aliases
+    aliases: ['p', 'pong', 'test'],
     prefix: true,
     slash: true,
     data: new SlashCommandBuilder()
@@ -14,6 +14,7 @@ module.exports = {
     },
 
     async executePrefix(message, args) {
-        await message.reply('🏓 Pong! The system is running perfectly. (Prefix Command)');
+        // Murni mengirim pesan biasa, tidak me-reply (mengutip) pesan user
+        await message.channel.send(`🏓 **${message.author.username}**, Pong! The system is running perfectly.`);
     }
 };

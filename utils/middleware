@@ -1,0 +1,35 @@
+const db = require('../botHandlers/mysqlHandler');
+const { Collection } = require('discord.js');
+
+const freeCommands = ['ping', 'register', 'help'];
+
+exports.checkRegister = async function (userId, commandName) {
+    if (freeCommands.includes(commandName)) return true;
+
+    const rows = await db.query('SELECT user_id FROM users WHERE user_id = ?', [userId]);
+    if (!rows || rows.length === 0) return false; 
+    
+    return true;
+};
+
+exports.checkCooldown = function (client, command, userId) {
+    if (!client.cooldowns.has(command.name)) {
+        client.cooldowns.set(command.name, new Collection());
+    }
+
+    const now = Date.now();
+    const timestamps = client.cooldowns.get(command.name);
+    const cooldownMs = (command.cooldown || 3) * 1000;
+
+    if (timestamps.has(userId)) {
+        const expirationTime = timestamps.get(userId) + cooldownMs;
+        if (now < expirationTime) {
+            const timeLeft = Math.round(expirationTime / 1000);
+            return `⏳ Please wait! You can use this command again <t:${timeLeft}:R>.`;
+        }
+    }
+
+    timestamps.set(userId, now);
+    setTimeout(() => timestamps.delete(userId), cooldownMs);
+    return null;
+};

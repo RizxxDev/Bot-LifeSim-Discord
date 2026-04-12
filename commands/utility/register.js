@@ -1,75 +1,62 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const db = require('../../database/mariadb'); // Pastikan path ini benar
+const db = require('../../botHandlers/mysqlHandler');
+const config = require('../../config.json'); // Pastikan path config benar
 
 module.exports = {
     name: 'register',
-    aliases: ['reg', 'daftar', 'start'], // Bisa dipanggil dengan !register, !reg, atau !daftar
+    aliases: ['reg', 'signup', 'start'],
     prefix: true,
     slash: true,
-    cooldown: 10, // Cooldown agak lama karena ini command 1x pakai
+    cooldown: 10,
     data: new SlashCommandBuilder()
         .setName('register')
-        .setDescription('Mendaftar sebagai warga baru dan dapatkan modal awal!'),
+        .setDescription('Register as a new citizen and receive starting capital!'),
 
     async executeSlash(interaction) {
-        await handleRegister(interaction, interaction.user);
+        await handleRegister(interaction, interaction.user, true);
     },
 
     async executePrefix(message, args) {
-        await handleRegister(message, message.author);
+        await handleRegister(message, message.author, false);
     }
 };
 
-// ==========================================
-// FUNGSI UTAMA REGISTRASI
-// ==========================================
-async function handleRegister(context, user) {
-    const userId = user.id;
-
+async function handleRegister(context, user, isSlash) {
     try {
-        // 1. Cek apakah user sudah terdaftar di database
-        const [existingUser] = await db.query('SELECT user_id FROM users WHERE user_id = ?', [userId]);
-
+        const existingUser = await db.query('SELECT user_id FROM users WHERE user_id = ?', [user.id]);
         if (existingUser && existingUser.length > 0) {
-            const msg = '❌ Kamu sudah terdaftar sebagai warga di kota ini!';
-            // Ephemeral (hanya bisa dilihat user) jika lewat slash command
-            return context.reply ? await context.reply({ content: msg, ephemeral: true }) : await context.channel.send(msg);
+            const msg = `❌ **${user.username}**, you are already registered as a citizen!`;
+            if (isSlash) return context.reply({ content: msg, ephemeral: true });
+            return context.channel.send(msg);
         }
 
-        // 2. Tentukan Modal Awal untuk pemain baru
-        const modalAwal = 10000; 
-
-        // 3. Masukkan data pemain baru ke database
-        // Kita juga set energi dan lapar ke 100 (kondisi bugar)
+        // 🌟 Mengambil Modal Awal dari config.json
+        const startCapital = config.economy.startingCash || 10000; 
+        
         await db.query(
-            'INSERT INTO users (user_id, uang, bank, energi, lapar) VALUES (?, ?, 0, 100, 100)', 
-            [userId, modalAwal]
+            'INSERT INTO users (user_id, cash, bank, energy, hunger) VALUES (?, ?, 0, 100, 100)', 
+            [user.id, startCapital]
         );
 
-        // 4. Buat Tampilan Embed Kartu Identitas (KTP)
         const embed = new EmbedBuilder()
-            .setColor('#2ECC71') // Warna Hijau Sukses
-            .setTitle('🛂 Registrasi Berhasil!')
+            .setColor('#2ECC71')
+            .setTitle('🛂 Registration Successful!')
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
-            .setDescription(`Selamat datang di kota, **${user.username}**!\nKamu sekarang resmi menjadi warga.`)
+            .setDescription(`Welcome to the city, **${user.username}**!\nYou are now officially a citizen.`)
             .addFields(
-                { name: '💰 Modal Awal', value: `Lp ${modalAwal.toLocaleString()}`, inline: true },
-                { name: '⚡ Energi', value: '100/100', inline: true },
-                { name: '🍔 Lapar', value: '100/100', inline: true },
-                { name: '📖 Panduan', value: 'Ketik `/help` atau `!help` untuk melihat daftar command yang bisa kamu gunakan.' }
+                { name: '💰 Starting Cash', value: `Lp ${startCapital.toLocaleString()}`, inline: true },
+                { name: '⚡ Energy', value: '100/100', inline: true },
+                { name: '🍔 Hunger', value: '100/100', inline: true }
             )
-            .setFooter({ text: 'The Real Life Sim - ID: ' + userId })
+            .setFooter({ text: 'Type /help to see available commands.' })
             .setTimestamp();
 
-        // 5. Kirim pesan ke Discord
-        if (context.reply) await context.reply({ embeds: [embed] });
+        if (isSlash) await context.reply({ embeds: [embed] });
         else await context.channel.send({ embeds: [embed] });
-
     } catch (error) {
         console.error('[REGISTER ERROR]', error);
-        const errorMsg = '❌ Terjadi kesalahan saat melakukan registrasi. Database mungkin sedang sibuk.';
-        
-        if (context.reply) await context.reply({ content: errorMsg, ephemeral: true });
-        else await context.channel.send(errorMsg);
+        const errMsg = `❌ **${user.username}**, registration failed due to a database error.`;
+        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
+        else await context.channel.send(errMsg);
     }
 }
