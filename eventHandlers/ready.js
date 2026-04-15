@@ -24,7 +24,7 @@ module.exports = {
         try {
             console.log('🗄️ Checking and preparing database tables...');
             
-            // Tabel Users (Update dengan kolom Level, EXP, dll)
+            // Tabel Users 
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS users (
                     user_id VARCHAR(25) PRIMARY KEY, 
@@ -42,7 +42,6 @@ module.exports = {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
-            // Memaksa penambahan kolom baru jika tabel users sudah ada sebelumnya
             try {
                 await pool.query("ALTER TABLE users ADD COLUMN level INT DEFAULT 1, ADD COLUMN exp INT DEFAULT 0, ADD COLUMN skill_points INT DEFAULT 0, ADD COLUMN job_id VARCHAR(50) DEFAULT NULL, ADD COLUMN last_work BIGINT DEFAULT 0;");
             } catch (err) { 
@@ -60,7 +59,7 @@ module.exports = {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
-            // Tabel Daftar Pekerjaan (Jobs)
+            // Tabel Daftar Pekerjaan (Jobs) - UPDATE: Menggunakan min_exp dan max_exp
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS jobs (
                     id VARCHAR(50) PRIMARY KEY,
@@ -68,18 +67,26 @@ module.exports = {
                     min_salary INT,
                     max_salary INT,
                     cooldown BIGINT,
-                    exp_gain INT,
+                    min_exp INT,
+                    max_exp INT,
                     required_level INT,
                     emoji VARCHAR(10) DEFAULT '💼'
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
-            // Masukkan Pekerjaan Default (Akan diabaikan jika sudah ada berkat IGNORE)
+            // Memaksa penambahan kolom min_exp dan max_exp jika tabel jobs sudah ada versi lama
+            try {
+                await pool.query("ALTER TABLE jobs ADD COLUMN min_exp INT DEFAULT 10, ADD COLUMN max_exp INT DEFAULT 20;");
+            } catch (err) { 
+                if (err.code !== 'ER_DUP_FIELDNAME') console.error('Peringatan DB Jobs:', err.message); 
+            }
+
+            // Masukkan Pekerjaan Default (Menggunakan nilai rentang EXP yang baru)
             await pool.query(`
-                INSERT IGNORE INTO jobs (id, name, min_salary, max_salary, cooldown, exp_gain, required_level, emoji) VALUES 
-                ('janitor', 'Janitor', 100, 200, 60000, 20, 1, '🧹'),
-                ('barista', 'Barista', 250, 450, 120000, 35, 3, '☕'),
-                ('programmer', 'Programmer', 600, 1000, 300000, 65, 5, '💻');
+                INSERT IGNORE INTO jobs (id, name, min_salary, max_salary, cooldown, min_exp, max_exp, required_level, emoji) VALUES 
+                ('janitor', 'Janitor', 100, 200, 60000, 25, 65, 1, '🧹'),
+                ('barista', 'Barista', 250, 450, 120000, 70, 150, 3, '☕'),
+                ('programmer', 'Programmer', 600, 1000, 300000, 150, 320, 5, '💻');
             `);
 
             // Tabel Lama

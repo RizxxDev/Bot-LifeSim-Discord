@@ -34,7 +34,7 @@ function generateHelpEmbed(commandsCollection, user) {
         .setFooter({ text: `Requested by ${user.username}`, iconURL: user.displayAvatarURL({ dynamic: true }) })
         .setTimestamp();
 
-    const economyCommands = ['bank', 'work', 'balance', 'daily', 'profile']; 
+    const economyCommands = ['bank', 'work', 'balance', 'daily', 'profile', 'craft', 'farm', 'market', 'leaderboard', 'inventory']; 
     let economyText = '';
     
     const utilityCommands = ['help', 'ping', 'register']; 

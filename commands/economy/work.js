@@ -27,9 +27,9 @@ async function handleWork(context, user, isSlash) {
     try {
         trx = await db.startTransaction();
 
-        // Ambil Data User + Skill + Job secara bersamaan menggunakan JOIN
+        // UPDATE: Tarik data j.min_exp dan j.max_exp dari database
         const userRows = await trx.query(`
-            SELECT u.*, s.income, s.cooldown_skill, s.luck, s.defense, j.name, j.min_salary, j.max_salary, j.cooldown, j.exp_gain, j.emoji
+            SELECT u.*, s.income, s.cooldown_skill, s.luck, s.defense, j.name, j.min_salary, j.max_salary, j.cooldown, j.min_exp, j.max_exp, j.emoji
             FROM users u
             LEFT JOIN user_skills s ON u.user_id = s.user_id
             LEFT JOIN jobs j ON u.job_id = j.id
@@ -44,8 +44,8 @@ async function handleWork(context, user, isSlash) {
             return isSlash ? context.reply({ content: msg, ephemeral: true }) : context.channel.send(msg);
         }
 
-        // 1. Kalkulasi Cooldown (Berdasarkan Skill)
-        const cooldownReduction = Math.max(0.5, 1 - (0.05 * (u.cooldown_skill || 0))); // Maksimal 50% reduksi
+        // 1. Kalkulasi Cooldown
+        const cooldownReduction = Math.max(0.5, 1 - (0.05 * (u.cooldown_skill || 0))); 
         const finalCooldown = u.cooldown * cooldownReduction;
         const timePassed = now - u.last_work;
 
@@ -56,8 +56,8 @@ async function handleWork(context, user, isSlash) {
             return isSlash ? context.reply({ content: waitMsg, ephemeral: true }) : context.channel.send(waitMsg);
         }
 
-        // 2. Cek Kesalahan/Kegagalan (Berdasarkan Skill Defense)
-        const failChance = Math.max(0, 0.05 - ((u.defense || 0) * 0.02)); // 5% dasar, -2% per level
+        // 2. Cek Kesalahan/Kegagalan
+        const failChance = Math.max(0, 0.05 - ((u.defense || 0) * 0.02)); 
         if (Math.random() < failChance) {
             await trx.query('UPDATE users SET last_work = ? WHERE user_id = ?', [now, userId]);
             await trx.commit();
@@ -65,11 +65,11 @@ async function handleWork(context, user, isSlash) {
             return isSlash ? context.reply(failMsg) : context.channel.send(failMsg);
         }
 
-        // 3. Kalkulasi Gaji & Keberuntungan (Luck & Income Skill)
+        // 3. Kalkulasi Gaji & Keberuntungan
         let salary = Math.floor(Math.random() * (u.max_salary - u.min_salary + 1)) + u.min_salary;
-        salary += ((u.income || 0) * 50); // Bonus Lp 50 per level income
+        salary += ((u.income || 0) * 50); 
 
-        const luckChance = 0.10 + ((u.luck || 0) * 0.05); // 10% dasar, +5% per level
+        const luckChance = 0.10 + ((u.luck || 0) * 0.05); 
         let isCrit = false;
 
         if (Math.random() < luckChance) {
@@ -77,8 +77,12 @@ async function handleWork(context, user, isSlash) {
             isCrit = true;
         }
 
-        // 4. Kalkulasi EXP dan Naik Level
-        let newExp = u.exp + u.exp_gain;
+        // 4. Kalkulasi EXP Dinamis dari Database
+        const minExp = u.min_exp || 10;
+        const maxExp = u.max_exp || 20;
+        const earnedExp = Math.floor(Math.random() * (maxExp - minExp + 1)) + minExp;
+
+        let newExp = u.exp + earnedExp;
         let newLevel = u.level;
         let newSp = u.skill_points;
         let leveledUp = false;
@@ -86,7 +90,7 @@ async function handleWork(context, user, isSlash) {
         const requiredExp = Math.floor(100 * Math.pow(newLevel, 1.2));
 
         if (newExp >= requiredExp) {
-            newExp = 0; // Reset exp setelah naik level
+            newExp = 0; 
             newLevel++;
             newSp++;
             leveledUp = true;
@@ -99,8 +103,8 @@ async function handleWork(context, user, isSlash) {
         );
         await trx.commit();
 
-        // 6. Format Pesan Keluaran
-        let msg = `${u.emoji} **${user.username}** bekerja sebagai **${u.name}** dan mendapatkan **Lp ${salary.toLocaleString()}**!`;
+        // 6. Format Pesan Keluaran (Menambahkan info EXP)
+        let msg = `${u.emoji} **${user.username}** bekerja sebagai **${u.name}** dan mendapatkan **Lp ${salary.toLocaleString()}**!\n✨ Mendapatkan **${earnedExp} EXP**!`;
         if (isCrit) msg += ` 🍀 *(Gaji Ganda!)*`;
         if (leveledUp) msg += `\n🆙 **LEVEL UP!** Kamu sekarang Level **${newLevel}** dan mendapatkan **1 Skill Point (SP)**!`;
 

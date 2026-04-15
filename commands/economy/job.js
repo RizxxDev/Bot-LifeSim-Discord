@@ -40,12 +40,13 @@ async function handleJob(context, user, sub, jobId, isSlash) {
 
     if (sub === 'list') {
         const jobs = await db.query('SELECT * FROM jobs ORDER BY required_level ASC');
-        const embed = new EmbedBuilder().setColor('#2b2d31').setTitle('🏢 Lowongan Pekerjaan');
+        const embed = new EmbedBuilder().setColor('#ffa601').setTitle('🏢 Lowongan Pekerjaan');
         
         let desc = '';
         jobs.forEach(j => {
             desc += `${j.emoji} **${j.name}** (ID: \`${j.id}\`)\n`;
-            desc += `└ Syarat Level: ${j.required_level} | Gaji: Lp ${j.min_salary}-${j.max_salary} | Cooldown: ${j.cooldown/1000}d\n\n`;
+            // 🌟 UPDATE: Menampilkan min_exp dan max_exp di job list
+            desc += `└ Syarat Level: ${j.required_level} | Gaji: Lp ${j.min_salary}-${j.max_salary} | EXP: ${j.min_exp}-${j.max_exp} | CD: ${j.cooldown/1000}s\n\n`;
         });
         
         embed.setDescription(desc || 'Tidak ada lowongan.');
@@ -86,7 +87,8 @@ async function handleJob(context, user, sub, jobId, isSlash) {
             .addFields(
                 { name: 'Kisaran Gaji', value: `Lp ${j.min_salary} - ${j.max_salary}`, inline: true },
                 { name: 'Waktu Tunggu', value: `${j.cooldown / 1000} detik`, inline: true },
-                { name: 'EXP Didapat', value: `+${j.exp_gain} EXP`, inline: true }
+                // 🌟 UPDATE: Menampilkan rentang EXP dinamis di info profil pekerjaan
+                { name: 'Kisaran EXP', value: `${j.min_exp} - ${j.max_exp} EXP`, inline: true }
             );
         return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
     }

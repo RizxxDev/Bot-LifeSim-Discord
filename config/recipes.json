@@ -1,0 +1,23 @@
+{
+  "flour": { 
+    "name": "Tepung", 
+    "time_mins": 5, 
+    "ingredients": { "wheat": 3 }, 
+    "result": 1,
+    "emoji": "🌾"
+  },
+  "bread": { 
+    "name": "Roti", 
+    "time_mins": 15, 
+    "ingredients": { "flour": 2 }, 
+    "result": 1,
+    "emoji": "🍞"
+  },
+  "tomato_soup": { 
+    "name": "Sup Tomat", 
+    "time_mins": 10, 
+    "ingredients": { "tomato": 3 }, 
+    "result": 1,
+    "emoji": "🥣"
+  }
+}

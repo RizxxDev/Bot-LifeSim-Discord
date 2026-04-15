@@ -1,0 +1,4 @@
+{
+  "wheat": { "name": "Gandum", "growTime_mins": 1, "yield": 2, "seed_price": 10 },
+  "tomato": { "name": "Tomat", "growTime_mins": 3, "yield": 3, "seed_price": 25 }
+}
