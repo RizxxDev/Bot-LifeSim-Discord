@@ -1,7 +1,7 @@
 {
   "bot": {
     "prefixes": ["!", "l", "L"],
-    "defaultCooldown": 3
+    "defaultCooldown": -1
   },
   "economy": {
     "startingCash": 10000,
