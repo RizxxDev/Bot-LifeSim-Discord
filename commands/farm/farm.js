@@ -8,7 +8,7 @@ module.exports = {
     aliases: ['ladang', 'kebun'],
     prefix: true,
     slash: true,
-    cooldown: 3,
+    cooldown: 5,
     data: new SlashCommandBuilder()
         .setName('farm')
         .setDescription('Manajemen ladang pertanian')
@@ -16,28 +16,37 @@ module.exports = {
         .addSubcommand(sub => sub.setName('storage').setDescription('Lihat isi gudang penyimpanan hasil panen'))
         .addSubcommand(sub => 
             sub.setName('plant')
-            .setDescription('Tanam benih di ladang')
-            .addIntegerOption(opt => opt.setName('x').setDescription('Koordinat X (1-5)').setRequired(true).setMinValue(1))
-            .addIntegerOption(opt => opt.setName('y').setDescription('Koordinat Y (1-5)').setRequired(true).setMinValue(1))
-            .addStringOption(opt => opt.setName('crop').setDescription('Jenis (contoh: wheat, tomato)').setRequired(true))
+            .setDescription('Tanam benih di satu petak ladang')
+            .addIntegerOption(opt => opt.setName('x').setDescription('Koordinat X').setRequired(true).setMinValue(1))
+            .addIntegerOption(opt => opt.setName('y').setDescription('Koordinat Y').setRequired(true).setMinValue(1))
+            .addStringOption(opt => opt.setName('crop').setDescription('Jenis tanaman').setRequired(true))
+        )
+        .addSubcommand(sub => 
+            sub.setName('plantall')
+            .setDescription('Tanam benih sekaligus di semua petak kosong!')
+            .addStringOption(opt => opt.setName('crop').setDescription('Jenis tanaman (contoh: wheat)').setRequired(true))
         )
         .addSubcommand(sub => 
             sub.setName('harvest')
-            .setDescription('Panen tanaman')
-            .addIntegerOption(opt => opt.setName('x').setDescription('Koordinat X (1-5)').setRequired(true).setMinValue(1))
-            .addIntegerOption(opt => opt.setName('y').setDescription('Koordinat Y (1-5)').setRequired(true).setMinValue(1))
+            .setDescription('Panen tanaman di satu petak')
+            .addIntegerOption(opt => opt.setName('x').setDescription('Koordinat X').setRequired(true).setMinValue(1))
+            .addIntegerOption(opt => opt.setName('y').setDescription('Koordinat Y').setRequired(true).setMinValue(1))
+        )
+        .addSubcommand(sub => 
+            sub.setName('harvestall')
+            .setDescription('Panen SEMUA tanaman yang sudah siap sekaligus!')
         ),
 
     async executeSlash(interaction) {
         const sub = interaction.options.getSubcommand(false) || 'view'; 
         
-        let x = null;
-        let y = null;
-        let crop = null;
+        let x = null, y = null, crop = null;
 
         if (sub === 'plant' || sub === 'harvest') {
             x = interaction.options.getInteger('x') - 1; 
             y = interaction.options.getInteger('y') - 1;
+        }
+        if (sub === 'plant' || sub === 'plantall') {
             crop = interaction.options.getString('crop');
         }
         
@@ -48,14 +57,19 @@ module.exports = {
         const user = message.author;
         const sub = args[0] ? args[0].toLowerCase() : 'view';
 
-        if (!['view', 'plant', 'harvest', 'storage'].includes(sub)) {
-            return message.channel.send(`❌ **${user.username}**, Format: \`!farm\`, \`!farm storage\`, \`!farm plant <x> <y> <crop>\`, \`!farm harvest <x> <y>\``);
+        if (!['view', 'plant', 'plantall', 'harvest', 'harvestall', 'storage'].includes(sub)) {
+            return message.channel.send(`❌ **${user.username}**, Format: \n\`!farm\` | \`!farm storage\` | \`!farm plant <x> <y> <crop>\` | \`!farm plantall <crop>\` | \`!farm harvest <x> <y>\` | \`!farm harvestall\``);
         }
 
-        // 🌟 PERBAIKAN: Mencegah nilai null merusak sistem (Validasi angka ketat)
-        const x = (args[1] !== undefined && args[1] !== '') ? parseInt(args[1]) - 1 : null;
-        const y = (args[2] !== undefined && args[2] !== '') ? parseInt(args[2]) - 1 : null;
-        const crop = args[3]?.toLowerCase();
+        let x = null, y = null, crop = null;
+
+        if (sub === 'plant' || sub === 'harvest') {
+            x = (args[1] !== undefined && args[1] !== '') ? parseInt(args[1]) - 1 : null;
+            y = (args[2] !== undefined && args[2] !== '') ? parseInt(args[2]) - 1 : null;
+            crop = args[3]?.toLowerCase();
+        } else if (sub === 'plantall') {
+            crop = args[1]?.toLowerCase();
+        }
 
         await handleFarmCommand(message, user, sub, { x, y, crop }, false);
     }
@@ -106,23 +120,17 @@ async function handleFarmCommand(context, user, sub, data, isSlash) {
         if (sub === 'storage') {
             const farmData = await db.query('SELECT max_storage FROM user_farms WHERE user_id = ?', [userId]);
             const maxStorage = farmData[0].max_storage;
-
             const items = await db.query('SELECT item_id, amount FROM user_storage WHERE user_id = ? AND amount > 0', [userId]);
             
-            const embed = new EmbedBuilder()
-                .setColor('#8B4513') 
-                .setTitle(`📦 Gudang Penyimpanan: ${user.username}`)
-                .setThumbnail(user.displayAvatarURL());
+            const embed = new EmbedBuilder().setColor('#8B4513').setTitle(`📦 Gudang Penyimpanan: ${user.username}`).setThumbnail(user.displayAvatarURL());
 
             if (!items || items.length === 0) {
-                embed.setDescription(`*Gudangmu masih kosong.*`);
-                embed.addFields({ name: '📊 Kapasitas', value: `0 / ${maxStorage} Terisi` });
+                embed.setDescription(`*Gudangmu masih kosong.*`).addFields({ name: '📊 Kapasitas', value: `0 / ${maxStorage} Terisi` });
                 return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
             }
 
             let totalItems = 0;
             let itemList = '';
-
             items.forEach(item => {
                 totalItems += item.amount;
                 const itemName = cropsConfig[item.item_id]?.name || item.item_id;
@@ -130,34 +138,56 @@ async function handleFarmCommand(context, user, sub, data, isSlash) {
             });
 
             embed.setDescription(itemList);
-            
             let capacityText = `${totalItems} / ${maxStorage} Terisi`;
             if (totalItems >= maxStorage * 0.8) capacityText += ` ⚠️ *(Hampir Penuh!)*`;
-            if (totalItems >= maxStorage) capacityText += ` 🚨 *(Penuh! Jual barangmu)*`;
+            if (totalItems >= maxStorage) capacityText += ` 🚨 *(Penuh!)*`;
 
             embed.addFields({ name: '📊 Kapasitas', value: capacityText });
-            embed.setFooter({ text: 'Gunakan !market sell untuk menjual barang, atau !craft untuk mengolahnya.' });
-
             return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
         }
 
         if (sub === 'plant') {
-            // 🌟 PERBAIKAN: Validasi tipe data yang jauh lebih ketat
-            if (data.x === null || data.y === null || isNaN(data.x) || isNaN(data.y) || !data.crop) {
-                throw new Error("Koordinat X, Y, dan jenis tanaman harus diisi dengan benar.");
-            }
+            if (data.x === null || data.y === null || isNaN(data.x) || isNaN(data.y) || !data.crop) throw new Error("Koordinat X, Y, dan jenis tanaman harus diisi.");
             await FarmManager.plantCrop(userId, data.x, data.y, data.crop);
             const msg = `🌱 **${user.username}** berhasil menanam **${cropsConfig[data.crop].name}** di [${data.x + 1}, ${data.y + 1}]!`;
             return isSlash ? context.reply(msg) : context.channel.send(msg);
         }
 
+        // =====================================
+        // 🌟 EKSEKUSI PLANT ALL
+        // =====================================
+        if (sub === 'plantall') {
+            if (!data.crop) throw new Error("Jenis tanaman harus diisi. Format: `!farm plantall <crop>`");
+            const count = await FarmManager.plantAll(userId, data.crop);
+            const msg = `🌱 **${user.username}** berhasil menanam **${count} petak** **${cropsConfig[data.crop].name}** sekaligus di lahan yang kosong!`;
+            return isSlash ? context.reply(msg) : context.channel.send(msg);
+        }
+
         if (sub === 'harvest') {
-            // 🌟 PERBAIKAN: Validasi tipe data yang jauh lebih ketat
-            if (data.x === null || data.y === null || isNaN(data.x) || isNaN(data.y)) {
-                throw new Error("Koordinat X dan Y harus diisi dengan benar.");
-            }
+            if (data.x === null || data.y === null || isNaN(data.x) || isNaN(data.y)) throw new Error("Koordinat X dan Y harus diisi.");
             const yieldAmount = await FarmManager.harvestCrop(userId, data.x, data.y);
-            const msg = `🌾 **${user.username}** memanen tanaman di [${data.x + 1}, ${data.y + 1}] dan mendapat **${yieldAmount} item** (Masuk Storage)!`;
+            const msg = `🌾 **${user.username}** memanen tanaman di [${data.x + 1}, ${data.y + 1}] dan mendapat **${yieldAmount} item**!`;
+            return isSlash ? context.reply(msg) : context.channel.send(msg);
+        }
+
+        // =====================================
+        // 🌟 EKSEKUSI HARVEST ALL
+        // =====================================
+        if (sub === 'harvestall') {
+            const result = await FarmManager.harvestAll(userId);
+            
+            let summaryText = '';
+            for (const [cropId, amount] of Object.entries(result.summary)) {
+                const name = cropsConfig[cropId]?.name || cropId;
+                summaryText += `🔹 **${amount}x ${name}**\n`;
+            }
+
+            let msg = `🚜 **${user.username}** memanen **${result.count} petak** sekaligus dan mendapatkan:\n${summaryText}`;
+            
+            if (result.isStorageFull) {
+                msg += `\n⚠️ *Proses panen dihentikan di tengah jalan karena Storage penuh!*`;
+            }
+
             return isSlash ? context.reply(msg) : context.channel.send(msg);
         }
 
