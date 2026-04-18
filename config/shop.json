@@ -1,0 +1,14 @@
+{
+  "start_capital": 500000, 
+  "items": {
+    "wheat": { "name": "Gandum", "base_price": 10, "min_price": 2, "max_price": 50, "target_stock": 1000, "type": "raw" },
+    "tomato": { "name": "Tomat", "base_price": 15, "min_price": 5, "max_price": 70, "target_stock": 800, "type": "raw" },
+    "flour": { "name": "Tepung", "base_price": 40, "min_price": 15, "max_price": 150, "target_stock": 500, "type": "product" },
+    "bread": { "name": "Roti", "base_price": 100, "min_price": 40, "max_price": 30000, "target_stock": 300, "type": "product" },
+    "bait": { "name": "Bait", "base_price": 5, "min_price": 6, "max_price": 3000, "target_stock": 3000, "type": "product" }
+  },
+  "recipes": {
+    "flour": { "time_mins": 2, "ingredients": { "wheat": 3 }, "result": 1, "max_queue": 100 },
+    "bread": { "time_mins": 5, "ingredients": { "flour": 2 }, "result": 1, "max_queue": 50 }
+  }
+}

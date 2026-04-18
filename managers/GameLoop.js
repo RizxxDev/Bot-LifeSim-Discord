@@ -1,15 +1,17 @@
 const db = require('../botHandlers/mysqlHandler');
+const ShopManager = require('./ShopManager'); // Panggil Manager
 
 class GameLoop {
     constructor() {
-        this.tickRate = 60 * 1000; // 1 menit sekali
+        this.tickRate = 60 * 1000; // 1 Menit
     }
 
     start() {
         setInterval(async () => {
             await this.processGrowth();
+            await ShopManager.processAiProduction(); // 🌟 JALANKAN SHOP AI
         }, this.tickRate);
-        console.log("🌱 [FARM LOOP] System Started.");
+        console.log("🌱 [FARM & SHOP AI LOOP] System Started.");
     }
 
     async processGrowth() {
