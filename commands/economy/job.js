@@ -40,13 +40,12 @@ async function handleJob(context, user, sub, jobId, isSlash) {
 
     if (sub === 'list') {
         const jobs = await db.query('SELECT * FROM jobs ORDER BY required_level ASC');
-        const embed = new EmbedBuilder().setColor('#ffa601').setTitle('🏢 Lowongan Pekerjaan');
+        const embed = new EmbedBuilder().setColor('#2b2d31').setTitle('🏢 Lowongan Pekerjaan');
         
         let desc = '';
         jobs.forEach(j => {
             desc += `${j.emoji} **${j.name}** (ID: \`${j.id}\`)\n`;
-            // 🌟 UPDATE: Menampilkan min_exp dan max_exp di job list
-            desc += `└ Syarat Level: ${j.required_level} | Gaji: Lp ${j.min_salary}-${j.max_salary} | EXP: ${j.min_exp}-${j.max_exp} | CD: ${j.cooldown/1000}s\n\n`;
+            desc += `└ Syarat Karakter: Level ${j.required_level} | Gaji: Lp ${j.min_salary}-${j.max_salary} | EXP: ${j.min_exp}-${j.max_exp}\n\n`;
         });
         
         embed.setDescription(desc || 'Tidak ada lowongan.');
@@ -64,38 +63,43 @@ async function handleJob(context, user, sub, jobId, isSlash) {
         
         const userData = await db.query('SELECT level FROM users WHERE user_id = ?', [userId]);
         if (userData[0].level < job[0].required_level) {
-            const msg = `❌ **${user.username}**, Kamu harus mencapai Level ${job[0].required_level} untuk melamar pekerjaan ini!`;
+            const msg = `❌ **${user.username}**, Kamu harus mencapai Karakter Level ${job[0].required_level} untuk melamar pekerjaan ini!`;
             return isSlash ? context.reply({ content: msg, ephemeral: true }) : context.channel.send(msg);
         }
 
-        await db.query('UPDATE users SET job_id = ? WHERE user_id = ?', [job[0].id, userId]);
-        const successMsg = `🎉 **${user.username}** berhasil diterima bekerja sebagai **${job[0].name}**!`;
+        // 🌟 RESET JOB LEVEL & EXP JIKA LAMAR KERJA BARU
+        await db.query('UPDATE users SET job_id = ?, job_level = 1, job_exp = 0 WHERE user_id = ?', [job[0].id, userId]);
+        const successMsg = `🎉 **${user.username}** berhasil diterima bekerja sebagai **${job[0].name}**! Keahlian profesi dimulai dari Level 1.`;
         return isSlash ? context.reply(successMsg) : context.channel.send(successMsg);
     }
 
     if (sub === 'info') {
-        const userData = await db.query('SELECT j.* FROM users u LEFT JOIN jobs j ON u.job_id = j.id WHERE u.user_id = ?', [userId]);
+        const userData = await db.query('SELECT u.job_level, u.job_exp, j.* FROM users u LEFT JOIN jobs j ON u.job_id = j.id WHERE u.user_id = ?', [userId]);
         if (!userData[0] || !userData[0].id) {
             const msg = `❌ **${user.username}**, kamu belum memiliki pekerjaan! Gunakan \`/job list\`.`;
             return isSlash ? context.reply({ content: msg, ephemeral: true }) : context.channel.send(msg);
         }
         
-        const j = userData[0];
+        const u = userData[0];
+        const reqJobExp = Math.floor(150 * Math.pow(u.job_level, 1.3)); 
+
         const embed = new EmbedBuilder()
             .setColor('#2b2d31')
-            .setTitle(`Pekerjaan Saat Ini: ${j.emoji} ${j.name}`)
+            .setTitle(`Pekerjaan Saat Ini: ${u.emoji} ${u.name}`)
             .addFields(
-                { name: 'Kisaran Gaji', value: `Lp ${j.min_salary} - ${j.max_salary}`, inline: true },
-                { name: 'Waktu Tunggu', value: `${j.cooldown / 1000} detik`, inline: true },
-                // 🌟 UPDATE: Menampilkan rentang EXP dinamis di info profil pekerjaan
-                { name: 'Kisaran EXP', value: `${j.min_exp} - ${j.max_exp} EXP`, inline: true }
-            );
+                { name: '🎖️ Level Profesi', value: `Level **${u.job_level}**\n(${u.job_exp} / ${reqJobExp} EXP)`, inline: true },
+                { name: '💰 Kisaran Gaji Dasar', value: `Lp ${u.min_salary} - ${u.max_salary}`, inline: true },
+                { name: '⏱️ Waktu Tunggu', value: `${u.cooldown / 1000} detik`, inline: true }
+            )
+            .setFooter({ text: 'Tip: Semakin tinggi Level Profesi, semakin besar bonus gajimu!' });
+            
         return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
     }
 
     if (sub === 'resign') {
-        await db.query('UPDATE users SET job_id = NULL WHERE user_id = ?', [userId]);
-        const msg = `👋 **${user.username}** telah mengundurkan diri dari pekerjaannya.`;
+        // 🌟 RESET JOB ID, LEVEL, & EXP
+        await db.query('UPDATE users SET job_id = NULL, job_level = 1, job_exp = 0 WHERE user_id = ?', [userId]);
+        const msg = `👋 **${user.username}** telah mengundurkan diri dari pekerjaannya. Seluruh progress Job Level telah hangus.`;
         return isSlash ? context.reply(msg) : context.channel.send(msg);
     }
 }

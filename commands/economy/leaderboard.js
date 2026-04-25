@@ -22,7 +22,7 @@ module.exports = {
 
 async function handleLeaderboard(context, client, commandUser, isSlash) {
     try {
-        // Ambil 10 orang dengan total uang terbanyak (cash + bank) menggunakan SQL Math
+        // 1. Ambil 10 orang dengan total uang terbanyak (cash + bank)
         const rows = await db.query(`
             SELECT user_id, cash, bank, (cash + bank) AS total_wealth 
             FROM users 
@@ -44,7 +44,7 @@ async function handleLeaderboard(context, client, commandUser, isSlash) {
 
         let leaderboardText = '';
         
-        // Looping untuk menyusun daftar pemain
+        // 2. Looping untuk menyusun daftar pemain
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
             let username = 'Unknown Citizen';
@@ -54,17 +54,15 @@ async function handleLeaderboard(context, client, commandUser, isSlash) {
                 const user = await client.users.fetch(row.user_id);
                 if (user) username = user.username;
             } catch (e) {
-                // Jika user sudah menghapus akun atau bot gagal menemukan user
                 username = `Warga Keluar (ID: ${row.user_id})`;
             }
 
-            // Memberikan medali khusus untuk ranking 1, 2, dan 3
+            // Memberikan medali khusus
             let medal = '🔹';
             if (i === 0) medal = '🥇';
             else if (i === 1) medal = '🥈';
             else if (i === 2) medal = '🥉';
 
-            // Format Angka agar memiliki titik (contoh: 1000000 -> 1.000.000)
             const totalStr = parseInt(row.total_wealth).toLocaleString();
             const cashStr = parseInt(row.cash).toLocaleString();
             const bankStr = parseInt(row.bank).toLocaleString();
@@ -73,9 +71,28 @@ async function handleLeaderboard(context, client, commandUser, isSlash) {
             leaderboardText += `└ 💰 **Lp ${totalStr}** (💵 ${cashStr} | 🏦 ${bankStr})\n\n`;
         }
 
+        // ==========================================
+        // 🌟 TAMBAHAN: MENCARI PERINGKAT USER SENDIRI
+        // ==========================================
+        const userStats = await db.query('SELECT (cash + bank) AS total_wealth FROM users WHERE user_id = ?', [commandUser.id]);
+        
+        if (userStats && userStats.length > 0) {
+            const userWealth = userStats[0].total_wealth;
+            
+            // Hitung ada berapa orang yang total kekayaannya LEBIH BESAR dari user ini
+            const rankQuery = await db.query('SELECT COUNT(*) AS rank_ahead FROM users WHERE (cash + bank) > ?', [userWealth]);
+            
+            // Peringkat user = (Jumlah orang yang lebih kaya) + 1
+            const userRank = parseInt(rankQuery[0].rank_ahead) + 1;
+            
+            leaderboardText += `━━━━━━━━━━━━━━━━━━━━━━\n🎯 **Peringkatmu:** **#${userRank}** (Total: Lp ${parseInt(userWealth).toLocaleString()})`;
+        } else {
+            // Jika user belum pernah menjalankan !register atau datanya tidak ada
+            leaderboardText += `━━━━━━━━━━━━━━━━━━━━━━\n🎯 **Peringkatmu:** Belum terdaftar (Gunakan /register)`;
+        }
+
         embed.setDescription(leaderboardText);
 
-        // Mengirim balasan sesuai standar anti-ping
         return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
 
     } catch (error) {

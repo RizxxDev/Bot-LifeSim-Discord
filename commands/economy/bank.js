@@ -3,140 +3,172 @@ const db = require('../../botHandlers/mysqlHandler');
 
 module.exports = {
     name: 'bank',
-    aliases: ['atm', 'bal', 'transfer', 'dep', 'wd', 'tf'],
+    aliases: ['atm', 'bal', 'balance'],
     prefix: true,
     slash: true,
+    cooldown: 5,
     data: new SlashCommandBuilder()
         .setName('bank')
-        .setDescription('Access city banking services')
+        .setDescription('Sistem Perbankan Pusat')
+        .addSubcommand(sub => sub.setName('info').setDescription('Cek saldo rekening dan uang tunai'))
         .addSubcommand(sub => 
             sub.setName('deposit')
-            .setDescription('Deposit cash into the bank')
-            .addIntegerOption(opt => opt.setName('amount').setDescription('Amount to deposit').setRequired(true).setMinValue(1))
+            .setDescription('Simpan uang tunai ke bank')
+            // 🌟 UBAH DARI IntegerOption MENJADI StringOption
+            .addStringOption(opt => opt.setName('amount').setDescription('Jumlah uang (angka) atau ketik "all"').setRequired(true))
         )
         .addSubcommand(sub => 
             sub.setName('withdraw')
-            .setDescription('Withdraw cash from the bank')
-            .addIntegerOption(opt => opt.setName('amount').setDescription('Amount to withdraw').setRequired(true).setMinValue(1))
+            .setDescription('Tarik uang dari bank')
+            // 🌟 UBAH DARI IntegerOption MENJADI StringOption
+            .addStringOption(opt => opt.setName('amount').setDescription('Jumlah uang (angka) atau ketik "all"').setRequired(true))
         )
         .addSubcommand(sub => 
             sub.setName('transfer')
-            .setDescription('Transfer bank balance to another player')
-            .addUserOption(opt => opt.setName('target').setDescription('Target player').setRequired(true))
-            .addIntegerOption(opt => opt.setName('amount').setDescription('Transfer amount').setRequired(true).setMinValue(1))
+            .setDescription('Transfer uang ke pemain lain')
+            .addUserOption(opt => opt.setName('target').setDescription('Penerima').setRequired(true))
+            // 🌟 UBAH DARI IntegerOption MENJADI StringOption
+            .addStringOption(opt => opt.setName('amount').setDescription('Jumlah uang (angka) atau ketik "all"').setRequired(true))
         ),
 
     async executeSlash(interaction) {
-        const sub = interaction.options.getSubcommand();
-        const amount = interaction.options.getInteger('amount');
-        if (sub === 'deposit') await runDeposit(interaction, interaction.user, amount, true);
-        else if (sub === 'withdraw') await runWithdraw(interaction, interaction.user, amount, true);
-        else if (sub === 'transfer') {
-            const targetUser = interaction.options.getUser('target');
-            await runTransfer(interaction, interaction.user, targetUser, amount, true);
-        }
+        const sub = interaction.options.getSubcommand(false) || 'info';
+        const amountStr = interaction.options.getString('amount');
+        const targetUser = interaction.options.getUser('target');
+
+        await handleBank(interaction, interaction.user, sub, { amountStr, targetUser }, true);
     },
 
     async executePrefix(message, args) {
-        const sub = args[0]?.toLowerCase();
         const user = message.author;
+        const sub = args[0] ? args[0].toLowerCase() : 'info';
 
-        if (!sub || !['deposit', 'withdraw', 'transfer', 'dep', 'wd', 'tf'].includes(sub)) {
-            return message.channel.send(`❌ **${user.username}**, **Bank Format:**\n🔹 \`!bank deposit <amount>\`\n🔹 \`!bank withdraw <amount>\`\n🔹 \`!bank transfer @user <amount>\``);
+        if (!['info', 'deposit', 'dep', 'withdraw', 'wd', 'transfer', 'tf'].includes(sub)) {
+            return message.channel.send(`❌ **${user.username}**, Format: \`!bank\`, \`!bank dep <jumlah/all>\`, \`!bank wd <jumlah/all>\`, \`!bank tf @user <jumlah/all>\``);
         }
 
-        const amount = parseInt(args[sub === 'transfer' || sub === 'tf' ? 2 : 1]);
-        if (isNaN(amount) || amount <= 0) return message.channel.send(`❌ **${user.username}**, please enter a valid amount!`);
+        let amountStr = null;
+        let targetUser = null;
 
-        if (['deposit', 'dep'].includes(sub)) await runDeposit(message, user, amount, false);
-        else if (['withdraw', 'wd'].includes(sub)) await runWithdraw(message, user, amount, false);
-        else if (['transfer', 'tf'].includes(sub)) {
-            const targetUser = message.mentions.users.first();
-            if (!targetUser) return message.channel.send(`❌ **${user.username}**, tag (@) the player you want to transfer to!`);
-            await runTransfer(message, user, targetUser, amount, false);
+        // Ambil input string berdasarkan posisi argumen
+        if (['deposit', 'dep', 'withdraw', 'wd'].includes(sub)) {
+            amountStr = args[1]?.toLowerCase();
+        } else if (['transfer', 'tf'].includes(sub)) {
+            targetUser = message.mentions.users.first();
+            amountStr = args[2]?.toLowerCase();
         }
+
+        // Normalisasi alias command
+        let action = sub;
+        if (sub === 'dep') action = 'deposit';
+        if (sub === 'wd') action = 'withdraw';
+        if (sub === 'tf') action = 'transfer';
+
+        await handleBank(message, user, action, { amountStr, targetUser }, false);
     }
 };
 
-async function runDeposit(context, user, amount, isSlash) {
-    let transaction;
-    try {
-        transaction = await db.startTransaction();
-        const rows = await transaction.query('SELECT cash FROM users WHERE user_id = ? FOR UPDATE', [user.id]);
-        
-        if (!rows[0] || rows[0].cash < amount) throw new Error(`Insufficient cash! You only have **Lp ${rows[0]?.cash.toLocaleString() || 0}**.`);
-        
-        await transaction.query('UPDATE users SET cash = cash - ?, bank = bank + ? WHERE user_id = ?', [amount, amount, user.id]);
-        await transaction.commit();
-        
-        const embed = new EmbedBuilder().setColor('#4CAF50').setTitle('🏦 Deposit Successful').setDescription(`**${user.username}** deposited **Lp ${amount.toLocaleString()}** into the Bank.`);
-        
-        if (isSlash) await context.reply({ embeds: [embed] });
-        else await context.channel.send({ embeds: [embed] });
-    } catch (err) {
-        if (transaction) await transaction.rollback();
-        const msg = `❌ **${user.username}**, Deposit Failed: ${err.message}`;
-        if (isSlash) await context.reply({ content: msg, ephemeral: true });
-        else await context.channel.send(msg);
-    }
-}
+async function handleBank(context, user, action, data, isSlash) {
+    const userId = user.id;
 
-async function runWithdraw(context, user, amount, isSlash) {
-    let transaction;
     try {
-        transaction = await db.startTransaction();
-        const rows = await transaction.query('SELECT bank FROM users WHERE user_id = ? FOR UPDATE', [user.id]);
-        
-        if (!rows[0] || rows[0].bank < amount) throw new Error(`Insufficient bank balance! Your balance: **Lp ${rows[0]?.bank.toLocaleString() || 0}**.`);
-        
-        await transaction.query('UPDATE users SET bank = bank - ?, cash = cash + ? WHERE user_id = ?', [amount, amount, user.id]);
-        await transaction.commit();
-        
-        const embed = new EmbedBuilder().setColor('#FF9800').setTitle('🏧 Withdrawal Successful').setDescription(`**${user.username}** withdrew **Lp ${amount.toLocaleString()}** from the Bank.`);
-        
-        if (isSlash) await context.reply({ embeds: [embed] });
-        else await context.channel.send({ embeds: [embed] });
-    } catch (err) {
-        if (transaction) await transaction.rollback();
-        const msg = `❌ **${user.username}**, Withdrawal Failed: ${err.message}`;
-        if (isSlash) await context.reply({ content: msg, ephemeral: true });
-        else await context.channel.send(msg);
-    }
-}
+        const trx = await db.startTransaction();
+        let commitNeeded = false;
 
-async function runTransfer(context, sender, targetUser, amount, isSlash) {
-    if (sender.id === targetUser.id) {
-        const msg = `❌ **${sender.username}**, you cannot transfer to yourself!`;
-        if (isSlash) return context.reply({ content: msg, ephemeral: true });
-        return context.channel.send(msg);
-    }
-    if (targetUser.bot) {
-        const msg = `❌ **${sender.username}**, you cannot transfer to a Bot!`;
-        if (isSlash) return context.reply({ content: msg, ephemeral: true });
-        return context.channel.send(msg);
-    }
+        try {
+            // Kunci baris user untuk keamanan transaksi
+            const userDataRow = await trx.query('SELECT cash, bank FROM users WHERE user_id = ? FOR UPDATE', [userId]);
+            if (!userDataRow || userDataRow.length === 0) {
+                throw new Error("Kamu belum terdaftar! Silakan `/register` terlebih dahulu.");
+            }
+            const u = userDataRow[0];
 
-    let transaction;
-    try {
-        transaction = await db.startTransaction();
-        const targetCheck = await transaction.query('SELECT user_id FROM users WHERE user_id = ?', [targetUser.id]);
-        if (targetCheck.length === 0) throw new Error(`${targetUser.username} is not registered yet!`);
-        
-        const senderData = await transaction.query('SELECT bank FROM users WHERE user_id = ? FOR UPDATE', [sender.id]);
-        if (!senderData[0] || senderData[0].bank < amount) throw new Error(`Insufficient Bank balance! Balance: **Lp ${senderData[0]?.bank.toLocaleString() || 0}**.`);
-        
-        await transaction.query('UPDATE users SET bank = bank - ? WHERE user_id = ?', [amount, sender.id]);
-        await transaction.query('UPDATE users SET bank = bank + ? WHERE user_id = ?', [amount, targetUser.id]);
-        await transaction.commit();
-        
-        const embed = new EmbedBuilder().setColor('#2196F3').setTitle('💸 Transfer Successful').setDescription(`**${sender.username}** successfully sent **Lp ${amount.toLocaleString()}** to **${targetUser.username}**.`);
-        
-        if (isSlash) await context.reply({ embeds: [embed] });
-        else await context.channel.send({ embeds: [embed] });
-    } catch (err) {
-        if (transaction) await transaction.rollback();
-        const msg = `❌ **${sender.username}**, Transfer Failed: ${err.message}`;
-        if (isSlash) await context.reply({ content: msg, ephemeral: true });
-        else await context.channel.send(msg);
+            // EKSEKUSI: INFO
+            if (action === 'info') {
+                await trx.commit(); // Lepas kunci secepatnya karena hanya melihat data
+                
+                const embed = new EmbedBuilder()
+                    .setColor('#3498DB')
+                    .setTitle(`🏦 Rekening Bank: ${user.username}`)
+                    .setThumbnail(user.displayAvatarURL())
+                    .addFields(
+                        { name: '💵 Uang Tunai (Cash)', value: `Lp ${u.cash.toLocaleString()}`, inline: true },
+                        { name: '💳 Saldo Bank', value: `Lp ${u.bank.toLocaleString()}`, inline: true }
+                    )
+                    .setFooter({ text: 'Gunakan !bank dep <jumlah/all> atau !bank wd <jumlah/all>' });
+
+                return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
+            }
+
+            // ==========================================
+            // 🌟 LOGIKA UNTUK KATA "ALL"
+            // ==========================================
+            let amount = 0;
+            if (!data.amountStr) throw new Error("Masukkan jumlah uang atau ketik `all`.");
+
+            if (data.amountStr === 'all') {
+                if (action === 'deposit') amount = u.cash; // Setor semua uang tunai
+                else if (action === 'withdraw' || action === 'transfer') amount = u.bank; // Tarik/Transfer semua uang di bank
+            } else {
+                amount = parseInt(data.amountStr); // Jika bukan "all", jadikan angka biasa
+            }
+
+            // Validasi Angka
+            if (amount === 0) throw new Error("Uangmu kosong (Lp 0)! Tidak ada yang bisa diproses.");
+            if (isNaN(amount) || amount < 0) throw new Error("Jumlah harus berupa angka atau ketik `all`!");
+
+            // EKSEKUSI: DEPOSIT
+            if (action === 'deposit') {
+                if (u.cash < amount) throw new Error(`Uang tunaimu tidak cukup! (Cash: Lp ${u.cash.toLocaleString()})`);
+                
+                await trx.query('UPDATE users SET cash = cash - ?, bank = bank + ? WHERE user_id = ?', [amount, amount, userId]);
+                commitNeeded = true;
+
+                const msg = `📥 **${user.username}** menyetor **Lp ${amount.toLocaleString()}** ke dalam Bank.`;
+                isSlash ? await context.reply(msg) : await context.channel.send(msg);
+            }
+
+            // EKSEKUSI: WITHDRAW
+            else if (action === 'withdraw') {
+                if (u.bank < amount) throw new Error(`Saldo Bank tidak cukup! (Saldo: Lp ${u.bank.toLocaleString()})`);
+                
+                await trx.query('UPDATE users SET cash = cash + ?, bank = bank - ? WHERE user_id = ?', [amount, amount, userId]);
+                commitNeeded = true;
+
+                const msg = `📤 **${user.username}** menarik **Lp ${amount.toLocaleString()}** dari Bank.`;
+                isSlash ? await context.reply(msg) : await context.channel.send(msg);
+            }
+
+            // EKSEKUSI: TRANSFER
+            else if (action === 'transfer') {
+                if (!data.targetUser) throw new Error("Tag (@) pemain yang ingin ditransfer!");
+                if (data.targetUser.id === userId) throw new Error("Tidak bisa transfer ke diri sendiri.");
+                if (data.targetUser.bot) throw new Error("Tidak bisa transfer ke Bot.");
+                if (u.bank < amount) throw new Error(`Saldo Bank tidak cukup! (Saldo: Lp ${u.bank.toLocaleString()})`);
+
+                const targetCheck = await trx.query('SELECT user_id FROM users WHERE user_id = ? FOR UPDATE', [data.targetUser.id]);
+                if (!targetCheck || targetCheck.length === 0) throw new Error(`**${data.targetUser.username}** belum mendaftar sebagai warga!`);
+
+                await trx.query('UPDATE users SET bank = bank - ? WHERE user_id = ?', [amount, userId]);
+                await trx.query('UPDATE users SET bank = bank + ? WHERE user_id = ?', [amount, data.targetUser.id]);
+                commitNeeded = true;
+
+                const msg = `💸 **${user.username}** mentransfer **Lp ${amount.toLocaleString()}** kepada **${data.targetUser.username}** melalui Bank.`;
+                isSlash ? await context.reply(msg) : await context.channel.send(msg);
+            }
+
+            if (commitNeeded) {
+                await trx.commit();
+            }
+
+        } catch (err) {
+            await trx.rollback();
+            throw err;
+        }
+
+    } catch (error) {
+        const errMsg = `❌ **${user.username}**, ${error.message}`;
+        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
+        else await context.channel.send(errMsg);
     }
 }

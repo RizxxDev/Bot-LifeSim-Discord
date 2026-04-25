@@ -27,7 +27,6 @@ async function handleWork(context, user, isSlash) {
     try {
         trx = await db.startTransaction();
 
-        // UPDATE: Tarik data j.min_exp dan j.max_exp dari database
         const userRows = await trx.query(`
             SELECT u.*, s.income, s.cooldown_skill, s.luck, s.defense, j.name, j.min_salary, j.max_salary, j.cooldown, j.min_exp, j.max_exp, j.emoji
             FROM users u
@@ -65,48 +64,66 @@ async function handleWork(context, user, isSlash) {
             return isSlash ? context.reply(failMsg) : context.channel.send(failMsg);
         }
 
-        // 3. Kalkulasi Gaji & Keberuntungan
+        // 3. Kalkulasi Gaji Dasar & Keberuntungan
         let salary = Math.floor(Math.random() * (u.max_salary - u.min_salary + 1)) + u.min_salary;
         salary += ((u.income || 0) * 50); 
+        
+        // 🌟 BONUS JOB LEVEL (Setiap naik 1 level job, gaji bertambah 5%)
+        const currentJobLevel = u.job_level || 1;
+        const jobBonus = Math.floor(salary * ((currentJobLevel - 1) * 0.05));
+        salary += jobBonus;
 
         const luckChance = 0.10 + ((u.luck || 0) * 0.05); 
         let isCrit = false;
-
         if (Math.random() < luckChance) {
             salary *= 2;
             isCrit = true;
         }
 
-        // 4. Kalkulasi EXP Dinamis dari Database
+        // 4. Kalkulasi EXP Karakter & EXP Pekerjaan
         const minExp = u.min_exp || 10;
         const maxExp = u.max_exp || 20;
         const earnedExp = Math.floor(Math.random() * (maxExp - minExp + 1)) + minExp;
 
+        // Level Karakter Utama
         let newExp = u.exp + earnedExp;
         let newLevel = u.level;
         let newSp = u.skill_points;
-        let leveledUp = false;
-
+        let charLeveledUp = false;
         const requiredExp = Math.floor(100 * Math.pow(newLevel, 1.2));
 
         if (newExp >= requiredExp) {
             newExp = 0; 
             newLevel++;
             newSp++;
-            leveledUp = true;
+            charLeveledUp = true;
+        }
+
+        // 🌟 Level Pekerjaan (Job Mastery)
+        let newJobExp = (u.job_exp || 0) + earnedExp;
+        let newJobLevel = currentJobLevel;
+        let jobLeveledUp = false;
+        // Kebutuhan exp untuk Job lebih tinggi dari exp karakter biasa
+        const reqJobExp = Math.floor(150 * Math.pow(newJobLevel, 1.3)); 
+
+        if (newJobExp >= reqJobExp) {
+            newJobExp = 0;
+            newJobLevel++;
+            jobLeveledUp = true;
         }
 
         // 5. Simpan Data ke Database
         await trx.query(
-            'UPDATE users SET cash = cash + ?, exp = ?, level = ?, skill_points = ?, last_work = ? WHERE user_id = ?',
-            [salary, newExp, newLevel, newSp, now, userId]
+            'UPDATE users SET cash = cash + ?, exp = ?, level = ?, skill_points = ?, last_work = ?, job_exp = ?, job_level = ? WHERE user_id = ?',
+            [salary, newExp, newLevel, newSp, now, newJobExp, newJobLevel, userId]
         );
         await trx.commit();
 
-        // 6. Format Pesan Keluaran (Menambahkan info EXP)
-        let msg = `${u.emoji} **${user.username}** bekerja sebagai **${u.name}** dan mendapatkan **Lp ${salary.toLocaleString()}**!\n✨ Mendapatkan **${earnedExp} EXP**!`;
+        // 6. Format Pesan Keluaran
+        let msg = `${u.emoji} **${user.username}** bekerja sebagai **${u.name} (Lv. ${currentJobLevel})** dan mendapatkan **Lp ${salary.toLocaleString()}**!\n✨ Mendapatkan **${earnedExp} EXP**!`;
         if (isCrit) msg += ` 🍀 *(Gaji Ganda!)*`;
-        if (leveledUp) msg += `\n🆙 **LEVEL UP!** Kamu sekarang Level **${newLevel}** dan mendapatkan **1 Skill Point (SP)**!`;
+        if (charLeveledUp) msg += `\n🆙 **LEVEL UP!** Karaktermu sekarang Level **${newLevel}**!`;
+        if (jobLeveledUp) msg += `\n🎖️ **PROMOSI!** Keahlian profesimu naik menjadi **Level ${newJobLevel}**! (Bonus gaji meningkat)`;
 
         return isSlash ? context.reply(msg) : context.channel.send(msg);
 

@@ -45,15 +45,24 @@ module.exports = {
                     exp INT DEFAULT 0,
                     skill_points INT DEFAULT 0,
                     job_id VARCHAR(50) DEFAULT NULL,
-                    last_work BIGINT DEFAULT 0
+                    last_work BIGINT DEFAULT 0,
+                    job_level INT DEFAULT 1,
+                    job_exp INT DEFAULT 0
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
-            // Failsafe: Tambahkan kolom baru jika tabel users versi lama sudah ada
+            // Failsafe: Tambahkan kolom RPG dasar jika belum ada
             try {
                 await pool.query("ALTER TABLE users ADD COLUMN level INT DEFAULT 1, ADD COLUMN exp INT DEFAULT 0, ADD COLUMN skill_points INT DEFAULT 0, ADD COLUMN job_id VARCHAR(50) DEFAULT NULL, ADD COLUMN last_work BIGINT DEFAULT 0;");
             } catch (err) { 
-                if (err.code !== 'ER_DUP_FIELDNAME') console.error('Peringatan DB Users:', err.message); 
+                if (err.code !== 'ER_DUP_FIELDNAME') console.error('DB Users (RPG):', err.message); 
+            }
+
+            // Failsafe: Tambahkan kolom Job Mastery secara terpisah untuk menghindari error
+            try {
+                await pool.query("ALTER TABLE users ADD COLUMN job_level INT DEFAULT 1, ADD COLUMN job_exp INT DEFAULT 0;");
+            } catch (err) { 
+                if (err.code !== 'ER_DUP_FIELDNAME') console.error('DB Users (Job Mastery):', err.message); 
             }
 
             await pool.query(`
@@ -80,14 +89,13 @@ module.exports = {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
-            // Failsafe untuk kolom min_exp dan max_exp di tabel jobs
             try {
                 await pool.query("ALTER TABLE jobs ADD COLUMN min_exp INT DEFAULT 10, ADD COLUMN max_exp INT DEFAULT 20;");
             } catch (err) { 
-                if (err.code !== 'ER_DUP_FIELDNAME') console.error('Peringatan DB Jobs:', err.message); 
+                if (err.code !== 'ER_DUP_FIELDNAME') console.error('DB Jobs:', err.message); 
             }
 
-            // Masukkan Pekerjaan Default
+            // Memasukkan Daftar Pekerjaan
             await pool.query(`
                 INSERT IGNORE INTO jobs (id, name, min_salary, max_salary, cooldown, min_exp, max_exp, required_level, emoji) VALUES 
                 ('janitor', 'Janitor', 100, 200, 60000, 25, 65, 1, '🧹'),
@@ -95,7 +103,6 @@ module.exports = {
                 ('programmer', 'Programmer', 600, 1000, 300000, 150, 320, 5, '💻');
             `);
 
-            // Inventory Umum (Untuk Mining/Fishing)
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS inventory (
                     user_id VARCHAR(25), 
@@ -106,7 +113,7 @@ module.exports = {
             `);
 
             // ------------------------------------------
-            // B. FARMING & CRAFTING TABLES
+            // B. FARMING & MARKET TABLES
             // ------------------------------------------
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS user_farms (
@@ -131,17 +138,6 @@ module.exports = {
             `);
 
             await pool.query(`
-                CREATE TABLE IF NOT EXISTS farm_tools (
-                    id INT AUTO_INCREMENT PRIMARY KEY, 
-                    user_id VARCHAR(25), 
-                    tool_id VARCHAR(50), 
-                    x INT, 
-                    y INT, 
-                    durability INT DEFAULT 100
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            `);
-
-            await pool.query(`
                 CREATE TABLE IF NOT EXISTS user_storage (
                     user_id VARCHAR(25), 
                     item_id VARCHAR(50), 
@@ -150,24 +146,6 @@ module.exports = {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
-            await pool.query(`
-                CREATE TABLE IF NOT EXISTS crafting_queue (
-                    id INT AUTO_INCREMENT PRIMARY KEY, 
-                    user_id VARCHAR(25), 
-                    recipe_id VARCHAR(50), 
-                    amount INT DEFAULT 1, 
-                    start_time BIGINT, 
-                    end_time BIGINT
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            `);
-
-            try {
-                await pool.query("ALTER TABLE crafting_queue ADD COLUMN amount INT DEFAULT 1;");
-            } catch (err) { 
-                if (err.code !== 'ER_DUP_FIELDNAME') console.error('Peringatan DB Crafting:', err.message); 
-            }
-
-            // P2P Market Player
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS market_listings (
                     id INT AUTO_INCREMENT PRIMARY KEY, 
@@ -180,9 +158,8 @@ module.exports = {
             `);
 
             // ------------------------------------------
-            // C. SHOP AI (CONVERTER & BALANCER) TABLES
+            // C. SHOP AI & CONVERTER TABLES
             // ------------------------------------------
-            // Entitas Global Shop (Uang & Storage)
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS global_shop (
                     id INT PRIMARY KEY, 
@@ -190,10 +167,8 @@ module.exports = {
                     max_storage INT DEFAULT 10000
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
-            // Suntikan Modal Awal Shop Lp 500.000
             await pool.query(`INSERT IGNORE INTO global_shop (id, cash) VALUES (1, 500000);`); 
 
-            // Storage/Gudang milik Shop AI
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS shop_inventory (
                     item_id VARCHAR(50) PRIMARY KEY, 
@@ -201,7 +176,6 @@ module.exports = {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
-            // Antrian Produksi (Converter AI)
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS shop_production_queue (
                     id INT AUTO_INCREMENT PRIMARY KEY, 
@@ -211,7 +185,6 @@ module.exports = {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
-            // Suntikan Stok Awal agar pasar tidak kosong di awal (Government Inject)
             await pool.query(`
                 INSERT IGNORE INTO shop_inventory (item_id, amount) VALUES 
                 ('wheat', 500), 
@@ -222,9 +195,8 @@ module.exports = {
             console.log('✅ All MariaDB tables are ready to use!');
 
             // ==========================================
-            // 3. START BACKGROUND SYSTEMS
+            // 3. START GAME LOOP
             // ==========================================
-            // Memulai GameLoop (Mengatur Growth Tanaman & Shop AI Converter)
             const farmLoop = new GameLoop();
             farmLoop.start();
 
