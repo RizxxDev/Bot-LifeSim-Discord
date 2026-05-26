@@ -1,5 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
+const { infoEmbed, formatNumber, colors } = require('../../utils/ui');
+const { send, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'inventory',
@@ -9,62 +11,41 @@ module.exports = {
     cooldown: 5,
     data: new SlashCommandBuilder()
         .setName('inventory')
-        .setDescription('Melihat isi tas / inventory karaktermu'),
+        .setDescription('View your carried items.'),
 
     async executeSlash(interaction) {
-        await handleInventory(interaction, interaction.user, true);
+        await handleInventory(interaction, interaction.user);
     },
 
-    async executePrefix(message, args) {
-        await handleInventory(message, message.author, false);
+    async executePrefix(message) {
+        await handleInventory(message, message.author);
     }
 };
 
-async function handleInventory(context, user, isSlash) {
+async function handleInventory(context, user) {
     try {
-        // Mengambil data barang yang jumlahnya lebih dari 0 dari database
-        const items = await db.query('SELECT item_id, amount FROM inventory WHERE user_id = ? AND amount > 0', [user.id]);
+        const items = await db.query('SELECT item_id, amount FROM inventory WHERE user_id = ? AND amount > 0 ORDER BY item_id ASC', [user.id]);
 
-        const embed = new EmbedBuilder()
-            .setColor('#9B59B6') // Warna ungu gelap/cokelat tas
-            .setTitle(`🎒 Tas Ransel: ${user.username}`)
-            .setThumbnail(user.displayAvatarURL());
+        const embed = infoEmbed(`Inventory: ${user.username}`, null, user)
+            .setColor(colors.inventory)
+            .setThumbnail(user.displayAvatarURL({ dynamic: true }));
 
-        // Jika tas kosong
         if (!items || items.length === 0) {
-            embed.setDescription('*Tas kamu masih kosong. Dapatkan barang dari toko atau hadiah aktivitas!*');
-            
-            return isSlash 
-                ? context.reply({ embeds: [embed] }) 
-                : context.channel.send({ embeds: [embed] });
+            embed.setDescription('Your inventory is empty.');
+        } else {
+            embed.setDescription(items.map((item) => {
+                return `• **${formatItemName(item.item_id)}** — x${formatNumber(item.amount)}`;
+            }).join('\n'));
         }
 
-        // Menyusun daftar item
-        let itemList = '';
-        items.forEach(item => {
-            // Memformat ID item menjadi nama yang lebih rapi (misal: "iron_sword" menjadi "Iron Sword")
-            const formattedName = item.item_id
-                .split('_')
-                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                .join(' ');
-
-            itemList += `🔹 **${formattedName}** — x${item.amount}\n`;
-        });
-
-        embed.setDescription(itemList);
-        embed.setFooter({ text: 'Ketik !farm storage untuk melihat hasil panen.' });
-
-        // Mengirim balasan (tanpa ping untuk prefix)
-        return isSlash 
-            ? context.reply({ embeds: [embed] }) 
-            : context.channel.send({ embeds: [embed] });
-
+        embed.setFooter({ text: 'Farm harvests are stored separately in /farm storage.' });
+        return send(context, { embeds: [embed] });
     } catch (error) {
         console.error('[INVENTORY ERROR]', error);
-        const errMsg = `❌ **${user.username}**, terjadi kesalahan sistem saat mencoba membuka tas.`;
-        
-        return isSlash 
-            ? context.reply({ content: errMsg, ephemeral: true }) 
-            : context.channel.send(errMsg);
+        return sendError(context, user, 'Could not open your inventory.');
     }
+}
+
+function formatItemName(itemId) {
+    return itemId.split('_').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }

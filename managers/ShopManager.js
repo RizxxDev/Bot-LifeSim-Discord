@@ -23,15 +23,15 @@ class ShopManager {
     // 🛍️ 2. PLAYER BELI DARI SHOP
     static async buyFromShop(userId, itemId, amount) {
         const itemConfig = shopConfig.items[itemId];
-        if (!itemConfig) throw new Error("Item tidak dijual di Shop.");
-        if (amount < 1 || amount > 100) throw new Error("Limit transaksi: 1 - 100 item.");
+        if (!itemConfig) throw new Error('This item is not sold by the shop.');
+        if (!Number.isInteger(amount) || amount < 1 || amount > 100) throw new Error('Buy amount must be between 1 and 100.');
 
         const trx = await db.startTransaction();
         try {
             // Cek Stok Shop
             const shopStock = await trx.query('SELECT amount FROM shop_inventory WHERE item_id = ? FOR UPDATE', [itemId]);
             const currentStock = shopStock[0]?.amount || 0;
-            if (currentStock < amount) throw new Error(`Shop kehabisan stok! Sisa: ${currentStock}`);
+            if (currentStock < amount) throw new Error(`Not enough shop stock. Remaining: ${currentStock}.`);
 
             // Kalkulasi Harga Beli (Shop Jual ke Player)
             const unitPrice = this.calculatePrice(itemId, currentStock);
@@ -39,7 +39,7 @@ class ShopManager {
 
             // Cek Uang Player & Storage Player
             const user = await trx.query('SELECT cash FROM users WHERE user_id = ? FOR UPDATE', [userId]);
-            if (!user[0] || user[0].cash < totalPrice) throw new Error(`Uang tidak cukup! Butuh Lp ${totalPrice.toLocaleString()}.`);
+            if (!user[0] || user[0].cash < totalPrice) throw new Error(`Not enough cash. Required: Lp ${totalPrice.toLocaleString('en-US')}.`);
 
             // Transaksi (Pindah Barang & Uang)
             await trx.query('UPDATE users SET cash = cash - ? WHERE user_id = ?', [totalPrice, userId]);
@@ -59,14 +59,14 @@ class ShopManager {
     // 💸 3. PLAYER JUAL KE SHOP
     static async sellToShop(userId, itemId, amount) {
         const itemConfig = shopConfig.items[itemId];
-        if (!itemConfig) throw new Error("Shop tidak menerima barang ini.");
-        if (amount < 1 || amount > 500) throw new Error("Limit transaksi: 1 - 500 item.");
+        if (!itemConfig) throw new Error('The shop does not buy this item.');
+        if (!Number.isInteger(amount) || amount < 1 || amount > 500) throw new Error('Sell amount must be between 1 and 500.');
 
         const trx = await db.startTransaction();
         try {
             // Cek Barang Player
             const playerStorage = await trx.query('SELECT amount FROM user_storage WHERE user_id = ? AND item_id = ? FOR UPDATE', [userId, itemId]);
-            if (!playerStorage[0] || playerStorage[0].amount < amount) throw new Error("Barangmu tidak cukup!");
+            if (!playerStorage[0] || playerStorage[0].amount < amount) throw new Error('You do not have enough of this item in storage.');
 
             // Kalkulasi Harga Jual (Harga jual sedikit lebih rendah dari harga beli pasar untuk mencegah eksploitasi)
             const shopStock = await trx.query('SELECT amount FROM shop_inventory WHERE item_id = ? FOR UPDATE', [itemId]);
@@ -77,11 +77,11 @@ class ShopManager {
 
             // Cek Uang Shop (APAKAH SHOP PUNYA UANG UNTUK MEMBAYAR?)
             const shop = await trx.query('SELECT cash, max_storage FROM global_shop WHERE id = 1 FOR UPDATE');
-            if (shop[0].cash < totalPrice) throw new Error("Uang Kas Shop tidak cukup untuk membelinya dari kamu! Tunggu pemain lain belanja.");
+            if (shop[0].cash < totalPrice) throw new Error('The shop does not have enough cash right now.');
 
             // Cek Kapasitas Storage Shop
             const totalItems = await trx.query('SELECT SUM(amount) as total FROM shop_inventory');
-            if ((parseInt(totalItems[0].total) + amount) > shop[0].max_storage) throw new Error("Gudang Shop Penuh! Tidak menerima barang untuk sementara.");
+            if ((parseInt(totalItems[0].total) + amount) > shop[0].max_storage) throw new Error('The shop storage is full right now.');
 
             // Transaksi (Pindah Barang & Uang)
             await trx.query('UPDATE global_shop SET cash = cash - ? WHERE id = 1', [totalPrice]); // Uang Shop berkurang

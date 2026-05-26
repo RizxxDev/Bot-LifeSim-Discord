@@ -1,32 +1,40 @@
-const { checkRegister, checkCooldown } = require('../utils/middleware');
+const config = require('../config.json');
+const { checkCooldown, checkRegistration } = require('../utils/middleware');
+const { sendError } = require('../utils/respond');
 
 module.exports = {
     name: 'messageCreate',
-    once: false,
     async handle(message, client) {
         if (message.author.bot) return;
 
-        const prefixes = ['!', 'L', 'l']; 
-        const usedPrefix = prefixes.find(p => message.content.startsWith(p));
-        if (!usedPrefix) return;
+        const prefixes = config.bot?.prefixes || ['!'];
+        const prefix = prefixes.find((item) => message.content.startsWith(item));
+        if (!prefix) return;
 
-        const args = message.content.slice(usedPrefix.length).trim().split(/ +/);
-        const commandName = args.shift().toLowerCase();
+        const args = message.content.slice(prefix.length).trim().split(/ +/).filter(Boolean);
+        const commandName = args.shift()?.toLowerCase();
+        if (!commandName) return;
 
-        const command = client.commands.get(commandName) || client.commands.find(cmd => cmd.aliases && cmd.aliases.includes(commandName));
+        const command = client.commands.get(commandName) || client.commands.get(client.aliases.get(commandName));
         if (!command || !command.prefix) return;
 
         try {
-            const isRegistered = await checkRegister(message.author.id, command.name);
-            if (!isRegistered) return message.reply('❌ **You don\'t have a character yet!** \nPlease type `!register` first.');
+            if (command.requiresRegistration !== false) {
+                const isRegistered = await checkRegistration(message.author.id);
+                if (!isRegistered) {
+                    return sendError(message, message.author, 'Create your citizen profile first with `/register` or `!register`.');
+                }
+            }
 
-            const cooldownMsg = checkCooldown(client, command, message.author.id);
-            if (cooldownMsg) return message.reply(cooldownMsg);
+            const timeLeft = await checkCooldown(command, message.author.id);
+            if (timeLeft) {
+                return sendError(message, message.author, `Please wait **${timeLeft}s** before using \`${command.name}\` again.`);
+            }
 
             await command.executePrefix(message, args);
         } catch (error) {
-            console.error(`[PREFIX ERROR - ${command.name}]`, error);
-            message.reply('❌ A system error occurred.').catch(console.error);
+            console.error('[COMMAND EXECUTION ERROR]', error);
+            await sendError(message, message.author, 'Something went wrong while running this command.');
         }
     }
 };

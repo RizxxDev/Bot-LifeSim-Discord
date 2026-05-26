@@ -1,5 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const CraftingManager = require('../../managers/CraftingManager');
+const { infoEmbed, successEmbed, formatNumber, colors } = require('../../utils/ui');
+const { send, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'craft',
@@ -9,109 +11,86 @@ module.exports = {
     cooldown: 3,
     data: new SlashCommandBuilder()
         .setName('craft')
-        .setDescription('Sistem pengolahan hasil panen')
-        .addSubcommand(sub => sub.setName('list').setDescription('Lihat daftar resep yang tersedia'))
-        .addSubcommand(sub => sub.setName('queue').setDescription('Lihat antrian crafting-mu yang sedang berjalan'))
-        .addSubcommand(sub => 
-            sub.setName('start')
-            .setDescription('Mulai membuat barang')
-            .addStringOption(opt => opt.setName('recipe').setDescription('ID Resep (contoh: flour, bread)').setRequired(true))
-            .addIntegerOption(opt => opt.setName('amount').setDescription('Jumlah yang ingin dibuat').setMinValue(1).setMaxValue(100))
-        )
-        .addSubcommand(sub => 
-            sub.setName('claim')
-            .setDescription('Ambil barang yang sudah selesai')
-            .addIntegerOption(opt => opt.setName('queue_id').setDescription('ID Antrian').setRequired(true))
-        ),
+        .setDescription('Process farm goods into crafted items.')
+        .addSubcommand(sub => sub.setName('list').setDescription('View available recipes.'))
+        .addSubcommand(sub => sub.setName('queue').setDescription('View your crafting queue.'))
+        .addSubcommand(sub => sub.setName('start').setDescription('Start a crafting job.')
+            .addStringOption(opt => opt.setName('recipe').setDescription('Recipe ID.').setRequired(true))
+            .addIntegerOption(opt => opt.setName('amount').setDescription('Amount to craft.').setMinValue(1).setMaxValue(100)))
+        .addSubcommand(sub => sub.setName('claim').setDescription('Claim a finished crafting job.')
+            .addIntegerOption(opt => opt.setName('queue_id').setDescription('Queue ID.').setRequired(true))),
 
     async executeSlash(interaction) {
-        const sub = interaction.options.getSubcommand();
-        const data = {
+        await handleCraft(interaction, interaction.user, interaction.options.getSubcommand(), {
             recipe: interaction.options.getString('recipe'),
             amount: interaction.options.getInteger('amount') || 1,
             queueId: interaction.options.getInteger('queue_id')
-        };
-        await handleCraft(interaction, interaction.user, sub, data, true);
+        });
     },
 
     async executePrefix(message, args) {
-        const user = message.author;
-        const sub = args[0]?.toLowerCase();
-
-        if (!sub || !['list', 'queue', 'start', 'claim'].includes(sub)) {
-            return message.channel.send(`❌ **${user.username}**, Format: \`!craft list\`, \`!craft queue\`, \`!craft start <resep> [jumlah]\`, \`!craft claim <queue_id>\``);
-        }
-
-        const data = {
+        await handleCraft(message, message.author, args[0]?.toLowerCase(), {
             recipe: args[1]?.toLowerCase(),
-            amount: parseInt(args[2]) || 1,
-            queueId: parseInt(args[1])
-        };
-        await handleCraft(message, user, sub, data, false);
+            amount: Number.parseInt(args[2] || '1', 10),
+            queueId: Number.parseInt(args[1], 10)
+        });
     }
 };
 
-async function handleCraft(context, user, sub, data, isSlash) {
+async function handleCraft(context, user, sub, data) {
+    if (!sub || !['list', 'queue', 'start', 'claim'].includes(sub)) {
+        return sendError(context, user, 'Usage: `!craft list`, `!craft queue`, `!craft start <recipe> [amount]`, or `!craft claim <queue_id>`.');
+    }
+
     try {
         if (sub === 'list') {
             const recipes = CraftingManager.getRecipes();
-            const embed = new EmbedBuilder().setColor('#FF9800').setTitle('📜 Buku Resep (Crafting)');
-            
-            let desc = '';
-            for (const [id, req] of Object.entries(recipes)) {
-                let ingredientsText = Object.entries(req.ingredients).map(([item, qty]) => `${qty}x ${item}`).join(', ');
-                desc += `${req.emoji} **${req.name}** (ID: \`${id}\`)\n`;
-                desc += `└ ⏱️ ${req.time_mins} Menit | 🧪 Bahan: ${ingredientsText}\n\n`;
-            }
-            
-            embed.setDescription(desc || 'Belum ada resep yang tersedia.');
-            return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
+            const embed = infoEmbed('Recipe Book', null, user)
+                .setColor(colors.craft);
+
+            embed.setDescription(Object.entries(recipes).map(([id, recipe]) => {
+                const ingredients = Object.entries(recipe.ingredients).map(([item, qty]) => `${qty}x ${item}`).join(', ');
+                return `${recipe.emoji || ''} **${recipe.name}** \`${id}\`\nTime: ${recipe.time_mins} min | Result: ${recipe.result} | Ingredients: ${ingredients}`;
+            }).join('\n\n') || 'No recipes are available.');
+
+            return send(context, { embeds: [embed] });
         }
 
         if (sub === 'queue') {
             const queue = await CraftingManager.getQueue(user.id);
-            const embed = new EmbedBuilder().setColor('#2196F3').setTitle(`⏳ Antrian Crafting: ${user.username}`);
-            
-            if (!queue || queue.length === 0) {
-                embed.setDescription("Kamu sedang tidak memproses barang apapun.");
-            } else {
-                const recipes = CraftingManager.getRecipes();
-                let desc = '';
-                queue.forEach(q => {
-                    const itemName = recipes[q.recipe_id]?.name || q.recipe_id;
-                    const isDone = Date.now() >= q.end_time;
-                    const timeText = isDone ? '✅ **SIAP DIAMBIL**' : `Selesai <t:${Math.round(q.end_time / 1000)}:R>`;
-                    
-                    desc += `**[ID: ${q.id}]** ${q.amount}x **${itemName}**\n└ ${timeText}\n\n`;
-                });
-                embed.setDescription(desc);
-                embed.setFooter({ text: 'Gunakan !craft claim <ID> untuk mengambil barang' });
-            }
-            
-            return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
+            const recipes = CraftingManager.getRecipes();
+            const embed = infoEmbed(`Crafting Queue: ${user.username}`, null, user)
+                .setColor(colors.craft);
+
+            embed.setDescription(queue.length ? queue.map((entry) => {
+                const recipe = recipes[entry.recipe_id];
+                const status = Date.now() >= entry.end_time ? 'Ready to claim' : `Done <t:${Math.round(entry.end_time / 1000)}:R>`;
+                return `**#${entry.id}** ${formatNumber(entry.amount)}x **${recipe?.name || entry.recipe_id}** — ${status}`;
+            }).join('\n') : 'No active crafting jobs.');
+            embed.setFooter({ text: 'Use /craft claim queue_id when a job is ready.' });
+
+            return send(context, { embeds: [embed] });
         }
 
         if (sub === 'start') {
-            if (!data.recipe) throw new Error("Format salah! Masukkan ID Resep.");
-            
+            if (!data.recipe) return sendError(context, user, 'Enter a recipe ID.');
+            if (!Number.isInteger(data.amount) || data.amount <= 0) return sendError(context, user, 'Amount must be a positive integer.');
+
             const finishTime = await CraftingManager.startCrafting(user.id, data.recipe, data.amount);
-            const timestamp = Math.round(finishTime / 1000);
-            
-            const msg = `🛠️ **${user.username}** mulai mengolah **${data.amount}x ${data.recipe}**! Proses akan selesai <t:${timestamp}:R>.`;
-            return isSlash ? context.reply(msg) : context.channel.send(msg);
+            const embed = successEmbed('Crafting Started', `Started **${formatNumber(data.amount)}x ${data.recipe}**. Ready <t:${Math.round(finishTime / 1000)}:R>.`, user)
+                .setColor(colors.craft);
+            return send(context, { embeds: [embed] });
         }
 
-        if (sub === 'claim') {
-            if (isNaN(data.queueId)) throw new Error("Format salah! Masukkan ID Antrian.");
-            
-            const result = await CraftingManager.claimCrafting(user.id, data.queueId);
-            const msg = `🎉 **${user.username}** berhasil mengambil **${result.amount}x ${result.itemName}** ${result.emoji}! (Barang masuk ke Storage)`;
-            return isSlash ? context.reply(msg) : context.channel.send(msg);
+        if (!Number.isInteger(data.queueId) || data.queueId <= 0) {
+            return sendError(context, user, 'Queue ID must be a positive integer.');
         }
 
+        const result = await CraftingManager.claimCrafting(user.id, data.queueId);
+        const embed = successEmbed('Crafting Claimed', `Claimed **${formatNumber(result.amount)}x ${result.itemName}** ${result.emoji || ''}.`, user)
+            .setColor(colors.craft);
+        return send(context, { embeds: [embed] });
     } catch (error) {
-        const errMsg = `❌ **${user.username}**, ${error.message}`;
-        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
-        else await context.channel.send(errMsg);
+        return sendError(context, user, error.message);
     }
 }

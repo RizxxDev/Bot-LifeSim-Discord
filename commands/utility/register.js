@@ -1,62 +1,57 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
-const config = require('../../config.json'); // Pastikan path config benar
+const config = require('../../config.json');
+const { successEmbed, formatMoney } = require('../../utils/ui');
+const { send, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'register',
-    aliases: ['reg', 'signup', 'start'],
+    aliases: ['reg', 'start'],
     prefix: true,
     slash: true,
-    cooldown: 10,
+    requiresRegistration: false,
     data: new SlashCommandBuilder()
         .setName('register')
-        .setDescription('Register as a new citizen and receive starting capital!'),
+        .setDescription('Create your citizen profile and receive starting cash.'),
 
     async executeSlash(interaction) {
-        await handleRegister(interaction, interaction.user, true);
+        await handleRegister(interaction, interaction.user);
     },
 
-    async executePrefix(message, args) {
-        await handleRegister(message, message.author, false);
+    async executePrefix(message) {
+        await handleRegister(message, message.author);
     }
 };
 
-async function handleRegister(context, user, isSlash) {
+async function handleRegister(context, user) {
     try {
         const existingUser = await db.query('SELECT user_id FROM users WHERE user_id = ?', [user.id]);
         if (existingUser && existingUser.length > 0) {
-            const msg = `❌ **${user.username}**, you are already registered as a citizen!`;
-            if (isSlash) return context.reply({ content: msg, ephemeral: true });
-            return context.channel.send(msg);
+            return sendError(context, user, 'You already have a citizen profile.');
         }
 
-        // 🌟 Mengambil Modal Awal dari config.json
-        const startCapital = config.economy.startingCash || 10000; 
-        
+        const startCapital = config.economy?.startingCash || 10000;
         await db.query(
-            'INSERT INTO users (user_id, cash, bank, energy, hunger) VALUES (?, ?, 0, 100, 100)', 
+            'INSERT INTO users (user_id, cash, bank, energy, hunger) VALUES (?, ?, 0, 100, 100)',
             [user.id, startCapital]
         );
+        await db.query('INSERT IGNORE INTO user_skills (user_id) VALUES (?)', [user.id]);
+        await db.query('INSERT IGNORE INTO user_farms (user_id) VALUES (?)', [user.id]);
 
-        const embed = new EmbedBuilder()
-            .setColor('#2ECC71')
-            .setTitle('🛂 Registration Successful!')
+        const embed = successEmbed(
+            'Citizen Profile Created',
+            `Welcome, **${user.username}**. Your city life starts now.`,
+            user
+        )
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
-            .setDescription(`Welcome to the city, **${user.username}**!\nYou are now officially a citizen.`)
             .addFields(
-                { name: '💰 Starting Cash', value: `Lp ${startCapital.toLocaleString()}`, inline: true },
-                { name: '⚡ Energy', value: '100/100', inline: true },
-                { name: '🍔 Hunger', value: '100/100', inline: true }
-            )
-            .setFooter({ text: 'Type /help to see available commands.' })
-            .setTimestamp();
+                { name: 'Starting cash', value: formatMoney(startCapital), inline: true },
+                { name: 'Next step', value: '`/job list` or `!job list`', inline: true }
+            );
 
-        if (isSlash) await context.reply({ embeds: [embed] });
-        else await context.channel.send({ embeds: [embed] });
+        return send(context, { embeds: [embed] });
     } catch (error) {
         console.error('[REGISTER ERROR]', error);
-        const errMsg = `❌ **${user.username}**, registration failed due to a database error.`;
-        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
-        else await context.channel.send(errMsg);
+        return sendError(context, user, 'Could not create your citizen profile.');
     }
 }

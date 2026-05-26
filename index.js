@@ -1,64 +1,77 @@
 require('dotenv').config();
+const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-// Menambahkan Partials agar bot bisa membaca pesan dari DM yang belum di-cache
-const { Client, GatewayIntentBits, Collection, Partials } = require('discord.js');
-const EventHandler = require('./eventHandlers/EventHandler'); //
+
+// 🌟 PANGGIL FUNGSI KONEKSI REDIS
+const { connectRedis } = require('./botHandlers/redisHandler');
 
 const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMessages, 
-        GatewayIntentBits.MessageContent,
-        // Intent untuk mendengarkan pesan di Direct Message
-        GatewayIntentBits.DirectMessages 
-    ],
-    partials: [
-        Partials.Channel,
-        Partials.Message
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent, // Wajib untuk membaca prefix command
     ]
 });
 
-// Setup Collections untuk Command dan Cooldown
 client.commands = new Collection();
+client.aliases = new Collection();
+client.slashCommandData = [];
 client.cooldowns = new Collection();
-client.slashCommandData = []; // Wadah sementara untuk mendaftarkan Slash Commands
 
 // ==========================================
-// 1. COMMAND LOADER (RECURSIVE)
+// COMMAND HANDLER
 // ==========================================
-// Membaca semua file .js di dalam folder commands secara mendalam
-const loadCommands = (dir) => {
-    if (!fs.existsSync(dir)) return;
-    const files = fs.readdirSync(dir);
+const commandsPath = path.join(__dirname, 'commands');
+const commandFolders = fs.readdirSync(commandsPath);
 
-    for (const file of files) {
-        const fullPath = path.join(dir, file);
-        if (fs.statSync(fullPath).isDirectory()) {
-            loadCommands(fullPath); // Masuk ke sub-folder
-        } else if (file.endsWith('.js')) {
-            const command = require(fullPath);
-            if (command.name) {
-                client.commands.set(command.name, command);
-                // Menyiapkan data JSON untuk registrasi Slash Command
-                if (command.slash && command.data) {
-                    client.slashCommandData.push(command.data.toJSON());
-                }
+for (const folder of commandFolders) {
+    const folderPath = path.join(commandsPath, folder);
+    const commandFiles = fs.readdirSync(folderPath).filter(file => file.endsWith('.js'));
+    
+    for (const file of commandFiles) {
+        const filePath = path.join(folderPath, file);
+        const command = require(filePath);
+        
+        if (command.name) {
+            client.commands.set(command.name, command);
+            
+            // Register Aliases
+            if (command.aliases && Array.isArray(command.aliases)) {
+                command.aliases.forEach(alias => client.aliases.set(alias, command.name));
+            }
+            
+            // Register Slash Command Data
+            if (command.slash && command.data) {
+                client.slashCommandData.push(command.data.toJSON());
             }
         }
     }
-};
-
-loadCommands(path.join(__dirname, 'commands'));
-console.log(`✅ [SYSTEM] Loaded ${client.commands.size} Commands.`);
+}
 
 // ==========================================
-// 2. INITIALIZE EVENT HANDLER
+// EVENT HANDLER
 // ==========================================
-// Memanggil class EventHandler untuk menangani event (ready, messageCreate, dll)
-new EventHandler(client);
+const eventsPath = path.join(__dirname, 'eventHandlers');
+const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
 
-// ==========================================
-// 3. LOGIN
-// ==========================================
-client.login(process.env.DISCORD_TOKEN);
+for (const file of eventFiles) {
+    const filePath = path.join(eventsPath, file);
+    const event = require(filePath);
+    
+    if (event.once) {
+        client.once(event.name, (...args) => event.handle(...args, client));
+    } else {
+        client.on(event.name, (...args) => event.handle(...args, client));
+    }
+}
+
+async function main() {
+    await connectRedis();
+    await client.login(process.env.DISCORD_TOKEN);
+}
+
+main().catch((error) => {
+    console.error('[BOT STARTUP ERROR]', error);
+    process.exitCode = 1;
+});

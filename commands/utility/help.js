@@ -1,63 +1,61 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
+const config = require('../../config.json');
+const { infoEmbed, colors } = require('../../utils/ui');
+const { send } = require('../../utils/respond');
 
 module.exports = {
     name: 'help',
-    aliases: ['h', 'commands', 'cmd'],
+    aliases: ['h', 'commands'],
     prefix: true,
     slash: true,
-    cooldown: 5, 
+    requiresRegistration: false,
     data: new SlashCommandBuilder()
         .setName('help')
-        .setDescription('Displays a list of all available commands in the city.'),
+        .setDescription('Show all available commands.'),
 
     async executeSlash(interaction) {
-        const commands = interaction.client.commands;
-        const embed = generateHelpEmbed(commands, interaction.user);
-        
-        await interaction.reply({ embeds: [embed] });
+        await handleHelp(interaction, interaction.user, interaction.client.commands);
     },
 
-    async executePrefix(message, args) {
-        const commands = message.client.commands;
-        const embed = generateHelpEmbed(commands, message.author);
-        
-        // Menggunakan channel.send() agar bersih
-        await message.channel.send({ embeds: [embed] });
+    async executePrefix(message) {
+        await handleHelp(message, message.author, message.client.commands);
     }
 };
 
-function generateHelpEmbed(commandsCollection, user) {
-    const embed = new EmbedBuilder()
-        .setColor('#ffa601')
-        .setTitle('📚 Help Menu 📚')
-        .setDescription('Here is a list of commands you can use. You can use the prefix `L` or `/` (Slash Command).')
-        .setFooter({ text: `Requested by ${user.username}`, iconURL: user.displayAvatarURL({ dynamic: true }) })
-        .setTimestamp();
+async function handleHelp(context, user, commands) {
+    const prefix = config.bot?.prefixes?.[0] || '!';
+    const groups = {};
 
-    const economyCommands = ['bank', 'work', 'balance', 'daily', 'profile', 'craft', 'farm', 'market', 'leaderboard', 'inventory']; 
-    let economyText = '';
-    
-    const utilityCommands = ['help', 'ping', 'register']; 
-    let utilityText = '';
+    for (const command of commands.values()) {
+        const category = command.category || inferCategory(command.name);
+        if (!groups[category]) groups[category] = [];
+        groups[category].push(command);
+    }
 
-    commandsCollection.forEach(cmd => {
-        if (economyCommands.includes(cmd.name)) {
-            const desc = cmd.data ? cmd.data.description : 'No description available.';
-            economyText += `🔹 **\`/${cmd.name}\`** - ${desc}\n`;
-        }
-        else if (utilityCommands.includes(cmd.name)) {
-            const desc = cmd.data ? cmd.data.description : 'No description available.';
-            utilityText += `🔹 **\`/${cmd.name}\`** - ${desc}\n`;
-        }
-    });
+    const embed = infoEmbed(
+        'Command Center',
+        `Use slash commands or prefix commands. Default prefix: \`${prefix}\`.`,
+        user
+    ).setColor(colors.primary);
 
-    if (economyText) embed.addFields({ name: '💰 Economy & Jobs', value: economyText });
-    if (utilityText) embed.addFields({ name: '🛠️ Utility & Account', value: utilityText });
+    for (const [category, items] of Object.entries(groups)) {
+        const value = items
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((command) => {
+                const aliases = command.aliases?.length ? ` (${command.aliases.join(', ')})` : '';
+                return `\`${command.name}\`${aliases}`;
+            })
+            .join('\n');
 
-    embed.addFields({ 
-        name: '💡 Tips', 
-        value: 'Some commands have "Aliases" (nicknames). For example, to access the bank, you can type `!atm` or `!bal` instead of `!bank`.' 
-    });
+        embed.addFields({ name: category, value: value || 'No commands', inline: true });
+    }
 
-    return embed;
+    embed.setFooter({ text: `Try ${prefix}profile, ${prefix}shop, or /farm view` });
+    return send(context, { embeds: [embed] });
+}
+
+function inferCategory(commandName) {
+    if (['help', 'ping', 'register'].includes(commandName)) return 'Utility';
+    if (['farm', 'craft', 'market'].includes(commandName)) return 'Farming';
+    return 'Economy';
 }

@@ -1,5 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
+const { infoEmbed, formatMoney, progressBar, colors } = require('../../utils/ui');
+const { send, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'profile',
@@ -8,58 +10,51 @@ module.exports = {
     slash: true,
     data: new SlashCommandBuilder()
         .setName('profile')
-        .setDescription('Lihat statistik lengkap karaktermu'),
+        .setDescription('View your citizen profile.'),
 
     async executeSlash(interaction) {
-        await runProfile(interaction, interaction.user, true);
+        await runProfile(interaction, interaction.user);
     },
 
-    async executePrefix(message, args) {
-        await runProfile(message, message.author, false);
+    async executePrefix(message) {
+        await runProfile(message, message.author);
     }
 };
 
-async function runProfile(context, user, isSlash) {
+async function runProfile(context, user) {
     try {
         const rows = await db.query(`
-            SELECT u.*, j.name as job_name, j.emoji as job_emoji 
-            FROM users u 
-            LEFT JOIN jobs j ON u.job_id = j.id 
+            SELECT u.*, j.name as job_name, j.emoji as job_emoji
+            FROM users u
+            LEFT JOIN jobs j ON u.job_id = j.id
             WHERE u.user_id = ?
         `, [user.id]);
-        
+
         if (!rows || rows.length === 0) {
-            const failMsg = `❌ **${user.username}**, karakter tidak ditemukan. Gunakan \`/register\` terlebih dahulu.`;
-            if (isSlash) return context.reply({ content: failMsg, ephemeral: true });
-            return context.channel.send(failMsg);
+            return sendError(context, user, 'Profile not found. Use `/register` first.');
         }
 
-        const u = rows[0];
-        const requiredExp = Math.floor(100 * Math.pow(u.level, 1.2));
-        const jobDisplay = u.job_id ? `${u.job_emoji} ${u.job_name}` : '❌ Pengangguran';
+        const data = rows[0];
+        const requiredExp = Math.floor(100 * Math.pow(data.level, 1.2));
+        const jobDisplay = data.job_id ? `${data.job_emoji || ''} ${data.job_name}`.trim() : 'Unemployed';
 
-        const embed = new EmbedBuilder()
-            .setColor('#2196F3')
-            .setTitle(`👤 Profil Warga: ${user.username}`)
-            .setThumbnail(user.displayAvatarURL())
+        const embed = infoEmbed(`Citizen Profile: ${user.username}`, null, user)
+            .setColor(colors.primary)
+            .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .addFields(
-                { name: '💼 Pekerjaan', value: jobDisplay, inline: false },
-                { name: '⭐ Level', value: `Level ${u.level}`, inline: true },
-                { name: '📈 EXP', value: `${u.exp} / ${requiredExp}`, inline: true },
-                { name: '🎯 Skill Points', value: `${u.skill_points} SP`, inline: true },
-                { name: '💵 Uang Tunai', value: `Lp ${u.cash.toLocaleString()}`, inline: true },
-                { name: '🏦 Saldo Bank', value: `Lp ${u.bank.toLocaleString()}`, inline: true },
-                { name: '\u200B', value: '\u200B', inline: true }
+                { name: 'Career', value: jobDisplay, inline: false },
+                { name: 'Level', value: `Lv. ${data.level}`, inline: true },
+                { name: 'EXP', value: progressBar(data.exp, requiredExp, 8), inline: true },
+                { name: 'Skill points', value: `${data.skill_points} SP`, inline: true },
+                { name: 'Cash', value: formatMoney(data.cash), inline: true },
+                { name: 'Bank', value: formatMoney(data.bank), inline: true },
+                { name: 'Status', value: `Energy ${data.energy}% | Hunger ${data.hunger}%`, inline: true }
             )
-            .setFooter({ text: 'Gunakan !job list untuk mencari kerja atau !skill untuk upgrade keahlian' })
-            .setTimestamp();
+            .setFooter({ text: 'Next: /job list, /skill view, or /bank info' });
 
-        if (isSlash) await context.reply({ embeds: [embed] });
-        else await context.channel.send({ embeds: [embed] });
+        return send(context, { embeds: [embed] });
     } catch (error) {
-        console.error('Profile error:', error);
-        const errMsg = `❌ **${user.username}**, terjadi kesalahan saat mengambil data profil.`;
-        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
-        else await context.channel.send(errMsg);
+        console.error('[PROFILE ERROR]', error);
+        return sendError(context, user, 'Could not load your profile.');
     }
 }

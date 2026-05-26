@@ -15,8 +15,8 @@ class CraftingManager {
     // Memulai proses pembuatan
     static async startCrafting(userId, recipeId, amount = 1) {
         const recipe = recipes[recipeId];
-        if (!recipe) throw new Error("Resep tidak ditemukan!");
-        if (amount < 1 || amount > 100) throw new Error("Jumlah pembuatan harus antara 1 - 100!");
+        if (!recipe) throw new Error('Recipe not found.');
+        if (!Number.isInteger(amount) || amount < 1 || amount > 100) throw new Error('Craft amount must be between 1 and 100.');
 
         const trx = await db.startTransaction();
         try {
@@ -26,7 +26,7 @@ class CraftingManager {
                 const storage = await trx.query('SELECT amount FROM user_storage WHERE user_id = ? AND item_id = ? FOR UPDATE', [userId, ingredient]);
 
                 if (!storage || storage.length === 0 || storage[0].amount < totalNeeded) {
-                    throw new Error(`Bahan baku kurang! Kamu membutuhkan **${totalNeeded}x ${ingredient}**.`);
+                    throw new Error(`Missing ingredients. Required: ${totalNeeded}x ${ingredient}.`);
                 }
 
                 await trx.query('UPDATE user_storage SET amount = amount - ? WHERE user_id = ? AND item_id = ?', [totalNeeded, userId, ingredient]);
@@ -51,13 +51,15 @@ class CraftingManager {
 
     // Mengklaim (mengambil) barang yang sudah selesai dibuat
     static async claimCrafting(userId, queueId) {
+        if (!Number.isInteger(queueId) || queueId <= 0) throw new Error('Queue ID must be a positive integer.');
+
         const trx = await db.startTransaction();
         try {
             const queue = await trx.query('SELECT * FROM crafting_queue WHERE id = ? AND user_id = ? FOR UPDATE', [queueId, userId]);
-            if (!queue || queue.length === 0) throw new Error("ID Antrian tidak ditemukan atau bukan milikmu!");
+            if (!queue || queue.length === 0) throw new Error('Queue entry not found or not owned by you.');
 
             const q = queue[0];
-            if (Date.now() < q.end_time) throw new Error("Proses crafting belum selesai! Sabar ya.");
+            if (Date.now() < q.end_time) throw new Error('This crafting job is not finished yet.');
 
             const recipe = recipes[q.recipe_id];
             const totalResult = recipe.result * q.amount;

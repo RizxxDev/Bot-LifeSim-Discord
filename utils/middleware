@@ -1,35 +1,42 @@
 const db = require('../botHandlers/mysqlHandler');
-const { Collection } = require('discord.js');
+const { redisClient, isRedisReady } = require('../botHandlers/redisHandler');
 
-const freeCommands = ['ping', 'register', 'help'];
-
-exports.checkRegister = async function (userId, commandName) {
-    if (freeCommands.includes(commandName)) return true;
-
+exports.checkRegistration = async (userId) => {
     const rows = await db.query('SELECT user_id FROM users WHERE user_id = ?', [userId]);
-    if (!rows || rows.length === 0) return false; 
-    
-    return true;
+    return Boolean(rows && rows.length > 0);
 };
 
-exports.checkCooldown = function (client, command, userId) {
-    if (!client.cooldowns.has(command.name)) {
-        client.cooldowns.set(command.name, new Collection());
+/**
+ * Mengecek apakah user sedang dalam masa cooldown untuk command tertentu via Redis.
+ */
+exports.checkCooldown = async (command, userId) => {
+    if (!isRedisReady()) {
+        return false;
     }
 
-    const now = Date.now();
-    const timestamps = client.cooldowns.get(command.name);
-    const cooldownMs = (command.cooldown || 3) * 1000;
+    const cooldownAmount = command.cooldown || 3; 
+    
+    const redisKey = `cooldown:${command.name}:${userId}`;
 
-    if (timestamps.has(userId)) {
-        const expirationTime = timestamps.get(userId) + cooldownMs;
-        if (now < expirationTime) {
-            const timeLeft = Math.round(expirationTime / 1000);
-            return `⏳ Please wait! You can use this command again <t:${timeLeft}:R>.`;
+    try {
+        const expirationTime = await redisClient.get(redisKey);
+
+        if (expirationTime) {
+            const timeLeft = (parseInt(expirationTime) - Date.now()) / 1000;
+            if (timeLeft > 0) {
+                return timeLeft.toFixed(1); // Return sisa waktu
+            }
         }
-    }
 
-    timestamps.set(userId, now);
-    setTimeout(() => timestamps.delete(userId), cooldownMs);
-    return null;
+        const now = Date.now();
+        const expireTimestamp = now + (cooldownAmount * 1000);
+        
+        await redisClient.setEx(redisKey, cooldownAmount, expireTimestamp.toString());
+
+        return false;
+
+    } catch (error) {
+        console.error('[REDIS COOLDOWN ERROR]', error);
+        return false;
+    }
 };

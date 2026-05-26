@@ -157,6 +157,19 @@ module.exports = {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
 
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS crafting_queue (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id VARCHAR(25),
+                    recipe_id VARCHAR(50),
+                    amount INT,
+                    start_time BIGINT,
+                    end_time BIGINT,
+                    INDEX idx_crafting_user (user_id),
+                    INDEX idx_crafting_end_time (end_time)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            `);
+
             // ------------------------------------------
             // C. SHOP AI & CONVERTER TABLES
             // ------------------------------------------

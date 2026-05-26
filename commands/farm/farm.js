@@ -1,7 +1,9 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
-const FarmManager = require('../../managers/FarmManager'); 
-const cropsConfig = require('../../config/crops.json'); 
+const FarmManager = require('../../managers/FarmManager');
+const cropsConfig = require('../../config/crops.json');
+const { infoEmbed, successEmbed, formatNumber, progressBar, colors } = require('../../utils/ui');
+const { send, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'farm',
@@ -11,189 +13,132 @@ module.exports = {
     cooldown: 5,
     data: new SlashCommandBuilder()
         .setName('farm')
-        .setDescription('Manajemen ladang pertanian')
-        .addSubcommand(sub => sub.setName('view').setDescription('Lihat kondisi ladangmu'))
-        .addSubcommand(sub => sub.setName('storage').setDescription('Lihat isi gudang penyimpanan hasil panen'))
-        .addSubcommand(sub => 
-            sub.setName('plant')
-            .setDescription('Tanam benih di satu petak ladang')
-            .addIntegerOption(opt => opt.setName('x').setDescription('Koordinat X').setRequired(true).setMinValue(1))
-            .addIntegerOption(opt => opt.setName('y').setDescription('Koordinat Y').setRequired(true).setMinValue(1))
-            .addStringOption(opt => opt.setName('crop').setDescription('Jenis tanaman').setRequired(true))
-        )
-        .addSubcommand(sub => 
-            sub.setName('plantall')
-            .setDescription('Tanam benih sekaligus di semua petak kosong!')
-            .addStringOption(opt => opt.setName('crop').setDescription('Jenis tanaman (contoh: wheat)').setRequired(true))
-        )
-        .addSubcommand(sub => 
-            sub.setName('harvest')
-            .setDescription('Panen tanaman di satu petak')
-            .addIntegerOption(opt => opt.setName('x').setDescription('Koordinat X').setRequired(true).setMinValue(1))
-            .addIntegerOption(opt => opt.setName('y').setDescription('Koordinat Y').setRequired(true).setMinValue(1))
-        )
-        .addSubcommand(sub => 
-            sub.setName('harvestall')
-            .setDescription('Panen SEMUA tanaman yang sudah siap sekaligus!')
-        ),
+        .setDescription('Manage your farm.')
+        .addSubcommand(sub => sub.setName('view').setDescription('View your farm grid.'))
+        .addSubcommand(sub => sub.setName('storage').setDescription('View harvested crop storage.'))
+        .addSubcommand(sub => sub.setName('plant').setDescription('Plant one crop.')
+            .addIntegerOption(opt => opt.setName('x').setDescription('X coordinate.').setRequired(true).setMinValue(1))
+            .addIntegerOption(opt => opt.setName('y').setDescription('Y coordinate.').setRequired(true).setMinValue(1))
+            .addStringOption(opt => opt.setName('crop').setDescription('Crop ID.').setRequired(true)))
+        .addSubcommand(sub => sub.setName('plantall').setDescription('Plant all empty tiles.')
+            .addStringOption(opt => opt.setName('crop').setDescription('Crop ID.').setRequired(true)))
+        .addSubcommand(sub => sub.setName('harvest').setDescription('Harvest one tile.')
+            .addIntegerOption(opt => opt.setName('x').setDescription('X coordinate.').setRequired(true).setMinValue(1))
+            .addIntegerOption(opt => opt.setName('y').setDescription('Y coordinate.').setRequired(true).setMinValue(1)))
+        .addSubcommand(sub => sub.setName('harvestall').setDescription('Harvest every ready crop.')),
 
     async executeSlash(interaction) {
-        const sub = interaction.options.getSubcommand(false) || 'view'; 
-        
-        let x = null, y = null, crop = null;
-
-        if (sub === 'plant' || sub === 'harvest') {
-            x = interaction.options.getInteger('x') - 1; 
-            y = interaction.options.getInteger('y') - 1;
-        }
-        if (sub === 'plant' || sub === 'plantall') {
-            crop = interaction.options.getString('crop');
-        }
-        
-        await handleFarmCommand(interaction, interaction.user, sub, { x, y, crop }, true);
+        const sub = interaction.options.getSubcommand(false) || 'view';
+        await handleFarm(interaction, interaction.user, sub, {
+            x: ['plant', 'harvest'].includes(sub) ? interaction.options.getInteger('x') - 1 : null,
+            y: ['plant', 'harvest'].includes(sub) ? interaction.options.getInteger('y') - 1 : null,
+            crop: ['plant', 'plantall'].includes(sub) ? interaction.options.getString('crop') : null
+        });
     },
 
     async executePrefix(message, args) {
-        const user = message.author;
-        const sub = args[0] ? args[0].toLowerCase() : 'view';
-
-        if (!['view', 'plant', 'plantall', 'harvest', 'harvestall', 'storage'].includes(sub)) {
-            return message.channel.send(`❌ **${user.username}**, Format: \n\`!farm\` | \`!farm storage\` | \`!farm plant <x> <y> <crop>\` | \`!farm plantall <crop>\` | \`!farm harvest <x> <y>\` | \`!farm harvestall\``);
-        }
-
-        let x = null, y = null, crop = null;
-
-        if (sub === 'plant' || sub === 'harvest') {
-            x = (args[1] !== undefined && args[1] !== '') ? parseInt(args[1]) - 1 : null;
-            y = (args[2] !== undefined && args[2] !== '') ? parseInt(args[2]) - 1 : null;
-            crop = args[3]?.toLowerCase();
-        } else if (sub === 'plantall') {
-            crop = args[1]?.toLowerCase();
-        }
-
-        await handleFarmCommand(message, user, sub, { x, y, crop }, false);
+        const sub = args[0]?.toLowerCase() || 'view';
+        await handleFarm(message, message.author, sub, {
+            x: ['plant', 'harvest'].includes(sub) ? Number.parseInt(args[1], 10) - 1 : null,
+            y: ['plant', 'harvest'].includes(sub) ? Number.parseInt(args[2], 10) - 1 : null,
+            crop: sub === 'plant' ? args[3]?.toLowerCase() : sub === 'plantall' ? args[1]?.toLowerCase() : null
+        });
     }
 };
 
-async function handleFarmCommand(context, user, sub, data, isSlash) {
-    const userId = user.id;
+async function handleFarm(context, user, sub, data) {
+    if (!['view', 'storage', 'plant', 'plantall', 'harvest', 'harvestall'].includes(sub)) {
+        return sendError(context, user, 'Usage: `!farm`, `!farm storage`, `!farm plant <x> <y> <crop>`, `!farm plantall <crop>`, `!farm harvest <x> <y>`, or `!farm harvestall`.');
+    }
 
     try {
-        await db.query('INSERT IGNORE INTO user_farms (user_id) VALUES (?)', [userId]);
+        await db.query('INSERT IGNORE INTO user_farms (user_id) VALUES (?)', [user.id]);
 
         if (sub === 'view') {
-            const farmData = await db.query('SELECT * FROM user_farms WHERE user_id = ?', [userId]);
-            if (!farmData || farmData.length === 0) throw new Error("Data ladang gagal dimuat.");
-            
-            const farm = farmData[0];
-            const tiles = await db.query('SELECT * FROM farm_tiles WHERE user_id = ?', [userId]);
-            
-            let gridVisual = '';
-            for (let y = 0; y < farm.height; y++) {
-                for (let x = 0; x < farm.width; x++) {
-                    const tile = tiles.find(t => t.x === x && t.y === y);
-                    if (!tile || !tile.crop_id) {
-                        gridVisual += (tile && tile.is_watered) ? '🟦 ' : '🟫 '; 
-                    } else if (tile.growth < 100) {
-                        gridVisual += '🌱 '; 
-                    } else {
-                        gridVisual += '🌾 '; 
-                    }
-                }
-                gridVisual += '\n';
-            }
-
-            const storageData = await db.query('SELECT SUM(amount) as total FROM user_storage WHERE user_id = ?', [userId]);
-
-            const embed = new EmbedBuilder()
-                .setColor('#4CAF50')
-                .setTitle(`🚜 Ladang Milik ${user.username}`)
-                .setDescription(`**Grid Map (${farm.width}x${farm.height})**\n\n${gridVisual}`)
-                .addFields(
-                    { name: '📦 Storage', value: `${storageData[0].total || 0} / ${farm.max_storage} items`, inline: true },
-                    { name: '💡 Keterangan', value: '🟫 Kosong | 🟦 Basah | 🌱 Tumbuh | 🌾 Panen', inline: false }
-                );
-
-            return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
+            return send(context, { embeds: [await buildFarmEmbed(user)] });
         }
 
         if (sub === 'storage') {
-            const farmData = await db.query('SELECT max_storage FROM user_farms WHERE user_id = ?', [userId]);
-            const maxStorage = farmData[0].max_storage;
-            const items = await db.query('SELECT item_id, amount FROM user_storage WHERE user_id = ? AND amount > 0', [userId]);
-            
-            const embed = new EmbedBuilder().setColor('#8B4513').setTitle(`📦 Gudang Penyimpanan: ${user.username}`).setThumbnail(user.displayAvatarURL());
-
-            if (!items || items.length === 0) {
-                embed.setDescription(`*Gudangmu masih kosong.*`).addFields({ name: '📊 Kapasitas', value: `0 / ${maxStorage} Terisi` });
-                return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
-            }
-
-            let totalItems = 0;
-            let itemList = '';
-            items.forEach(item => {
-                totalItems += item.amount;
-                const itemName = cropsConfig[item.item_id]?.name || item.item_id;
-                itemList += `🔹 **${itemName}** x${item.amount}\n`;
-            });
-
-            embed.setDescription(itemList);
-            let capacityText = `${totalItems} / ${maxStorage} Terisi`;
-            if (totalItems >= maxStorage * 0.8) capacityText += ` ⚠️ *(Hampir Penuh!)*`;
-            if (totalItems >= maxStorage) capacityText += ` 🚨 *(Penuh!)*`;
-
-            embed.addFields({ name: '📊 Kapasitas', value: capacityText });
-            return isSlash ? context.reply({ embeds: [embed] }) : context.channel.send({ embeds: [embed] });
+            return send(context, { embeds: [await buildStorageEmbed(user)] });
         }
 
         if (sub === 'plant') {
-            if (data.x === null || data.y === null || isNaN(data.x) || isNaN(data.y) || !data.crop) throw new Error("Koordinat X, Y, dan jenis tanaman harus diisi.");
-            await FarmManager.plantCrop(userId, data.x, data.y, data.crop);
-            const msg = `🌱 **${user.username}** berhasil menanam **${cropsConfig[data.crop].name}** di [${data.x + 1}, ${data.y + 1}]!`;
-            return isSlash ? context.reply(msg) : context.channel.send(msg);
+            if (!Number.isInteger(data.x) || !Number.isInteger(data.y) || !data.crop) {
+                return sendError(context, user, 'Enter X, Y, and crop ID.');
+            }
+            await FarmManager.plantCrop(user.id, data.x, data.y, data.crop);
+            const cropName = cropsConfig[data.crop]?.name || data.crop;
+            return send(context, { embeds: [successEmbed('Crop Planted', `Planted **${cropName}** at **[${data.x + 1}, ${data.y + 1}]**.`, user).setColor(colors.farm)] });
         }
 
-        // =====================================
-        // 🌟 EKSEKUSI PLANT ALL
-        // =====================================
         if (sub === 'plantall') {
-            if (!data.crop) throw new Error("Jenis tanaman harus diisi. Format: `!farm plantall <crop>`");
-            const count = await FarmManager.plantAll(userId, data.crop);
-            const msg = `🌱 **${user.username}** berhasil menanam **${count} petak** **${cropsConfig[data.crop].name}** sekaligus di lahan yang kosong!`;
-            return isSlash ? context.reply(msg) : context.channel.send(msg);
+            if (!data.crop) return sendError(context, user, 'Enter a crop ID.');
+            const count = await FarmManager.plantAll(user.id, data.crop);
+            const cropName = cropsConfig[data.crop]?.name || data.crop;
+            return send(context, { embeds: [successEmbed('Farm Planted', `Planted **${count}** empty tile(s) with **${cropName}**.`, user).setColor(colors.farm)] });
         }
 
         if (sub === 'harvest') {
-            if (data.x === null || data.y === null || isNaN(data.x) || isNaN(data.y)) throw new Error("Koordinat X dan Y harus diisi.");
-            const yieldAmount = await FarmManager.harvestCrop(userId, data.x, data.y);
-            const msg = `🌾 **${user.username}** memanen tanaman di [${data.x + 1}, ${data.y + 1}] dan mendapat **${yieldAmount} item**!`;
-            return isSlash ? context.reply(msg) : context.channel.send(msg);
+            if (!Number.isInteger(data.x) || !Number.isInteger(data.y)) {
+                return sendError(context, user, 'Enter valid X and Y coordinates.');
+            }
+            const amount = await FarmManager.harvestCrop(user.id, data.x, data.y);
+            return send(context, { embeds: [successEmbed('Crop Harvested', `Harvested **${amount} item(s)** from **[${data.x + 1}, ${data.y + 1}]**.`, user).setColor(colors.farm)] });
         }
 
-        // =====================================
-        // 🌟 EKSEKUSI HARVEST ALL
-        // =====================================
-        if (sub === 'harvestall') {
-            const result = await FarmManager.harvestAll(userId);
-            
-            let summaryText = '';
-            for (const [cropId, amount] of Object.entries(result.summary)) {
-                const name = cropsConfig[cropId]?.name || cropId;
-                summaryText += `🔹 **${amount}x ${name}**\n`;
-            }
-
-            let msg = `🚜 **${user.username}** memanen **${result.count} petak** sekaligus dan mendapatkan:\n${summaryText}`;
-            
-            if (result.isStorageFull) {
-                msg += `\n⚠️ *Proses panen dihentikan di tengah jalan karena Storage penuh!*`;
-            }
-
-            return isSlash ? context.reply(msg) : context.channel.send(msg);
-        }
-
+        const result = await FarmManager.harvestAll(user.id);
+        const summary = Object.entries(result.summary)
+            .map(([cropId, amount]) => `• **${formatNumber(amount)}x ${cropsConfig[cropId]?.name || cropId}**`)
+            .join('\n');
+        const embed = successEmbed('Harvest Complete', `Harvested **${result.count}** tile(s).\n\n${summary}`, user)
+            .setColor(colors.farm);
+        if (result.isStorageFull) embed.setFooter({ text: 'Harvest stopped early because storage became full.' });
+        return send(context, { embeds: [embed] });
     } catch (error) {
-        const errMsg = `❌ **${user.username}**, ${error.message}`;
-        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
-        else await context.channel.send(errMsg);
+        return sendError(context, user, error.message);
     }
+}
+
+async function buildFarmEmbed(user) {
+    const farmRows = await db.query('SELECT * FROM user_farms WHERE user_id = ?', [user.id]);
+    const farm = farmRows[0];
+    const tiles = await db.query('SELECT * FROM farm_tiles WHERE user_id = ?', [user.id]);
+    const storageRows = await db.query('SELECT SUM(amount) as total FROM user_storage WHERE user_id = ?', [user.id]);
+    const storage = Number(storageRows[0]?.total || 0);
+
+    let grid = '';
+    for (let y = 0; y < farm.height; y++) {
+        for (let x = 0; x < farm.width; x++) {
+            const tile = tiles.find(item => item.x === x && item.y === y);
+            if (!tile || !tile.crop_id) grid += tile?.is_watered ? '🟦 ' : '⬛ ';
+            else if (tile.growth < 100) grid += '🌱 ';
+            else grid += '🌾 ';
+        }
+        grid += '\n';
+    }
+
+    return infoEmbed(`Farm: ${user.username}`, `\`\`\`\n${grid}\`\`\``, user)
+        .setColor(colors.farm)
+        .addFields(
+            { name: 'Storage', value: progressBar(storage, farm.max_storage, 8), inline: true },
+            { name: 'Legend', value: '⬛ Empty | 🟦 Watered | 🌱 Growing | 🌾 Ready', inline: false }
+        );
+}
+
+async function buildStorageEmbed(user) {
+    const farmRows = await db.query('SELECT max_storage FROM user_farms WHERE user_id = ?', [user.id]);
+    const maxStorage = Number(farmRows[0]?.max_storage || 50);
+    const items = await db.query('SELECT item_id, amount FROM user_storage WHERE user_id = ? AND amount > 0 ORDER BY item_id ASC', [user.id]);
+    const total = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+
+    const embed = infoEmbed(`Farm Storage: ${user.username}`, null, user)
+        .setColor(colors.farm)
+        .setThumbnail(user.displayAvatarURL({ dynamic: true }))
+        .addFields({ name: 'Capacity', value: progressBar(total, maxStorage, 8), inline: false });
+
+    embed.setDescription(items.length
+        ? items.map(item => `• **${cropsConfig[item.item_id]?.name || item.item_id}** — x${formatNumber(item.amount)}`).join('\n')
+        : 'Storage is empty.');
+
+    return embed;
 }

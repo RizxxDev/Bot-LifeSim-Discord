@@ -1,5 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
+const { infoEmbed, formatMoney, formatPercent, colors } = require('../../utils/ui');
+const { send, edit, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'phone',
@@ -9,137 +11,115 @@ module.exports = {
     cooldown: 5,
     data: new SlashCommandBuilder()
         .setName('phone')
-        .setDescription('Buka smartphonemu untuk mengakses berbagai aplikasi!'),
+        .setDescription('Open your smartphone menu.'),
 
     async executeSlash(interaction) {
-        await handlePhone(interaction, interaction.user, true);
+        await handlePhone(interaction, interaction.user);
     },
 
-    async executePrefix(message, args) {
-        await handlePhone(message, message.author, false);
+    async executePrefix(message) {
+        await handlePhone(message, message.author);
     }
 };
 
-async function handlePhone(context, user, isSlash) {
-    const userId = user.id;
-
+async function handlePhone(context, user) {
     try {
-        // 1. Cek apakah pemain punya Smartphone di Inventory
-        const inventory = await db.query('SELECT amount FROM inventory WHERE user_id = ? AND item_id = "smartphone"', [userId]);
-        
+        const inventory = await db.query('SELECT amount FROM inventory WHERE user_id = ? AND item_id = "smartphone"', [user.id]);
         if (!inventory || inventory.length === 0 || inventory[0].amount < 1) {
-            const msg = `❌ **${user.username}**, kamu belum memiliki Handphone! Beli \`smartphone\` di \`!shop\` atau \`!market\` terlebih dahulu.`;
-            return isSlash ? context.reply({ content: msg, ephemeral: true }) : context.channel.send(msg);
+            return sendError(context, user, 'You need a smartphone item before opening this menu.');
         }
 
-        // 2. Setup Menu UI (Layar Utama HP)
-        const homeEmbed = new EmbedBuilder()
-            .setColor('#2C3E50') // Warna tema HP (Dark Mode)
-            .setTitle(`📱 Smartphone - ${user.username}`)
-            .setDescription(`**Waktu Sistem:** <t:${Math.floor(Date.now() / 1000)}:f>\n\nSelamat datang di OS Simulator. Silakan pilih aplikasi dari menu di bawah ini.`)
-            .setThumbnail(user.displayAvatarURL())
-            .addFields(
-                { name: '📶 Sinyal', value: 'LTE ▮▮▮▯', inline: true },
-                { name: '🔋 Baterai', value: '85%', inline: true }
-            )
-            .setFooter({ text: 'Sistem akan otomatis mati dalam 60 detik.' });
+        const row = createPhoneMenu(user.id);
+        const homeEmbed = createHomeEmbed(user);
+        const response = await send(context, { embeds: [homeEmbed], components: [row], fetchReply: true });
 
-        // 3. Buat Dropdown Menu (Aplikasi)
-        const appMenu = new StringSelectMenuBuilder()
-            .setCustomId('phone_apps')
-            .setPlaceholder('Pilih Aplikasi...')
-            .addOptions(
-                new StringSelectMenuOptionBuilder().setLabel('Layar Utama').setDescription('Kembali ke menu awal').setValue('app_home').setEmoji('📱'),
-                new StringSelectMenuOptionBuilder().setLabel('M-Banking').setDescription('Cek saldo Bank dan Uang Tunai').setValue('app_bank').setEmoji('🏦'),
-                new StringSelectMenuOptionBuilder().setLabel('My Profile').setDescription('Cek Level, Pekerjaan, dan Status').setValue('app_profile').setEmoji('👤'),
-                new StringSelectMenuOptionBuilder().setLabel('Matikan HP').setDescription('Tutup aplikasi smartphone').setValue('app_close').setEmoji('❌')
-            );
-
-        const row = new ActionRowBuilder().addComponents(appMenu);
-
-        // Kirim pesan interaktif
-        let responseMsg;
-        if (isSlash) {
-            responseMsg = await context.reply({ embeds: [homeEmbed], components: [row], fetchReply: true });
-        } else {
-            responseMsg = await context.channel.send({ embeds: [homeEmbed], components: [row] });
-        }
-
-        // 4. Setup Collector untuk menangkap pilihan menu
-        const collector = responseMsg.createMessageComponentCollector({ 
-            componentType: ComponentType.StringSelect, 
-            time: 60000, // Aktif selama 1 menit
-            filter: i => i.user.id === userId 
+        const collector = response.createMessageComponentCollector({
+            componentType: ComponentType.StringSelect,
+            time: 60000
         });
 
         collector.on('collect', async (interaction) => {
-            const selectedApp = interaction.values[0];
+            if (interaction.user.id !== user.id) {
+                await interaction.reply({ content: 'This smartphone session belongs to another player.', ephemeral: true }).catch(() => {});
+                return;
+            }
 
+            const selected = interaction.values[0];
             try {
-                if (selectedApp === 'app_home') {
+                if (selected === 'app_home') {
                     await interaction.update({ embeds: [homeEmbed], components: [row] });
-                } 
-                else if (selectedApp === 'app_bank') {
-                    const userData = await db.query('SELECT cash, bank FROM users WHERE user_id = ?', [userId]);
-                    const u = userData[0];
-
-                    const bankEmbed = new EmbedBuilder()
-                        .setColor('#4CAF50')
-                        .setTitle('🏦 Mobile Banking App')
-                        .setDescription(`Selamat datang, Nasabah **${user.username}**.\n\n💵 **Uang Tunai (Cash):** \`Lp ${u.cash.toLocaleString()}\`\n💳 **Saldo Rekening (Bank):** \`Lp ${u.bank.toLocaleString()}\`\n\n*Gunakan \`!bank deposit/withdraw\` untuk bertransaksi.*`)
-                        .setFooter({ text: '📱 Sedang membuka M-Banking' });
-                    
-                    await interaction.update({ embeds: [bankEmbed], components: [row] });
-                }
-                else if (selectedApp === 'app_profile') {
-                    const userData = await db.query(`
-                        SELECT u.*, j.name as job_name 
-                        FROM users u 
-                        LEFT JOIN jobs j ON u.job_id = j.id 
-                        WHERE u.user_id = ?
-                    `, [userId]);
-                    const u = userData[0];
-                    const jobDisplay = u.job_name ? u.job_name : 'Pengangguran';
-
-                    const profileEmbed = new EmbedBuilder()
-                        .setColor('#3498DB')
-                        .setTitle('👤 My Profile App')
+                } else if (selected === 'app_bank') {
+                    const rows = await db.query('SELECT cash, bank FROM users WHERE user_id = ?', [user.id]);
+                    const data = rows[0];
+                    const embed = infoEmbed('Mobile Banking', null, user)
+                        .setColor(colors.money)
                         .addFields(
-                            { name: '💼 Pekerjaan', value: jobDisplay, inline: true },
-                            { name: '⭐ Level', value: `Lv. ${u.level}`, inline: true },
-                            { name: '🎯 Skill Points', value: `${u.skill_points} SP`, inline: true },
-                            { name: '⚡ Energi', value: `${u.energy}%`, inline: true },
-                            { name: '🍔 Rasa Lapar', value: `${u.hunger}%`, inline: true }
+                            { name: 'Cash', value: formatMoney(data.cash), inline: true },
+                            { name: 'Bank', value: formatMoney(data.bank), inline: true },
+                            { name: 'Total', value: formatMoney(Number(data.cash) + Number(data.bank)), inline: true }
                         )
-                        .setFooter({ text: '📱 Sedang membuka Profile' });
-                    
-                    await interaction.update({ embeds: [profileEmbed], components: [row] });
+                        .setFooter({ text: 'Use /bank for transactions.' });
+                    await interaction.update({ embeds: [embed], components: [row] });
+                } else if (selected === 'app_profile') {
+                    const rows = await db.query(`
+                        SELECT u.*, j.name as job_name
+                        FROM users u
+                        LEFT JOIN jobs j ON u.job_id = j.id
+                        WHERE u.user_id = ?
+                    `, [user.id]);
+                    const data = rows[0];
+                    const embed = infoEmbed('Citizen Profile', null, user)
+                        .setColor(colors.primary)
+                        .addFields(
+                            { name: 'Job', value: data.job_name || 'Unemployed', inline: true },
+                            { name: 'Level', value: `Lv. ${data.level}`, inline: true },
+                            { name: 'SP', value: `${data.skill_points} SP`, inline: true },
+                            { name: 'Energy', value: formatPercent(data.energy), inline: true },
+                            { name: 'Hunger', value: formatPercent(data.hunger), inline: true }
+                        );
+                    await interaction.update({ embeds: [embed], components: [row] });
+                } else if (selected === 'app_close') {
+                    await interaction.deferUpdate();
+                    collector.stop('closed');
                 }
-                else if (selectedApp === 'app_close') {
-                    // Matikan HP
-                    collector.stop('user_closed');
-                }
-            } catch (err) {
-                console.error('[PHONE APP ERROR]', err);
-                await interaction.reply({ content: 'Terjadi kesalahan saat memuat aplikasi.', ephemeral: true });
+            } catch (error) {
+                console.error('[PHONE APP ERROR]', error);
+                await interaction.reply({ content: 'Could not load that app.', ephemeral: true }).catch(() => {});
             }
         });
 
-        // 5. Jika waktu habis atau user menekan 'Matikan HP'
-        collector.on('end', async (collected, reason) => {
-            const offEmbed = new EmbedBuilder()
-                .setColor('#000000')
-                .setDescription('📵 *Layar Smartphone dimatikan.*');
-
-            // Hapus menu dropdown agar tidak bisa diklik lagi
-            if (isSlash) await context.editReply({ embeds: [offEmbed], components: [] }).catch(()=>{});
-            else await responseMsg.edit({ embeds: [offEmbed], components: [] }).catch(()=>{});
+        collector.on('end', async () => {
+            const offEmbed = infoEmbed('Smartphone Closed', 'The session has ended.', user)
+                .setColor(colors.muted);
+            await edit(context, response, { embeds: [offEmbed], components: [] }).catch(() => {});
         });
-
     } catch (error) {
         console.error('[PHONE ERROR]', error);
-        const errMsg = `❌ **${user.username}**, terjadi kesalahan saat mencoba menyalakan handphone.`;
-        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
-        else await context.channel.send(errMsg);
+        return sendError(context, user, 'Could not open the smartphone.');
     }
+}
+
+function createPhoneMenu(userId) {
+    const menu = new StringSelectMenuBuilder()
+        .setCustomId(`phone_apps:${userId}`)
+        .setPlaceholder('Choose an app')
+        .addOptions(
+            new StringSelectMenuOptionBuilder().setLabel('Home').setDescription('Return to the home screen.').setValue('app_home').setEmoji('📱'),
+            new StringSelectMenuOptionBuilder().setLabel('Banking').setDescription('View cash and bank balance.').setValue('app_bank').setEmoji('🏦'),
+            new StringSelectMenuOptionBuilder().setLabel('Profile').setDescription('View character status.').setValue('app_profile').setEmoji('👤'),
+            new StringSelectMenuOptionBuilder().setLabel('Power Off').setDescription('Close the smartphone.').setValue('app_close').setEmoji('❌')
+        );
+
+    return new ActionRowBuilder().addComponents(menu);
+}
+
+function createHomeEmbed(user) {
+    return infoEmbed('Smartphone', `System time: <t:${Math.floor(Date.now() / 1000)}:f>`, user)
+        .setColor(colors.muted)
+        .setThumbnail(user.displayAvatarURL({ dynamic: true }))
+        .addFields(
+            { name: 'Signal', value: 'LTE ▮▮▮▯', inline: true },
+            { name: 'Battery', value: '85%', inline: true }
+        )
+        .setFooter({ text: 'Session expires in 60 seconds.' });
 }

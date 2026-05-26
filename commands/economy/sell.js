@@ -1,6 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const ShopManager = require('../../managers/ShopManager');
 const shopConfig = require('../../config/shop.json');
+const { successEmbed, formatMoney } = require('../../utils/ui');
+const { send, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'sell',
@@ -10,39 +12,38 @@ module.exports = {
     cooldown: 5,
     data: new SlashCommandBuilder()
         .setName('sell')
-        .setDescription('Jual item ke Shop')
-        .addStringOption(opt => opt.setName('item').setDescription('ID Item (contoh: wheat)').setRequired(true))
-        .addIntegerOption(opt => opt.setName('amount').setDescription('Jumlah').setRequired(true).setMinValue(1).setMaxValue(500)),
+        .setDescription('Sell an item to the global shop.')
+        .addStringOption(opt => opt.setName('item').setDescription('Item ID, for example wheat.').setRequired(true))
+        .addIntegerOption(opt => opt.setName('amount').setDescription('Amount to sell.').setRequired(true).setMinValue(1).setMaxValue(500)),
 
     async executeSlash(interaction) {
-        const item = interaction.options.getString('item');
-        const amount = interaction.options.getInteger('amount');
-        await handleSell(interaction, interaction.user, item, amount, true);
+        await handleSell(interaction, interaction.user, interaction.options.getString('item'), interaction.options.getInteger('amount'));
     },
 
     async executePrefix(message, args) {
-        const user = message.author;
-        const item = args[0]?.toLowerCase();
-        const amount = parseInt(args[1]);
-
-        if (!item || isNaN(amount)) {
-            return message.channel.send(`❌ **${user.username}**, Format salah! Ketik: \`!sell <item> <jumlah>\``);
-        }
-        await handleSell(message, user, item, amount, false);
+        await handleSell(message, message.author, args[0]?.toLowerCase(), Number.parseInt(args[1], 10));
     }
 };
 
-async function handleSell(context, user, item, amount, isSlash) {
+async function handleSell(context, user, item, amount) {
     try {
+        if (!item || !Number.isInteger(amount) || amount <= 0) {
+            return sendError(context, user, 'Usage: `!sell <item> <amount>`.');
+        }
+
         const result = await ShopManager.sellToShop(user.id, item, amount);
         const itemName = shopConfig.items[item]?.name || item;
-        
-        const msg = `💵 **${user.username}** menjual **${amount}x ${itemName}** ke Market dan mendapat **Lp ${result.totalPrice.toLocaleString()}** (@Lp ${result.unitPrice}/ea).`;
-        return isSlash ? context.reply(msg) : context.channel.send(msg);
-        
+        const embed = successEmbed(
+            'Sale Complete',
+            `You sold **${amount}x ${itemName}** to the global shop.`,
+            user
+        ).addFields(
+            { name: 'Unit price', value: formatMoney(result.unitPrice), inline: true },
+            { name: 'Total earned', value: formatMoney(result.totalPrice), inline: true }
+        );
+
+        return send(context, { embeds: [embed] });
     } catch (error) {
-        const errMsg = `❌ **${user.username}**, ${error.message}`;
-        if (isSlash) await context.reply({ content: errMsg, ephemeral: true });
-        else await context.channel.send(errMsg);
+        return sendError(context, user, error.message);
     }
 }

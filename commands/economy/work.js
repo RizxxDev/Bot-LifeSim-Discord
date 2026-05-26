@@ -1,5 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
+const { successEmbed, formatMoney, progressBar, colors } = require('../../utils/ui');
+const { send, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'work',
@@ -8,129 +10,123 @@ module.exports = {
     slash: true,
     data: new SlashCommandBuilder()
         .setName('work')
-        .setDescription('Bekerja untuk mendapatkan uang dan EXP'),
+        .setDescription('Work your current job to earn cash and EXP.'),
 
     async executeSlash(interaction) {
-        await handleWork(interaction, interaction.user, true);
+        await handleWork(interaction, interaction.user);
     },
 
-    async executePrefix(message, args) {
-        await handleWork(message, message.author, false);
+    async executePrefix(message) {
+        await handleWork(message, message.author);
     }
 };
 
-async function handleWork(context, user, isSlash) {
-    const userId = user.id;
+async function handleWork(context, user) {
     const now = Date.now();
-
     let trx;
+
     try {
         trx = await db.startTransaction();
-
-        const userRows = await trx.query(`
-            SELECT u.*, s.income, s.cooldown_skill, s.luck, s.defense, j.name, j.min_salary, j.max_salary, j.cooldown, j.min_exp, j.max_exp, j.emoji
+        const rows = await trx.query(`
+            SELECT u.*, s.income, s.cooldown_skill, s.luck, s.defense,
+                   j.name, j.min_salary, j.max_salary, j.cooldown, j.min_exp, j.max_exp, j.emoji
             FROM users u
             LEFT JOIN user_skills s ON u.user_id = s.user_id
             LEFT JOIN jobs j ON u.job_id = j.id
             WHERE u.user_id = ? FOR UPDATE
-        `, [userId]);
+        `, [user.id]);
 
-        const u = userRows[0];
-
-        if (!u || !u.job_id) {
+        const data = rows[0];
+        if (!data || !data.job_id) {
             await trx.rollback();
-            const msg = `❌ **${user.username}**, kamu belum memiliki pekerjaan! Gunakan \`/job list\` dan \`/job apply\`.`;
-            return isSlash ? context.reply({ content: msg, ephemeral: true }) : context.channel.send(msg);
+            return sendError(context, user, 'You do not have a job yet. Use `/job list` and `/job apply`.');
         }
 
-        // 1. Kalkulasi Cooldown
-        const cooldownReduction = Math.max(0.5, 1 - (0.05 * (u.cooldown_skill || 0))); 
-        const finalCooldown = u.cooldown * cooldownReduction;
-        const timePassed = now - u.last_work;
+        const cooldownReduction = Math.max(0.5, 1 - (0.05 * (data.cooldown_skill || 0)));
+        const finalCooldown = data.cooldown * cooldownReduction;
+        const timePassed = now - data.last_work;
 
         if (timePassed < finalCooldown) {
             await trx.rollback();
-            const timeLeft = u.last_work + finalCooldown;
-            const waitMsg = `⏳ **${user.username}**, kamu masih kelelahan. Kamu bisa bekerja lagi <t:${Math.round(timeLeft / 1000)}:R>.`;
-            return isSlash ? context.reply({ content: waitMsg, ephemeral: true }) : context.channel.send(waitMsg);
+            const readyAt = Math.round((data.last_work + finalCooldown) / 1000);
+            return sendError(context, user, `You are still recovering. You can work again <t:${readyAt}:R>.`);
         }
 
-        // 2. Cek Kesalahan/Kegagalan
-        const failChance = Math.max(0, 0.05 - ((u.defense || 0) * 0.02)); 
+        const failChance = Math.max(0, 0.05 - ((data.defense || 0) * 0.02));
         if (Math.random() < failChance) {
-            await trx.query('UPDATE users SET last_work = ? WHERE user_id = ?', [now, userId]);
+            await trx.query('UPDATE users SET last_work = ? WHERE user_id = ?', [now, user.id]);
             await trx.commit();
-            const failMsg = `🤕 **${user.username}** membuat kekacauan di tempat kerja hari ini dan mendapatkan **Lp 0**...`;
-            return isSlash ? context.reply(failMsg) : context.channel.send(failMsg);
+            return sendError(context, user, 'The shift went badly today. You earned nothing, but the cooldown was applied.', { ephemeral: false });
         }
 
-        // 3. Kalkulasi Gaji Dasar & Keberuntungan
-        let salary = Math.floor(Math.random() * (u.max_salary - u.min_salary + 1)) + u.min_salary;
-        salary += ((u.income || 0) * 50); 
-        
-        // 🌟 BONUS JOB LEVEL (Setiap naik 1 level job, gaji bertambah 5%)
-        const currentJobLevel = u.job_level || 1;
+        let salary = Math.floor(Math.random() * (data.max_salary - data.min_salary + 1)) + data.min_salary;
+        salary += (data.income || 0) * 50;
+
+        const currentJobLevel = data.job_level || 1;
         const jobBonus = Math.floor(salary * ((currentJobLevel - 1) * 0.05));
         salary += jobBonus;
 
-        const luckChance = 0.10 + ((u.luck || 0) * 0.05); 
-        let isCrit = false;
-        if (Math.random() < luckChance) {
-            salary *= 2;
-            isCrit = true;
-        }
+        const critical = Math.random() < (0.10 + ((data.luck || 0) * 0.05));
+        if (critical) salary *= 2;
 
-        // 4. Kalkulasi EXP Karakter & EXP Pekerjaan
-        const minExp = u.min_exp || 10;
-        const maxExp = u.max_exp || 20;
-        const earnedExp = Math.floor(Math.random() * (maxExp - minExp + 1)) + minExp;
+        const earnedExp = randomInt(data.min_exp || 10, data.max_exp || 20);
 
-        // Level Karakter Utama
-        let newExp = u.exp + earnedExp;
-        let newLevel = u.level;
-        let newSp = u.skill_points;
-        let charLeveledUp = false;
+        let newExp = data.exp + earnedExp;
+        let newLevel = data.level;
+        let newSkillPoints = data.skill_points;
+        let leveledUp = false;
         const requiredExp = Math.floor(100 * Math.pow(newLevel, 1.2));
 
         if (newExp >= requiredExp) {
-            newExp = 0; 
+            newExp = 0;
             newLevel++;
-            newSp++;
-            charLeveledUp = true;
+            newSkillPoints++;
+            leveledUp = true;
         }
 
-        // 🌟 Level Pekerjaan (Job Mastery)
-        let newJobExp = (u.job_exp || 0) + earnedExp;
+        let newJobExp = (data.job_exp || 0) + earnedExp;
         let newJobLevel = currentJobLevel;
-        let jobLeveledUp = false;
-        // Kebutuhan exp untuk Job lebih tinggi dari exp karakter biasa
-        const reqJobExp = Math.floor(150 * Math.pow(newJobLevel, 1.3)); 
+        let promoted = false;
+        const requiredJobExp = Math.floor(150 * Math.pow(newJobLevel, 1.3));
 
-        if (newJobExp >= reqJobExp) {
+        if (newJobExp >= requiredJobExp) {
             newJobExp = 0;
             newJobLevel++;
-            jobLeveledUp = true;
+            promoted = true;
         }
 
-        // 5. Simpan Data ke Database
         await trx.query(
             'UPDATE users SET cash = cash + ?, exp = ?, level = ?, skill_points = ?, last_work = ?, job_exp = ?, job_level = ? WHERE user_id = ?',
-            [salary, newExp, newLevel, newSp, now, newJobExp, newJobLevel, userId]
+            [salary, newExp, newLevel, newSkillPoints, now, newJobExp, newJobLevel, user.id]
         );
         await trx.commit();
 
-        // 6. Format Pesan Keluaran
-        let msg = `${u.emoji} **${user.username}** bekerja sebagai **${u.name} (Lv. ${currentJobLevel})** dan mendapatkan **Lp ${salary.toLocaleString()}**!\n✨ Mendapatkan **${earnedExp} EXP**!`;
-        if (isCrit) msg += ` 🍀 *(Gaji Ganda!)*`;
-        if (charLeveledUp) msg += `\n🆙 **LEVEL UP!** Karaktermu sekarang Level **${newLevel}**!`;
-        if (jobLeveledUp) msg += `\n🎖️ **PROMOSI!** Keahlian profesimu naik menjadi **Level ${newJobLevel}**! (Bonus gaji meningkat)`;
+        const embed = successEmbed(
+            'Shift Complete',
+            `${data.emoji || ''} You worked as **${data.name} (Lv. ${currentJobLevel})** and earned **${formatMoney(salary)}**.`,
+            user
+        )
+            .setColor(colors.money)
+            .addFields(
+                { name: 'EXP gained', value: `${earnedExp} EXP`, inline: true },
+                { name: 'Character EXP', value: progressBar(newExp, Math.floor(100 * Math.pow(newLevel, 1.2)), 8), inline: true },
+                { name: 'Job EXP', value: progressBar(newJobExp, Math.floor(150 * Math.pow(newJobLevel, 1.3)), 8), inline: true }
+            );
 
-        return isSlash ? context.reply(msg) : context.channel.send(msg);
+        const notes = [];
+        if (critical) notes.push('Lucky payout: salary doubled.');
+        if (leveledUp) notes.push(`Character level up: Lv. ${newLevel}.`);
+        if (promoted) notes.push(`Job mastery promoted: Lv. ${newJobLevel}.`);
+        if (notes.length) embed.addFields({ name: 'Highlights', value: notes.join('\n'), inline: false });
 
+        return send(context, { embeds: [embed] });
     } catch (error) {
         if (trx) await trx.rollback();
         console.error('[WORK ERROR]', error);
-        const errMsg = `❌ **${user.username}**, terjadi kesalahan sistem saat bekerja.`;
-        return isSlash ? context.reply({ content: errMsg, ephemeral: true }) : context.channel.send(errMsg);
+        return sendError(context, user, 'Could not process your work shift.');
     }
+}
+
+function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
 }
