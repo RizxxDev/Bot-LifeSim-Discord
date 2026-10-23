@@ -1,69 +1,26 @@
 const { SlashCommandBuilder } = require('discord.js');
-const db = require('../../botHandlers/mysqlHandler');
-const ShopManager = require('../../managers/ShopManager');
-const shopConfig = require('../../config/shop.json');
-const { infoEmbed, formatMoney, formatNumber, progressBar, colors } = require('../../utils/ui');
-const { send, sendError } = require('../../utils/respond');
+const { SHOPS } = require('../../data/items');
+const { buildShopViewPayload } = require('../../services/shopService');
 
 module.exports = {
     name: 'shop',
-    aliases: ['toko', 'pasarglobal', 'globalshop'],
-    prefix: true,
     slash: true,
-    requiresRegistration: false,
-    cooldown: 5,
     data: new SlashCommandBuilder()
         .setName('shop')
-        .setDescription('View global shop stock and dynamic prices.'),
+        .setDescription('Buka katalog interaktif Toko Kota (Warung, Restoran, Apotek, Perkakas, Elektronik, dll).')
+        .addStringOption(opt =>
+            opt
+                .setName('toko')
+                .setDescription('Pilih toko yang ingin langsung dibuka')
+                .setRequired(false)
+                .addChoices(
+                    ...SHOPS.map(s => ({ name: `${s.emoji} ${s.name}`, value: s.id }))
+                )
+        ),
 
     async executeSlash(interaction) {
-        await handleShopView(interaction, interaction.user);
-    },
-
-    async executePrefix(message) {
-        await handleShopView(message, message.author);
+        const shopId = interaction.options.getString('toko') || 'warung';
+        const payload = await buildShopViewPayload(interaction.user.id, shopId, 0, false);
+        return await interaction.reply(payload);
     }
 };
-
-async function handleShopView(context, user) {
-    try {
-        const shopData = await db.query('SELECT cash, max_storage FROM shop_global WHERE id = 1');
-        const inventory = await db.query('SELECT item_id, amount FROM shop_inventory');
-
-        const cash = Number(shopData[0]?.cash || 0);
-        const maxStorage = Number(shopData[0]?.max_storage || 10000);
-        const usedStorage = inventory.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-
-        const embed = infoEmbed('Global Shop', 'Prices rise when stock is low and fall when stock is high.', user)
-            .setColor(colors.money)
-            .addFields(
-                { name: 'Shop cash', value: formatMoney(cash), inline: true },
-                { name: 'Storage', value: progressBar(usedStorage, maxStorage, 8), inline: true }
-            );
-
-        const groups = { seed: [], tool: [], consumable: [], raw: [], product: [], fish: [], ore: [], junk: [] };
-        for (const [id, item] of Object.entries(shopConfig.items)) {
-            const stock = Number(inventory.find((row) => row.item_id === id)?.amount || 0);
-            const buyPrice = ShopManager.calculatePrice(id, stock);
-            const sellPrice = Math.max(item.min_price, Math.floor(buyPrice * 0.85));
-            const trend = stock < item.target_stock * 0.5 ? 'Rising' : stock > item.target_stock * 1.2 ? 'Falling' : 'Stable';
-            const line = `**${item.name}** \`${id}\`\nStock: ${formatNumber(stock)} / ${formatNumber(item.target_stock)} | Buy ${formatMoney(buyPrice)} | Sell ${formatMoney(sellPrice)} | ${trend}`;
-            (groups[item.type] || groups.product).push(line);
-        }
-
-        if (groups.seed.length) embed.addFields({ name: 'Seeds', value: groups.seed.join('\n\n'), inline: false });
-        if (groups.tool.length) embed.addFields({ name: 'Tools', value: groups.tool.join('\n\n'), inline: false });
-        if (groups.consumable.length) embed.addFields({ name: 'Consumables', value: groups.consumable.join('\n\n'), inline: false });
-        if (groups.raw.length) embed.addFields({ name: 'Raw materials', value: groups.raw.join('\n\n'), inline: false });
-        if (groups.product.length) embed.addFields({ name: 'Processed goods', value: groups.product.join('\n\n'), inline: false });
-        if (groups.fish.length) embed.addFields({ name: 'Fish', value: groups.fish.join('\n\n'), inline: false });
-        if (groups.ore.length) embed.addFields({ name: 'Ore', value: groups.ore.join('\n\n'), inline: false });
-        if (groups.junk.length) embed.addFields({ name: 'Junk', value: groups.junk.join('\n\n'), inline: false });
-        embed.setFooter({ text: 'Use /buy item amount or /sell item amount.' });
-
-        return send(context, { embeds: [embed] });
-    } catch (error) {
-        console.error('[SHOP ERROR]', error);
-        return sendError(context, user, 'Could not load the global shop.');
-    }
-}

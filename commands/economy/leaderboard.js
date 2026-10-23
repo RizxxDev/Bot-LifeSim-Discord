@@ -1,66 +1,95 @@
 const { SlashCommandBuilder } = require('discord.js');
-const economy = require('../../services/economyService');
-const { infoEmbed, formatMoney, colors } = require('../../utils/ui');
-const { send, sendError } = require('../../utils/respond');
+const { query } = require('../../database/mariadb');
+const { getVal, setVal } = require('../../database/redis');
+const { getLevelInfoFromXp } = require('../../data/locations');
+const { getJob } = require('../../data/jobs');
+const { COLORS, formatLp, buildV2Card } = require('../../utils/uiBuilder');
 
 module.exports = {
     name: 'leaderboard',
-    aliases: ['lb', 'top', 'rich'],
-    prefix: true,
     slash: true,
-    requiresRegistration: false,
-    cooldown: 5,
     data: new SlashCommandBuilder()
         .setName('leaderboard')
-        .setDescription('View the top 10 richest citizens.'),
+        .setDescription('Lihat papan peringkat global warga Life Simulation.')
+        .addStringOption(opt =>
+            opt
+                .setName('kategori')
+                .setDescription('Pilih kategori peringkat')
+                .setRequired(false)
+                .addChoices(
+                    { name: '💎 Total Kekayaan (Cash + Bank)', value: 'wealth' },
+                    { name: '💼 Pengalaman Kerja (Total Shift)', value: 'work' },
+                    { name: '🎣 Level Skill Fishing', value: 'fishing' },
+                    { name: '⛏️ Level Skill Mining', value: 'mining' }
+                )
+        ),
 
     async executeSlash(interaction) {
-        await handleLeaderboard(interaction, interaction.client, interaction.user);
-    },
+        const cat = interaction.options.getString('kategori') || 'wealth';
+        const cacheKey = `lb_cache:${cat}`;
+        let rows = null;
 
-    async executePrefix(message) {
-        await handleLeaderboard(message, message.client, message.author);
-    }
-};
-
-async function handleLeaderboard(context, client, user) {
-    try {
-        const guildId = economy.getGuildId(context);
-        const { rows, cacheUsed } = await economy.getLeaderboard(guildId);
-
-        if (!rows || rows.length === 0) {
-            return sendError(context, user, 'No citizen wealth data is available yet.');
+        const cached = await getVal(cacheKey);
+        if (cached) {
+            try {
+                rows = JSON.parse(cached);
+            } catch {
+                rows = null;
+            }
         }
 
-        // Ambil data user Discord secara paralel dengan Promise.allSettled
-        const userPromises = rows.map(row => 
-            client.users.fetch(row.user_id)
-                .then(u => u.username)
-                .catch(() => `Former citizen (${row.user_id})`)
-        );
-        const settledUsers = await Promise.allSettled(userPromises);
+        if (!rows) {
+            let sql = '';
+            if (cat === 'work') {
+                sql = `SELECT username, equipped_title, total_shifts, current_job FROM players WHERE is_banned = 0 ORDER BY total_shifts DESC LIMIT 10`;
+            } else if (cat === 'fishing') {
+                sql = `SELECT username, equipped_title, fishing_xp FROM players WHERE is_banned = 0 ORDER BY fishing_xp DESC LIMIT 10`;
+            } else if (cat === 'mining') {
+                sql = `SELECT username, equipped_title, mining_xp FROM players WHERE is_banned = 0 ORDER BY mining_xp DESC LIMIT 10`;
+            } else {
+                sql = `SELECT username, equipped_title, (cash + bank) AS net_worth FROM players WHERE is_banned = 0 ORDER BY net_worth DESC LIMIT 10`;
+            }
 
-        const lines = rows.map((row, index) => {
-            const username = settledUsers[index]?.status === 'fulfilled'
-                ? settledUsers[index].value
-                : `Former citizen (${row.user_id})`;
-            const rank = ['#1', '#2', '#3'][index] || `#${index + 1}`;
-            return `**${rank} ${username}** - ${formatMoney(row.total_wealth)} (Cash ${formatMoney(row.cash)} | Bank ${formatMoney(row.bank)})`;
+            rows = await query(sql);
+            await setVal(cacheKey, JSON.stringify(rows), 300); // 5 menit cache
+        }
+
+        const medals = ['🥇', '🥈', '🥉'];
+        const lines = rows.map((r, idx) => {
+            const rankBadge = medals[idx] || `\`#${idx + 1}\``;
+            const titleStr = r.equipped_title ? ` *(${r.equipped_title})*` : '';
+
+            if (cat === 'work') {
+                const job = r.current_job ? getJob(r.current_job) : null;
+                return `${rankBadge} **${r.username}**${titleStr} — **${r.total_shifts} shift** ${job ? `(${job.emoji} ${job.name})` : ''}`;
+            }
+            if (cat === 'fishing') {
+                const lv = getLevelInfoFromXp(r.fishing_xp);
+                return `${rankBadge} **${r.username}**${titleStr} — **Fishing Lv. ${lv.level}** *(${Number(r.fishing_xp).toLocaleString('id-ID')} EXP)*`;
+            }
+            if (cat === 'mining') {
+                const lv = getLevelInfoFromXp(r.mining_xp);
+                return `${rankBadge} **${r.username}**${titleStr} — **Mining Lv. ${lv.level}** *(${Number(r.mining_xp).toLocaleString('id-ID')} EXP)*`;
+            }
+            return `${rankBadge} **${r.username}**${titleStr} — **${formatLp(r.net_worth)}**`;
         });
 
-        const embed = infoEmbed('Wealth Leaderboard', lines.join('\n'), user)
-            .setColor(colors.warning)
-            .setThumbnail(client.user.displayAvatarURL())
-            .setFooter({ text: cacheUsed ? 'Served from Redis cache.' : 'Fresh MariaDB result. Cache refreshes every 5 minutes.' });
+        const titles = {
+            wealth: '💎 Peringkat Global: Warga Terkaya',
+            work: '💼 Peringkat Global: Pekerja Terajin',
+            fishing: '🎣 Peringkat Global: Master Pemancing',
+            mining: '⛏️ Peringkat Global: Master Penambang'
+        };
 
-        const self = await economy.getBalance(guildId, user.id);
-        if (self.total > 0) {
-            embed.addFields({ name: 'Your wealth', value: formatMoney(self.total), inline: false });
-        }
-
-        return send(context, { embeds: [embed] });
-    } catch (error) {
-        console.error('[LEADERBOARD ERROR]', error);
-        return sendError(context, user, 'Could not load the leaderboard.');
+        return await interaction.reply(
+            buildV2Card({
+                accentColor: COLORS.ECONOMY,
+                title: titles[cat] || titles.wealth,
+                blocks: [
+                    lines.length > 0 ? lines.join('\n') : '*Belum ada data warga yang tercatat.*'
+                ],
+                footer: 'Data diperbarui otomatis setiap 5 menit.'
+            })
+        );
     }
-}
+};

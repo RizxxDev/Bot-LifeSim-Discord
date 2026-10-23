@@ -1,3 +1,0 @@
-{
-  "sprinkler_basic": { "name": "Basic Sprinkler", "radius": 1, "interval_mins": 10, "type": "water" }
-}

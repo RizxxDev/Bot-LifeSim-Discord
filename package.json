@@ -1,17 +1,20 @@
 {
-  "name": "bot-lifesim",
+  "name": "discord-bot",
   "version": "1.0.0",
-  "description": "Bot Semi-Life Simulation MariaDB",
+  "description": "Discord.js v14 Life Simulation Economy Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "init-db": "node database/init.js"
+    "dev": "nodemon index.js",
+    "migrate": "node database/migrate.js",
+    "test": "node scripts/testCoreLogic.js",
+    "simulate": "node scripts/simulateEconomy.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.0",
+    "discord.js": "^14.19.3",
     "dotenv": "^16.4.5",
-    "mysql2": "^3.9.2",
-    "nodemon": "^3.1.14",
-    "redis": "^5.12.1"
+    "ioredis": "^5.4.1",
+    "mysql2": "^3.11.0",
+    "nodemon": "^3.1.14"
   }
 }
