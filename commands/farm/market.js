@@ -6,7 +6,7 @@ const { send, sendError } = require('../../utils/respond');
 
 module.exports = {
     name: 'market',
-    aliases: ['pasar', 'trade'],
+    aliases: ['pasarpemain', 'trade'],
     prefix: true,
     slash: true,
     data: new SlashCommandBuilder()

@@ -1,67 +1,56 @@
 # Bot-LifeSim-Discord
 
-Bot-LifeSim-Discord adalah bot Discord semi-life simulation berbasis Node.js. Project ini menggabungkan sistem ekonomi, pekerjaan, skill, farming, crafting, market antar pemain, shop global dengan harga dinamis, fishing, mining, leaderboard, dan menu smartphone interaktif.
+Bot-LifeSim-Discord adalah bot Discord semi-life simulation berbasis Node.js dengan arsitektur basis data berkinerja tinggi berbasis **MariaDB 10.6+ (InnoDB)** dan **Redis v7+**. Project ini menggabungkan sistem ekonomi, pekerjaan, skill tree, farming, crafting, pasar antar pemain, toko global dengan harga dinamis, fishing, mining, leaderboard, dan antarmuka smartphone interaktif.
 
-Bot mendukung prefix command dan slash command. Saat bot online, slash command akan didaftarkan otomatis, tabel MariaDB akan disiapkan otomatis, data pekerjaan awal dan stok shop akan diisi, lalu game loop farming dan shop AI berjalan setiap 1 menit.
+Bot mendukung **Prefix Command** dan **Slash Command (Discord.js v14)** secara bersamaan.
+
+---
 
 ## Teknologi
 
-- Node.js
-- discord.js v14
-- dotenv
-- mysql2 / mariadb
-- Redis
-- MariaDB atau MySQL
+- **Runtime:** Node.js (v18+)
+- **Framework Bot:** `discord.js` v14
+- **Primary Database:** MariaDB 10.6+ (InnoDB) dengan dukungan transaksi ACID murni
+- **Cache & Locking:** Redis v7+ (Atomic Cooldown & Lua Distributed Locking)
+- **Database Driver:** `mysql2/promise` (Connection Pooling & Prepared Statements)
+
+---
 
 ## Fitur Utama
 
-- Sistem registrasi warga dengan modal awal.
-- Ekonomi cash dan bank, termasuk deposit, withdraw, transfer, daily reward, dan pembayaran antar pemain.
-- Sistem pekerjaan, EXP, level karakter, job mastery, dan skill tree.
-- Farming 5x5 dengan tanam, panen, storage, plant all, dan harvest all.
-- Crafting berbasis antrian untuk mengolah hasil panen.
-- Shop global dengan stok, kas, kapasitas gudang, dan harga dinamis berdasarkan kelangkaan barang.
-- Market antar pemain dengan listing fee dan pajak transaksi.
-- Aktivitas interaktif seperti fishing dan mining.
-- Leaderboard kekayaan.
-- Smartphone command untuk membuka menu aplikasi seperti bank dan profile.
-- Cooldown command memakai Redis.
+- **Single Source of Truth:** Seluruh data ekonomi, level, ladang, dan inventaris tersimpan terpadu di MariaDB InnoDB.
+- **Relasional Utuh & Zero Orphan Data:** Seluruh tabel turunan dipasangi `FOREIGN KEY ... ON DELETE CASCADE`.
+- **Query Batching:** Operasi massal seperti `plantAll` dan `harvestAll` dieksekusi dalam statement batch multi-row untuk performa kilat tanpa N+1 query loop.
+- **Self-Documenting Schema:** Setiap tabel dan kolom dilengkapi `COMMENT` penjelasan teknis dan rentang nilai.
+- **Sistem Ekonomi Terpadu:** Registrasi warga, modal awal, cash & bank balance, transfer dana antar pemain, deposit, withdraw, daily reward beruntun (streak), dan shift pekerjaan.
+- **Sistem Ladang & Lumbung:** Ladang modular dengan bibit, pertumbuhan, penyiraman berlipat ganda, dan lumbung terpisah.
+- **Pabrik & Toko Global Dinamis:** Toko NPC mandiri dengan kas modal likuiditas, stok berfluktuasi secara dinamis menurut supply-demand, dan antrean konversi resep otomatis.
+- **Pasar Bebas Antar Pemain:** Jual-beli hasil komoditas dengan listing fee dan pemotongan pajak pasar.
+- **Minigame Interaktif:** Mancing ikan (Reaction QTE) dan menambang bijih mineral (Scan, Charge & Strike).
+- **Atomic Cooldown & Failsafe:** Cooldown menggunakan Redis dengan in-memory fallback otomatis jika Redis offline.
 
-## Struktur Project
+---
 
-```text
-.
-|-- botHandlers/       # Koneksi Redis dan helper query MariaDB/MySQL
-|-- commands/          # Prefix command dan slash command
-|   |-- economy/       # Ekonomi, bank, kerja, shop, inventory, fishing, mining
-|   |-- farm/          # Farming, crafting, market pemain
-|   `-- utility/       # Register, help, ping
-|-- config/            # Data item, crop, resep, shop, dan tools
-|-- database/          # Pool koneksi database
-|-- eventHandlers/     # ready, messageCreate, interactionCreate
-|-- managers/          # Logic farming, crafting, shop, market, game loop
-|-- utils/             # Middleware cooldown Redis
-|-- config.json        # Konfigurasi bot dan ekonomi dasar
-|-- index.js           # Entry point bot
-`-- package.json       # Script dan dependency
-```
+## Struktur Tabel Basis Data (Standardized Schema)
 
-## Persiapan
+Skema database distandardisasi dengan penamaan tematik berawalan prefix modul:
 
-Pastikan sudah tersedia:
+| Kategori | Nama Tabel | Deskripsi |
+|---|---|---|
+| **Master** | `jobs` | Daftar profesi, gaji, EXP, dan cooldown shift |
+| **User** | `users` | Profil pemain, saldo dompet/bank, survival (energy/hunger), level, exp, SP, mastery |
+| **User** | `user_skills` | Skill tree pasif pemain (income, cooldown, luck, defense) |
+| **User** | `user_inventory` | Tas bawaan barang pemain (tools, seeds, ores, fish, consumables) |
+| **Farm** | `farm_profiles` | Dimensi petak ladang dan batas kapasitas lumbung pemain |
+| **Farm** | `farm_tiles` | Petak tanah ladang, jenis bibit, persentase pertumbuhan, dan status siram |
+| **Farm** | `farm_storage` | Lumbung gudang hasil panen dan olahan pertanian pemain |
+| **Pasar & Craft** | `crafting_queue` | Antrean pengolahan bahan mentah menjadi makanan/barang olahan |
+| **Pasar & Craft** | `market_listings` | Bursa listing komoditas jual-beli antar pemain |
+| **Toko** | `shop_global` | Modal kas likuiditas dan kapasitas tampung toko global NPC |
+| **Toko** | `shop_inventory` | Stok komoditas toko dengan algoritma harga dinamis |
+| **Toko** | `shop_queue` | Antrean konversi bahan mentah toko otomatis |
 
-- Node.js versi modern.
-- MariaDB atau MySQL.
-- Redis lokal, Redis Cloud, atau layanan Redis lain.
-- Bot Discord dengan token dan application/client ID.
-
-Install dependency:
-
-```bash
-npm install
-```
-
-Buat database kosong di MariaDB/MySQL. Tabel tidak perlu dibuat manual karena project akan menjalankan setup schema otomatis dari `eventHandlers/ready.js` saat bot berhasil login.
+---
 
 ## Konfigurasi Environment
 
@@ -73,152 +62,69 @@ CLIENT_ID=application_client_id
 DB_HOST=localhost
 DB_USER=root
 DB_PASS=password_database
-DB_NAME=nama_database
-
-# Opsional. Jika tidak diisi, bot memakai redis://localhost:6379
+DB_NAME=lifesim_db
 REDIS_URL=redis://localhost:6379
 ```
 
-Keterangan:
+---
 
-- `DISCORD_TOKEN`: token bot Discord.
-- `CLIENT_ID`: application/client ID untuk registrasi global slash command.
-- `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAME`: koneksi MariaDB/MySQL.
-- `REDIS_URL`: URL koneksi Redis. Jika kosong, default-nya `redis://localhost:6379`.
+## Inisialisasi Basis Data & Menjalankan Bot
 
-## Menjalankan Bot
+1. Install dependensi project:
+   ```bash
+   npm install
+   ```
 
-Pastikan MariaDB/MySQL dan Redis sudah berjalan, lalu jalankan:
+2. Jalankan inisialisasi skema database master (membuat 11 tabel lengkap dengan foreign key dan indeks):
+   ```bash
+   npm run init-db
+   ```
+   *(Atau impor langsung file `database/schema.sql` via phpMyAdmin / DBeaver / HeidiSQL).*
 
-```bash
-npm start
-```
+3. Jalankan bot:
+   ```bash
+   npm start
+   ```
 
-Script `npm start` menjalankan:
-
-```bash
-node index.js
-```
-
-Saat event `ready`, bot akan:
-
-- Mendaftarkan global slash command ke Discord.
-- Membuat atau menyiapkan tabel MariaDB yang dibutuhkan.
-- Mengisi daftar pekerjaan awal seperti `janitor`, `barista`, dan `programmer`.
-- Mengisi data awal `global_shop` dan `shop_inventory`.
-- Menjalankan game loop setiap 1 menit untuk pertumbuhan farm dan produksi shop AI.
-
-## Prefix dan Slash Command
-
-Command bisa dipakai lewat slash command, misalnya:
-
-```text
-/register
-/profile
-/farm view
-```
-
-Untuk prefix command, kode saat ini memakai prefix `!` di `eventHandlers/messageCreate.js`, misalnya:
-
-```text
-!register
-!profile
-!farm view
-```
-
-Catatan: `config.json` berisi daftar prefix `["!", "l", "L"]`, tetapi handler prefix yang berjalan saat ini masih hardcoded memakai `!`.
+---
 
 ## Daftar Command
 
 ### Utility
+- `/register` / `!register`: Mendaftarkan profil warga baru dan menerima modal awal.
+- `/help` / `!help`: Menampilkan panduan seluruh command.
+- `/ping` / `!ping`: Mengecek latensi bot dan koneksi basis data.
 
-- `register`: membuat akun warga baru dan menerima modal awal.
-- `help`: menampilkan daftar command.
-- `ping`: mengecek status bot dan koneksi database.
+### Ekonomi & RPG
+- `/profile` / `!profile`: Melihat status warga, level, exp, SP, dan karir.
+- `/daily` / `!daily`: Mengklaim reward harian dan memperpanjang daily streak.
+- `/work` / `!work`: Bekerja shift sesuai profesi untuk mendapatkan uang dan exp.
+- `/job` / `!job`: Melihat daftar lowongan, info profesi, melamar, atau resign.
+- `/skill` / `!skill`: Membuka pohon keahlian pasif, upgrade skill, atau reset SP.
+- `/bank` / `!bank`: Cek rekening tabungan, deposit tunai, tarik tunai, dan transfer antar bank.
+- `/pay` / `!pay`: Mengirimkan uang tunai ke pemain lain.
+- `/shop` / `!shop`: Melihat katalog dan fluktuasi harga toko global.
+- `/buy` / `!buy`: Membeli barang atau bibit dari toko global.
+- `/sell` / `!sell`: Menjual barang hasil panen/tambang ke toko global.
+- `/inventory` / `!inventory`: Membuka tas bawaan pemain.
+- `/fish` / `!fish`: Memancing interaktif dengan sistem timing reaction.
+- `/mine` / `!mine`: Sesi menambang batu & bijih mineral interaktif.
+- `/leaderboard` / `!leaderboard`: Peringkat 10 warga terkaya (didukung cache Redis).
+- `/phone` / `!phone`: Antarmuka smartphone interaktif (mobile banking & status).
 
-### Economy
-
-- `profile`: melihat statistik karakter.
-- `daily`: mengambil reward harian dan streak.
-- `work`: bekerja untuk mendapatkan uang dan EXP.
-- `job`: melihat, melamar, mengecek, atau keluar dari pekerjaan.
-- `skill`: melihat, upgrade, atau reset skill.
-- `bank`: info saldo, deposit, withdraw, dan transfer bank.
-- `pay`: memberi cash ke pemain lain.
-- `shop`: melihat stok dan harga shop global.
-- `buy`: membeli item dari shop global.
-- `sell`: menjual item ke shop global.
-- `inventory`: melihat isi inventory.
-- `fish`: memancing dengan quick time event.
-- `mine`: menambang secara interaktif.
-- `leaderboard`: melihat 10 warga terkaya.
-- `phone`: membuka menu smartphone interaktif.
-
-### Farming dan Market
-
-- `farm`: melihat ladang, storage, menanam, dan memanen.
-- `craft`: melihat resep, membuat item, mengecek queue, dan claim hasil craft.
-- `market`: melihat listing, menjual item ke market pemain, dan membeli listing.
-
-## Contoh Alur Pemain
-
-```text
-!register
-!job list
-!job apply janitor
-!work
-!daily
-!shop
-!buy wheat 10
-!farm plantall wheat
-!farm harvestall
-!craft list
-!craft start flour 2
-```
-
-Slash command juga tersedia untuk command yang sama, contohnya `/job list`, `/work`, dan `/farm view`.
-
-## Konfigurasi Game
-
-Beberapa data gameplay bisa diubah lewat file konfigurasi:
-
-- `config.json`: prefix yang direncanakan, cooldown default, modal awal, dan reward daily.
-- `config/crops.json`: tanaman, waktu tumbuh, hasil panen, dan harga benih.
-- `config/recipes.json`: resep crafting pemain.
-- `config/shop.json`: item shop, harga dasar, stok target, batas harga, dan resep produksi shop AI.
-- `config/tools.json`: data tools seperti sprinkler.
-
-## Database
-
-Project ini tidak memakai file migration manual. Schema dibuat dan diperbarui otomatis saat bot masuk ke event `ready`.
-
-Tabel utama yang disiapkan antara lain:
-
-- `users`
-- `user_skills`
-- `jobs`
-- `inventory`
-- `user_farms`
-- `farm_tiles`
-- `user_storage`
-- `market_listings`
-- `global_shop`
-- `shop_inventory`
-- `shop_production_queue`
-
-Pastikan user database punya izin untuk `CREATE TABLE`, `ALTER TABLE`, `INSERT`, `SELECT`, `UPDATE`, dan `DELETE`.
-
-## Development Notes
-
-- Command baru bisa ditambahkan di folder `commands/<kategori>/`.
-- Command yang punya `slash: true` dan `data: new SlashCommandBuilder()` akan dikumpulkan oleh `index.js` lalu didaftarkan saat bot ready.
-- Cooldown command dicek lewat Redis di `utils/middleware`.
-- Transaksi database memakai helper `botHandlers/mysqlHandler.js`.
-- Game loop berada di `managers/GameLoop.js`.
-
-## Troubleshooting
-
-- Jika slash command belum muncul, tunggu propagasi global command Discord atau cek `CLIENT_ID` dan `DISCORD_TOKEN`.
-- Jika command error terkait database, pastikan MariaDB/MySQL aktif dan `.env` sudah benar.
-- Jika cooldown tidak berjalan atau muncul error Redis, pastikan Redis aktif atau isi `REDIS_URL`.
-- Jika bot tidak membaca prefix selain `!`, itu sesuai kondisi handler saat ini.
+### Ladang & Pasar
+- `/farm view` / `!farm`: Melihat visual grid ladang pertanian.
+- `/farm plant` / `!farm plant <x> <y> <crop>`: Menanam bibit pada petak tertentu.
+- `/farm plantall` / `!farm plantall <crop>`: Menanam seluruh petak kosong sekaligus (Batch Multi-row Query).
+- `/farm water` / `!farm water <x> <y>`: Menyiram tanaman agar tumbuh 2x lebih cepat.
+- `/farm waterall` / `!farm waterall`: Menyiram seluruh tanaman yang sedang tumbuh.
+- `/farm harvest` / `!farm harvest <x> <y>`: Memanen petak yang sudah matang (growth 100%).
+- `/farm harvestall` / `!farm harvestall`: Memanen seluruh tanaman yang matang sekaligus.
+- `/farm storage` / `!farm storage`: Melihat isi lumbung gudang pertanian.
+- `/craft list` / `!craft list`: Melihat buku resep masakan & olahan.
+- `/craft start` / `!craft start <recipe> [amount]`: Memulai antrean pengolahan barang.
+- `/craft queue` / `!craft queue`: Memeriksa antrean crafting aktif.
+- `/craft claim` / `!craft claim <id>`: Mengambil barang yang selesai diproses.
+- `/market list` / `!market list`: Melihat bursa penawaran pasar antar pemain.
+- `/market sell` / `!market sell <item> <amount> <price>`: Menjual barang lumbung ke pasar.
+- `/market buy` / `!market buy <id>`: Membeli barang dari listing pasar pemain lain.

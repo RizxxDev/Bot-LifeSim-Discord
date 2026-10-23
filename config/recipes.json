@@ -1,23 +1,72 @@
 {
-  "flour": { 
-    "name": "Tepung", 
-    "time_mins": 5, 
-    "ingredients": { "wheat": 3 }, 
+  "flour": {
+    "name": "Tepung",
+    "time_mins": 5,
+    "ingredients": { "wheat": 3 },
     "result": 1,
     "emoji": "🌾"
   },
-  "bread": { 
-    "name": "Roti", 
-    "time_mins": 15, 
-    "ingredients": { "flour": 2 }, 
+  "bread": {
+    "name": "Roti",
+    "time_mins": 15,
+    "ingredients": { "flour": 2 },
     "result": 1,
     "emoji": "🍞"
   },
-  "tomato_soup": { 
-    "name": "Sup Tomat", 
-    "time_mins": 10, 
-    "ingredients": { "tomato": 3 }, 
+  "tomato_soup": {
+    "name": "Sup Tomat",
+    "time_mins": 10,
+    "ingredients": { "tomato": 3 },
     "result": 1,
     "emoji": "🥣"
+  },
+  "fries": {
+    "name": "Kentang Goreng",
+    "time_mins": 12,
+    "ingredients": { "potato": 4, "coal": 1 },
+    "result": 1,
+    "emoji": "🍟"
+  },
+  "pasta": {
+    "name": "Pasta",
+    "time_mins": 20,
+    "ingredients": { "flour": 2, "tomato": 2, "corn": 1 },
+    "result": 1,
+    "emoji": "🍝"
+  },
+  "pizza": {
+    "name": "Pizza",
+    "time_mins": 30,
+    "ingredients": { "flour": 3, "tomato": 3, "corn": 2, "coal": 2 },
+    "result": 1,
+    "emoji": "🍕"
+  },
+  "grilled_salmon": {
+    "name": "Salmon Panggang",
+    "time_mins": 12,
+    "ingredients": { "salmon": 2, "coal": 1 },
+    "result": 1,
+    "emoji": "🍣"
+  },
+  "pro_rod": {
+    "name": "Pro Fishing Rod",
+    "time_mins": 45,
+    "ingredients": { "fishing_rod": 1, "tuna": 3, "gold_ore": 2 },
+    "result": 1,
+    "emoji": "🎣"
+  },
+  "gpick": {
+    "name": "Golden Pickaxe",
+    "time_mins": 60,
+    "ingredients": { "pickaxe": 1, "gold_ore": 4, "diamond_ore": 1 },
+    "result": 1,
+    "emoji": "⛏️"
+  },
+  "bait": {
+    "name": "Bait",
+    "time_mins": 3,
+    "ingredients": { "trash": 2 },
+    "result": 3,
+    "emoji": "🪱"
   }
 }

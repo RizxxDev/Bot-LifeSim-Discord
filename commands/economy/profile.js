@@ -47,8 +47,7 @@ async function runProfile(context, user) {
                 { name: 'EXP', value: progressBar(data.exp, requiredExp, 8), inline: true },
                 { name: 'Skill points', value: `${data.skill_points} SP`, inline: true },
                 { name: 'Cash', value: formatMoney(data.cash), inline: true },
-                { name: 'Bank', value: formatMoney(data.bank), inline: true },
-                { name: 'Status', value: `Energy ${data.energy}% | Hunger ${data.hunger}%`, inline: true }
+                { name: 'Bank', value: formatMoney(data.bank), inline: true }
             )
             .setFooter({ text: 'Next: /job list, /skill view, or /bank info' });
 

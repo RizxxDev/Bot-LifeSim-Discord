@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
 const FarmManager = require('../../managers/FarmManager');
+const ItemManager = require('../../managers/ItemManager');
 const cropsConfig = require('../../config/crops.json');
 const { infoEmbed, successEmbed, formatNumber, progressBar, colors } = require('../../utils/ui');
 const { send, sendError } = require('../../utils/respond');
@@ -25,13 +26,19 @@ module.exports = {
         .addSubcommand(sub => sub.setName('harvest').setDescription('Harvest one tile.')
             .addIntegerOption(opt => opt.setName('x').setDescription('X coordinate.').setRequired(true).setMinValue(1))
             .addIntegerOption(opt => opt.setName('y').setDescription('Y coordinate.').setRequired(true).setMinValue(1)))
-        .addSubcommand(sub => sub.setName('harvestall').setDescription('Harvest every ready crop.')),
+        .addSubcommand(sub => sub.setName('harvestall').setDescription('Harvest every ready crop.'))
+        .addSubcommand(sub => sub.setName('water').setDescription('Water one planted tile.')
+            .addIntegerOption(opt => opt.setName('x').setDescription('X coordinate.').setRequired(true).setMinValue(1))
+            .addIntegerOption(opt => opt.setName('y').setDescription('Y coordinate.').setRequired(true).setMinValue(1)))
+        .addSubcommand(sub => sub.setName('waterall').setDescription('Water every planted crop that is still growing.')),
 
     async executeSlash(interaction) {
         const sub = interaction.options.getSubcommand(false) || 'view';
         await handleFarm(interaction, interaction.user, sub, {
             x: ['plant', 'harvest'].includes(sub) ? interaction.options.getInteger('x') - 1 : null,
             y: ['plant', 'harvest'].includes(sub) ? interaction.options.getInteger('y') - 1 : null,
+            wx: sub === 'water' ? interaction.options.getInteger('x') - 1 : null,
+            wy: sub === 'water' ? interaction.options.getInteger('y') - 1 : null,
             crop: ['plant', 'plantall'].includes(sub) ? interaction.options.getString('crop') : null
         });
     },
@@ -41,18 +48,20 @@ module.exports = {
         await handleFarm(message, message.author, sub, {
             x: ['plant', 'harvest'].includes(sub) ? Number.parseInt(args[1], 10) - 1 : null,
             y: ['plant', 'harvest'].includes(sub) ? Number.parseInt(args[2], 10) - 1 : null,
+            wx: sub === 'water' ? Number.parseInt(args[1], 10) - 1 : null,
+            wy: sub === 'water' ? Number.parseInt(args[2], 10) - 1 : null,
             crop: sub === 'plant' ? args[3]?.toLowerCase() : sub === 'plantall' ? args[1]?.toLowerCase() : null
         });
     }
 };
 
 async function handleFarm(context, user, sub, data) {
-    if (!['view', 'storage', 'plant', 'plantall', 'harvest', 'harvestall'].includes(sub)) {
-        return sendError(context, user, 'Usage: `!farm`, `!farm storage`, `!farm plant <x> <y> <crop>`, `!farm plantall <crop>`, `!farm harvest <x> <y>`, or `!farm harvestall`.');
+    if (!['view', 'storage', 'plant', 'plantall', 'harvest', 'harvestall', 'water', 'waterall'].includes(sub)) {
+        return sendError(context, user, 'Usage: `!farm`, `!farm storage`, `!farm plant <x> <y> <crop>`, `!farm plantall <crop>`, `!farm water <x> <y>`, `!farm waterall`, `!farm harvest <x> <y>`, or `!farm harvestall`.');
     }
 
     try {
-        await db.query('INSERT IGNORE INTO user_farms (user_id) VALUES (?)', [user.id]);
+        await db.query('INSERT IGNORE INTO farm_profiles (user_id) VALUES (?)', [user.id]);
 
         if (sub === 'view') {
             return send(context, { embeds: [await buildFarmEmbed(user)] });
@@ -86,9 +95,23 @@ async function handleFarm(context, user, sub, data) {
             return send(context, { embeds: [successEmbed('Crop Harvested', `Harvested **${amount} item(s)** from **[${data.x + 1}, ${data.y + 1}]**.`, user).setColor(colors.farm)] });
         }
 
+        if (sub === 'water') {
+            if (!Number.isInteger(data.wx) || !Number.isInteger(data.wy)) {
+                return sendError(context, user, 'Enter valid X and Y coordinates.');
+            }
+            await FarmManager.waterCrop(user.id, data.wx, data.wy);
+            return send(context, { embeds: [successEmbed('Crop Watered', `Watered crop at **[${data.wx + 1}, ${data.wy + 1}]**. It will grow faster on the next tick.`, user).setColor(colors.farm)] });
+        }
+
+        if (sub === 'waterall') {
+            const count = await FarmManager.waterAll(user.id);
+            if (!count) return sendError(context, user, 'No growing crops need water right now.');
+            return send(context, { embeds: [successEmbed('Farm Watered', `Watered **${count}** growing crop(s).`, user).setColor(colors.farm)] });
+        }
+
         const result = await FarmManager.harvestAll(user.id);
         const summary = Object.entries(result.summary)
-            .map(([cropId, amount]) => `• **${formatNumber(amount)}x ${cropsConfig[cropId]?.name || cropId}**`)
+            .map(([cropId, amount]) => `• **${formatNumber(amount)}x ${cropsConfig[cropId]?.name || ItemManager.getName(cropId)}**`)
             .join('\n');
         const embed = successEmbed('Harvest Complete', `Harvested **${result.count}** tile(s).\n\n${summary}`, user)
             .setColor(colors.farm);
@@ -100,18 +123,18 @@ async function handleFarm(context, user, sub, data) {
 }
 
 async function buildFarmEmbed(user) {
-    const farmRows = await db.query('SELECT * FROM user_farms WHERE user_id = ?', [user.id]);
+    const farmRows = await db.query('SELECT * FROM farm_profiles WHERE user_id = ?', [user.id]);
     const farm = farmRows[0];
     const tiles = await db.query('SELECT * FROM farm_tiles WHERE user_id = ?', [user.id]);
-    const storageRows = await db.query('SELECT SUM(amount) as total FROM user_storage WHERE user_id = ?', [user.id]);
+    const storageRows = await db.query('SELECT SUM(amount) as total FROM farm_storage WHERE user_id = ?', [user.id]);
     const storage = Number(storageRows[0]?.total || 0);
 
     let grid = '';
     for (let y = 0; y < farm.height; y++) {
         for (let x = 0; x < farm.width; x++) {
             const tile = tiles.find(item => item.x === x && item.y === y);
-            if (!tile || !tile.crop_id) grid += tile?.is_watered ? '🟦 ' : '⬛ ';
-            else if (tile.growth < 100) grid += '🌱 ';
+            if (!tile || !tile.crop_id) grid += '⬛ ';
+            else if (tile.growth < 100) grid += tile.is_watered ? '💧 ' : '🌱 ';
             else grid += '🌾 ';
         }
         grid += '\n';
@@ -121,14 +144,14 @@ async function buildFarmEmbed(user) {
         .setColor(colors.farm)
         .addFields(
             { name: 'Storage', value: progressBar(storage, farm.max_storage, 8), inline: true },
-            { name: 'Legend', value: '⬛ Empty | 🟦 Watered | 🌱 Growing | 🌾 Ready', inline: false }
+            { name: 'Legend', value: '⬛ Empty | 🌱 Growing | 💧 Watered | 🌾 Ready', inline: false }
         );
 }
 
 async function buildStorageEmbed(user) {
-    const farmRows = await db.query('SELECT max_storage FROM user_farms WHERE user_id = ?', [user.id]);
+    const farmRows = await db.query('SELECT max_storage FROM farm_profiles WHERE user_id = ?', [user.id]);
     const maxStorage = Number(farmRows[0]?.max_storage || 50);
-    const items = await db.query('SELECT item_id, amount FROM user_storage WHERE user_id = ? AND amount > 0 ORDER BY item_id ASC', [user.id]);
+    const items = await db.query('SELECT item_id, amount FROM farm_storage WHERE user_id = ? AND amount > 0 ORDER BY item_id ASC', [user.id]);
     const total = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
 
     const embed = infoEmbed(`Farm Storage: ${user.username}`, null, user)
@@ -137,7 +160,7 @@ async function buildStorageEmbed(user) {
         .addFields({ name: 'Capacity', value: progressBar(total, maxStorage, 8), inline: false });
 
     embed.setDescription(items.length
-        ? items.map(item => `• **${cropsConfig[item.item_id]?.name || item.item_id}** — x${formatNumber(item.amount)}`).join('\n')
+        ? items.map(item => `• **${cropsConfig[item.item_id]?.name || ItemManager.getName(item.item_id)}** — x${formatNumber(item.amount)}`).join('\n')
         : 'Storage is empty.');
 
     return embed;

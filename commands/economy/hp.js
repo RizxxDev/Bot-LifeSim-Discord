@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
-const { infoEmbed, formatMoney, formatPercent, colors } = require('../../utils/ui');
+const { infoEmbed, formatMoney, colors } = require('../../utils/ui');
 const { send, edit, sendError } = require('../../utils/respond');
 
 module.exports = {
@@ -24,10 +24,10 @@ module.exports = {
 
 async function handlePhone(context, user) {
     try {
-        const inventory = await db.query('SELECT amount FROM inventory WHERE user_id = ? AND item_id = "smartphone"', [user.id]);
-        if (!inventory || inventory.length === 0 || inventory[0].amount < 1) {
-            return sendError(context, user, 'You need a smartphone item before opening this menu.');
-        }
+        await db.query(
+            'INSERT INTO user_inventory (user_id, item_id, amount) VALUES (?, "smartphone", 1) ON DUPLICATE KEY UPDATE amount = GREATEST(amount, 1)',
+            [user.id]
+        );
 
         const row = createPhoneMenu(user.id);
         const homeEmbed = createHomeEmbed(user);
@@ -73,9 +73,7 @@ async function handlePhone(context, user) {
                         .addFields(
                             { name: 'Job', value: data.job_name || 'Unemployed', inline: true },
                             { name: 'Level', value: `Lv. ${data.level}`, inline: true },
-                            { name: 'SP', value: `${data.skill_points} SP`, inline: true },
-                            { name: 'Energy', value: formatPercent(data.energy), inline: true },
-                            { name: 'Hunger', value: formatPercent(data.hunger), inline: true }
+                            { name: 'SP', value: `${data.skill_points} SP`, inline: true }
                         );
                     await interaction.update({ embeds: [embed], components: [row] });
                 } else if (selected === 'app_close') {

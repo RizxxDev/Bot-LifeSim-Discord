@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
+const ItemManager = require('../../managers/ItemManager');
 const { infoEmbed, formatNumber, colors } = require('../../utils/ui');
 const { send, sendError } = require('../../utils/respond');
 
@@ -24,7 +25,7 @@ module.exports = {
 
 async function handleInventory(context, user) {
     try {
-        const items = await db.query('SELECT item_id, amount FROM inventory WHERE user_id = ? AND amount > 0 ORDER BY item_id ASC', [user.id]);
+        const items = await db.query('SELECT item_id, amount FROM user_inventory WHERE user_id = ? AND amount > 0 ORDER BY item_id ASC', [user.id]);
 
         const embed = infoEmbed(`Inventory: ${user.username}`, null, user)
             .setColor(colors.inventory)
@@ -34,7 +35,7 @@ async function handleInventory(context, user) {
             embed.setDescription('Your inventory is empty.');
         } else {
             embed.setDescription(items.map((item) => {
-                return `• **${formatItemName(item.item_id)}** — x${formatNumber(item.amount)}`;
+                return `• **${ItemManager.getName(item.item_id)}** — x${formatNumber(item.amount)}`;
             }).join('\n'));
         }
 
@@ -44,8 +45,4 @@ async function handleInventory(context, user) {
         console.error('[INVENTORY ERROR]', error);
         return sendError(context, user, 'Could not open your inventory.');
     }
-}
-
-function formatItemName(itemId) {
-    return itemId.split('_').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }

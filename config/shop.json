@@ -1,14 +1,47 @@
 {
-  "start_capital": 500000, 
+  "start_capital": 500000,
   "items": {
-    "wheat": { "name": "Gandum", "base_price": 10, "min_price": 2, "max_price": 50, "target_stock": 1000, "type": "raw" },
-    "tomato": { "name": "Tomat", "base_price": 15, "min_price": 5, "max_price": 70, "target_stock": 800, "type": "raw" },
-    "flour": { "name": "Tepung", "base_price": 40, "min_price": 15, "max_price": 150, "target_stock": 500, "type": "product" },
-    "bread": { "name": "Roti", "base_price": 100, "min_price": 40, "max_price": 30000, "target_stock": 300, "type": "product" },
-    "bait": { "name": "Bait", "base_price": 5, "min_price": 6, "max_price": 3000, "target_stock": 3000, "type": "product" }
+    "wheat_seed": { "name": "Bibit Gandum", "base_price": 12, "min_price": 6, "max_price": 40, "target_stock": 1200, "type": "seed" },
+    "tomato_seed": { "name": "Bibit Tomat", "base_price": 24, "min_price": 10, "max_price": 75, "target_stock": 900, "type": "seed" },
+    "corn_seed": { "name": "Bibit Jagung", "base_price": 45, "min_price": 20, "max_price": 130, "target_stock": 700, "type": "seed" },
+    "potato_seed": { "name": "Bibit Kentang", "base_price": 60, "min_price": 25, "max_price": 180, "target_stock": 600, "type": "seed" },
+
+    "wheat": { "name": "Gandum", "base_price": 30, "min_price": 12, "max_price": 90, "target_stock": 1000, "type": "raw" },
+    "tomato": { "name": "Tomat", "base_price": 48, "min_price": 18, "max_price": 130, "target_stock": 800, "type": "raw" },
+    "corn": { "name": "Jagung", "base_price": 90, "min_price": 35, "max_price": 240, "target_stock": 550, "type": "raw" },
+    "potato": { "name": "Kentang", "base_price": 110, "min_price": 45, "max_price": 280, "target_stock": 500, "type": "raw" },
+
+    "flour": { "name": "Tepung", "base_price": 120, "min_price": 50, "max_price": 350, "target_stock": 500, "type": "product" },
+    "bread": { "name": "Roti", "base_price": 320, "min_price": 140, "max_price": 900, "target_stock": 300, "type": "product" },
+    "tomato_soup": { "name": "Sup Tomat", "base_price": 260, "min_price": 100, "max_price": 700, "target_stock": 250, "type": "product" },
+    "fries": { "name": "Kentang Goreng", "base_price": 420, "min_price": 180, "max_price": 1100, "target_stock": 180, "type": "product" },
+    "pasta": { "name": "Pasta", "base_price": 720, "min_price": 300, "max_price": 1800, "target_stock": 120, "type": "product" },
+    "pizza": { "name": "Pizza", "base_price": 1400, "min_price": 600, "max_price": 3600, "target_stock": 80, "type": "product" },
+    "grilled_salmon": { "name": "Salmon Panggang", "base_price": 950, "min_price": 350, "max_price": 2500, "target_stock": 90, "type": "product" },
+
+    "bait": { "name": "Bait", "base_price": 45, "min_price": 20, "max_price": 120, "target_stock": 1500, "type": "consumable" },
+    "fishing_rod": { "name": "Fishing Rod", "base_price": 2500, "min_price": 1800, "max_price": 5000, "target_stock": 80, "type": "tool" },
+    "pro_rod": { "name": "Pro Fishing Rod", "base_price": 12000, "min_price": 8000, "max_price": 25000, "target_stock": 15, "type": "tool" },
+    "pickaxe": { "name": "Pickaxe", "base_price": 3000, "min_price": 2000, "max_price": 6500, "target_stock": 80, "type": "tool" },
+    "gpick": { "name": "Golden Pickaxe", "base_price": 16000, "min_price": 10000, "max_price": 35000, "target_stock": 12, "type": "tool" },
+    "smartphone": { "name": "Smartphone", "base_price": 5000, "min_price": 3000, "max_price": 9000, "target_stock": 40, "type": "tool" },
+
+    "trash": { "name": "Trash", "base_price": 8, "min_price": 1, "max_price": 25, "target_stock": 200, "type": "junk" },
+    "salmon": { "name": "Salmon", "base_price": 180, "min_price": 70, "max_price": 450, "target_stock": 260, "type": "fish" },
+    "tuna": { "name": "Tuna", "base_price": 420, "min_price": 160, "max_price": 1000, "target_stock": 150, "type": "fish" },
+    "shark": { "name": "White Shark", "base_price": 1800, "min_price": 700, "max_price": 5000, "target_stock": 35, "type": "fish" },
+
+    "rock": { "name": "Rock", "base_price": 35, "min_price": 10, "max_price": 100, "target_stock": 650, "type": "ore" },
+    "coal": { "name": "Coal Ore", "base_price": 90, "min_price": 35, "max_price": 240, "target_stock": 450, "type": "ore" },
+    "copper_ore": { "name": "Copper Ore", "base_price": 160, "min_price": 60, "max_price": 420, "target_stock": 320, "type": "ore" },
+    "iron_ore": { "name": "Iron Ore", "base_price": 300, "min_price": 120, "max_price": 800, "target_stock": 220, "type": "ore" },
+    "gold_ore": { "name": "Gold Ore", "base_price": 800, "min_price": 300, "max_price": 2200, "target_stock": 90, "type": "ore" },
+    "diamond_ore": { "name": "Diamond Ore", "base_price": 2400, "min_price": 1000, "max_price": 7000, "target_stock": 30, "type": "ore" }
   },
   "recipes": {
     "flour": { "time_mins": 2, "ingredients": { "wheat": 3 }, "result": 1, "max_queue": 100 },
-    "bread": { "time_mins": 5, "ingredients": { "flour": 2 }, "result": 1, "max_queue": 50 }
+    "bread": { "time_mins": 5, "ingredients": { "flour": 2 }, "result": 1, "max_queue": 50 },
+    "tomato_soup": { "time_mins": 4, "ingredients": { "tomato": 3 }, "result": 1, "max_queue": 40 },
+    "bait": { "time_mins": 1, "ingredients": { "trash": 2 }, "result": 3, "max_queue": 80 }
   }
 }

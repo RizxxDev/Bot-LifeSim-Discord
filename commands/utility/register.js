@@ -36,7 +36,11 @@ async function handleRegister(context, user) {
             [user.id, startCapital]
         );
         await db.query('INSERT IGNORE INTO user_skills (user_id) VALUES (?)', [user.id]);
-        await db.query('INSERT IGNORE INTO user_farms (user_id) VALUES (?)', [user.id]);
+        await db.query('INSERT IGNORE INTO farm_profiles (user_id) VALUES (?)', [user.id]);
+        await db.query(
+            'INSERT INTO user_inventory (user_id, item_id, amount) VALUES (?, "smartphone", 1) ON DUPLICATE KEY UPDATE amount = GREATEST(amount, 1)',
+            [user.id]
+        );
 
         const embed = successEmbed(
             'Citizen Profile Created',
@@ -46,6 +50,7 @@ async function handleRegister(context, user) {
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .addFields(
                 { name: 'Starting cash', value: formatMoney(startCapital), inline: true },
+                { name: 'Starter item', value: 'Smartphone', inline: true },
                 { name: 'Next step', value: '`/job list` or `!job list`', inline: true }
             );
 

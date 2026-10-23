@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
 const db = require('../../botHandlers/mysqlHandler');
+const ItemManager = require('../../managers/ItemManager');
 const { infoEmbed, successEmbed, colors } = require('../../utils/ui');
 const { send, edit, sendError } = require('../../utils/respond');
 
@@ -26,7 +27,10 @@ module.exports = {
 
 async function handleInteractiveFish(context, user) {
     try {
-        const inventory = await db.query('SELECT item_id FROM inventory WHERE user_id = ? AND item_id IN ("fishing_rod", "pro_rod") AND amount > 0', [user.id]);
+        const inventory = await db.query(
+            'SELECT item_id, amount FROM user_inventory WHERE user_id = ? AND item_id IN ("fishing_rod", "pro_rod", "bait") AND amount > 0',
+            [user.id]
+        );
 
         let rodType = 'bamboo';
         let rodName = 'Bamboo Rod';
@@ -42,26 +46,45 @@ async function handleInteractiveFish(context, user) {
             reactionTime = 3500;
         }
 
+        const usesBait = inventory.some(item => item.item_id === 'bait' && Number(item.amount) > 0);
         const waitingEmbed = infoEmbed('Fishing Session', `Rod: **${rodName}**\n\nCasting the line... stay ready.`, user)
             .setColor(colors.primary);
+        if (usesBait) waitingEmbed.addFields({ name: 'Bait', value: '1x bait will be used for this cast.', inline: true });
+
         const response = await send(context, { embeds: [waitingEmbed], fetchReply: true });
+
+        if (usesBait) {
+            await ItemManager.removeItem(db, user.id, 'bait', 1);
+        }
 
         await wait(randomInt(3000, 7000));
 
-        const button = new ButtonBuilder()
-            .setCustomId(`fish_pull:${user.id}`)
-            .setLabel('Pull')
-            .setEmoji('🎣')
-            .setStyle(ButtonStyle.Success);
-        const row = new ActionRowBuilder().addComponents(button);
-        const actionEmbed = infoEmbed('Bite Detected', 'Press the button before the fish escapes.', user)
-            .setColor(colors.danger);
+        const actions = [
+            { id: 'pull', label: 'Pull', emoji: '🎣' },
+            { id: 'steady', label: 'Steady', emoji: '🧵' },
+            { id: 'release', label: 'Release', emoji: '🌊' }
+        ];
+        const correctAction = randomChoice(actions);
+        const rareBite = Math.random() < (usesBait ? 0.18 : 0.08);
+        const finalReactionTime = rareBite ? Math.max(1800, reactionTime - 900) : reactionTime;
+
+        const row = new ActionRowBuilder().addComponents(actions.map(action => new ButtonBuilder()
+            .setCustomId(`fish_${action.id}:${user.id}`)
+            .setLabel(action.label)
+            .setEmoji(action.emoji)
+            .setStyle(action.id === correctAction.id ? ButtonStyle.Success : ButtonStyle.Secondary)));
+
+        const actionEmbed = infoEmbed(
+            'Bite Detected',
+            `The line jerks. Choose **${correctAction.label}** before it escapes.${rareBite ? '\n\nRare bite: shorter timing window, better reward odds.' : ''}`,
+            user
+        ).setColor(colors.danger);
 
         await edit(context, response, { embeds: [actionEmbed], components: [row] });
 
         const collector = response.createMessageComponentCollector({
             componentType: ComponentType.Button,
-            time: reactionTime
+            time: finalReactionTime
         });
 
         collector.on('collect', async (interaction) => {
@@ -71,29 +94,29 @@ async function handleInteractiveFish(context, user) {
             }
 
             await interaction.deferUpdate();
-            collector.stop('success');
+            collector.stop(interaction.customId.startsWith(`fish_${correctAction.id}`) ? 'success' : 'failed');
         });
 
         collector.on('end', async (collected, reason) => {
             if (reason === 'success') {
-                const fish = getRandomFish(rodType);
+                const fish = getRandomFish(rodType, usesBait, rareBite);
                 const amount = fish.id === 'trash' ? 1 : randomInt(1, 2);
 
                 try {
-                    await db.query(
-                        'INSERT INTO inventory (user_id, item_id, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?',
-                        [user.id, fish.id, amount, amount]
-                    );
+                    await ItemManager.addItem(db, user.id, fish.id, amount);
 
                     const embed = successEmbed('Catch Secured', `You caught **${amount}x ${fish.emoji} ${fish.name}**.`, user)
-                        .setFooter({ text: fish.desc });
+                        .setFooter({ text: `${fish.desc} Sell it with /sell ${fish.id} ${amount}, or use it in recipes.` });
                     await edit(context, response, { embeds: [embed], components: [] });
                 } catch (error) {
                     console.error('[FISHING DB ERROR]', error);
                     await edit(context, response, { embeds: [infoEmbed('Fishing Error', 'The catch could not be saved.', user).setColor(colors.danger)], components: [] });
                 }
             } else {
-                const embed = infoEmbed('The Fish Escaped', 'You reacted too late. Try again when the cooldown ends.', user)
+                const message = reason === 'failed'
+                    ? 'Wrong move. The hook slipped and the fish escaped.'
+                    : 'You reacted too late. Try again when the cooldown ends.';
+                const embed = infoEmbed('The Fish Escaped', message, user)
                     .setColor(colors.muted);
                 await edit(context, response, { embeds: [embed], components: [] }).catch(() => {});
             }
@@ -108,7 +131,11 @@ function randomInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function getRandomFish(rodType) {
+function randomChoice(items) {
+    return items[Math.floor(Math.random() * items.length)];
+}
+
+function getRandomFish(rodType, usesBait = false, rareBite = false) {
     const roll = Math.random() * 100;
     let trashChance = 25;
     let salmonChance = 70;
@@ -124,7 +151,19 @@ function getRandomFish(rodType) {
         tunaChance = 90;
     }
 
-    if (roll < trashChance) return { id: 'trash', name: 'Trash', emoji: '👞', desc: 'Not glamorous, but it is still an item.' };
+    if (usesBait) {
+        trashChance = Math.max(3, trashChance - 8);
+        salmonChance -= 8;
+        tunaChance -= 5;
+    }
+
+    if (rareBite) {
+        trashChance = 0;
+        salmonChance = Math.max(20, salmonChance - 20);
+        tunaChance = Math.max(65, tunaChance - 10);
+    }
+
+    if (roll < trashChance) return { id: 'trash', name: 'Trash', emoji: '👞', desc: 'Not glamorous, but it can become bait.' };
     if (roll < salmonChance) return { id: 'salmon', name: 'Salmon', emoji: '🐟', desc: 'A reliable catch.' };
     if (roll < tunaChance) return { id: 'tuna', name: 'Tuna', emoji: '🐠', desc: 'A valuable catch.' };
     return { id: 'shark', name: 'White Shark', emoji: '🦈', desc: 'Jackpot catch.' };

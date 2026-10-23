@@ -4,15 +4,28 @@ const { sendError } = require('../utils/respond');
 module.exports = {
     name: 'interactionCreate',
     async handle(interaction, client) {
+        // Penanganan Autocomplete interaktif
+        if (interaction.isAutocomplete()) {
+            const command = client.commands.get(interaction.commandName);
+            if (command && typeof command.autocomplete === 'function') {
+                try {
+                    await command.autocomplete(interaction);
+                } catch (error) {
+                    console.error('[AUTOCOMPLETE ERROR]', error);
+                }
+            }
+            return;
+        }
+
         if (!interaction.isChatInputCommand()) return;
 
         const command = client.commands.get(interaction.commandName);
-        if (!command) return;
+        if (!command || !command.slash) return;
 
         try {
             if (command.requiresRegistration !== false) {
-                const isRegistered = await checkRegistration(interaction.user.id);
-                if (!isRegistered) {
+                const registered = await checkRegistration(interaction.user.id);
+                if (!registered) {
                     return sendError(interaction, interaction.user, 'Create your citizen profile first with `/register`.', { ephemeral: true });
                 }
             }

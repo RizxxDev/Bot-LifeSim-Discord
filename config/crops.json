@@ -1,4 +1,6 @@
 {
-  "wheat": { "name": "Gandum", "growTime_mins": 1, "yield": 2, "seed_price": 10 },
-  "tomato": { "name": "Tomat", "growTime_mins": 3, "yield": 3, "seed_price": 25 }
+  "wheat": { "name": "Gandum", "growTime_mins": 2, "yield": 2, "seed_item": "wheat_seed" },
+  "tomato": { "name": "Tomat", "growTime_mins": 4, "yield": 3, "seed_item": "tomato_seed" },
+  "corn": { "name": "Jagung", "growTime_mins": 8, "yield": 4, "seed_item": "corn_seed" },
+  "potato": { "name": "Kentang", "growTime_mins": 10, "yield": 5, "seed_item": "potato_seed" }
 }

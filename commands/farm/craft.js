@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const CraftingManager = require('../../managers/CraftingManager');
+const ItemManager = require('../../managers/ItemManager');
 const { infoEmbed, successEmbed, formatNumber, colors } = require('../../utils/ui');
 const { send, sendError } = require('../../utils/respond');
 
@@ -49,7 +50,7 @@ async function handleCraft(context, user, sub, data) {
                 .setColor(colors.craft);
 
             embed.setDescription(Object.entries(recipes).map(([id, recipe]) => {
-                const ingredients = Object.entries(recipe.ingredients).map(([item, qty]) => `${qty}x ${item}`).join(', ');
+                const ingredients = Object.entries(recipe.ingredients).map(([item, qty]) => `${qty}x ${ItemManager.getName(item)}`).join(', ');
                 return `${recipe.emoji || ''} **${recipe.name}** \`${id}\`\nTime: ${recipe.time_mins} min | Result: ${recipe.result} | Ingredients: ${ingredients}`;
             }).join('\n\n') || 'No recipes are available.');
 

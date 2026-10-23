@@ -5,7 +5,9 @@
   },
   "economy": {
     "startingCash": 10000,
-    "dailyBaseReward": 5000,
-    "dailyStreakBonus": 1000
+    "dailyBaseReward": 1500,
+    "dailyStreakBonus": 300,
+    "workMinReward": 750,
+    "workMaxReward": 2200
   }
 }

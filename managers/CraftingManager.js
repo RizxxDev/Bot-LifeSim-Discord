@@ -1,5 +1,6 @@
 const db = require('../botHandlers/mysqlHandler');
 const recipes = require('../config/recipes.json');
+const ItemManager = require('./ItemManager');
 
 class CraftingManager {
     // Mengambil daftar resep
@@ -20,19 +21,11 @@ class CraftingManager {
 
         const trx = await db.startTransaction();
         try {
-            // 1. Cek & Potong Bahan Baku dari Storage
             for (const [ingredient, qty] of Object.entries(recipe.ingredients)) {
                 const totalNeeded = qty * amount;
-                const storage = await trx.query('SELECT amount FROM user_storage WHERE user_id = ? AND item_id = ? FOR UPDATE', [userId, ingredient]);
-
-                if (!storage || storage.length === 0 || storage[0].amount < totalNeeded) {
-                    throw new Error(`Missing ingredients. Required: ${totalNeeded}x ${ingredient}.`);
-                }
-
-                await trx.query('UPDATE user_storage SET amount = amount - ? WHERE user_id = ? AND item_id = ?', [totalNeeded, userId, ingredient]);
+                await ItemManager.removeItem(trx, userId, ingredient, totalNeeded);
             }
 
-            // 2. Kalkulasi Waktu & Masukkan ke Antrian
             const now = Date.now();
             const finishTime = now + (recipe.time_mins * 60 * 1000 * amount); // Waktu * Jumlah barang
 
@@ -62,11 +55,11 @@ class CraftingManager {
             if (Date.now() < q.end_time) throw new Error('This crafting job is not finished yet.');
 
             const recipe = recipes[q.recipe_id];
+            const resultItem = recipe.result_item || q.recipe_id;
             const totalResult = recipe.result * q.amount;
 
-            // 3. Hapus dari Antrian & Masukkan hasil ke Storage
             await trx.query('DELETE FROM crafting_queue WHERE id = ?', [queueId]);
-            await trx.query('INSERT INTO user_storage (user_id, item_id, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?', [userId, q.recipe_id, totalResult, totalResult]);
+            await ItemManager.addItem(trx, userId, resultItem, totalResult);
 
             await trx.commit();
             return { itemName: recipe.name, amount: totalResult, emoji: recipe.emoji };

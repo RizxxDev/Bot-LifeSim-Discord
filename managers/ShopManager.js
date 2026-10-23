@@ -1,5 +1,6 @@
 const db = require('../botHandlers/mysqlHandler');
 const shopConfig = require('../config/shop.json');
+const ItemManager = require('./ItemManager');
 
 class ShopManager {
     
@@ -20,6 +21,28 @@ class ShopManager {
         return Math.floor(finalPrice);
     }
 
+    static calculateTrade(itemId, currentStock, amount, mode) {
+        const item = shopConfig.items[itemId];
+        if (!item) return { unitPrice: 0, totalPrice: 0 };
+
+        let totalPrice = 0;
+        for (let i = 0; i < amount; i++) {
+            const stockAfterStep = mode === 'buy'
+                ? Math.max(1, currentStock - i)
+                : currentStock + i;
+            const marketPrice = this.calculatePrice(itemId, stockAfterStep);
+            const unitPrice = mode === 'sell'
+                ? Math.max(item.min_price, Math.floor(marketPrice * 0.85))
+                : marketPrice;
+            totalPrice += unitPrice;
+        }
+
+        return {
+            unitPrice: Math.floor(totalPrice / amount),
+            totalPrice
+        };
+    }
+
     // 🛍️ 2. PLAYER BELI DARI SHOP
     static async buyFromShop(userId, itemId, amount) {
         const itemConfig = shopConfig.items[itemId];
@@ -33,9 +56,7 @@ class ShopManager {
             const currentStock = shopStock[0]?.amount || 0;
             if (currentStock < amount) throw new Error(`Not enough shop stock. Remaining: ${currentStock}.`);
 
-            // Kalkulasi Harga Beli (Shop Jual ke Player)
-            const unitPrice = this.calculatePrice(itemId, currentStock);
-            const totalPrice = unitPrice * amount;
+            const { unitPrice, totalPrice } = this.calculateTrade(itemId, currentStock, amount, 'buy');
 
             // Cek Uang Player & Storage Player
             const user = await trx.query('SELECT cash FROM users WHERE user_id = ? FOR UPDATE', [userId]);
@@ -43,10 +64,10 @@ class ShopManager {
 
             // Transaksi (Pindah Barang & Uang)
             await trx.query('UPDATE users SET cash = cash - ? WHERE user_id = ?', [totalPrice, userId]);
-            await trx.query('UPDATE global_shop SET cash = cash + ? WHERE id = 1', [totalPrice]); // Uang masuk ke Shop
+            await trx.query('UPDATE shop_global SET cash = cash + ? WHERE id = 1', [totalPrice]); // Uang masuk ke Shop
             
             await trx.query('UPDATE shop_inventory SET amount = amount - ? WHERE item_id = ?', [amount, itemId]);
-            await trx.query('INSERT INTO user_storage (user_id, item_id, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?', [userId, itemId, amount, amount]);
+            await ItemManager.addItem(trx, userId, itemId, amount);
 
             await trx.commit();
             return { unitPrice, totalPrice };
@@ -64,30 +85,23 @@ class ShopManager {
 
         const trx = await db.startTransaction();
         try {
-            // Cek Barang Player
-            const playerStorage = await trx.query('SELECT amount FROM user_storage WHERE user_id = ? AND item_id = ? FOR UPDATE', [userId, itemId]);
-            if (!playerStorage[0] || playerStorage[0].amount < amount) throw new Error('You do not have enough of this item in storage.');
-
-            // Kalkulasi Harga Jual (Harga jual sedikit lebih rendah dari harga beli pasar untuk mencegah eksploitasi)
             const shopStock = await trx.query('SELECT amount FROM shop_inventory WHERE item_id = ? FOR UPDATE', [itemId]);
             const currentStock = shopStock[0]?.amount || 0;
-            const marketPrice = this.calculatePrice(itemId, currentStock);
-            const unitPrice = Math.max(itemConfig.min_price, Math.floor(marketPrice * 0.85)); // Tax/Margin Shop 15%
-            const totalPrice = unitPrice * amount;
+            const { unitPrice, totalPrice } = this.calculateTrade(itemId, currentStock, amount, 'sell');
 
             // Cek Uang Shop (APAKAH SHOP PUNYA UANG UNTUK MEMBAYAR?)
-            const shop = await trx.query('SELECT cash, max_storage FROM global_shop WHERE id = 1 FOR UPDATE');
+            const shop = await trx.query('SELECT cash, max_storage FROM shop_global WHERE id = 1 FOR UPDATE');
             if (shop[0].cash < totalPrice) throw new Error('The shop does not have enough cash right now.');
 
             // Cek Kapasitas Storage Shop
             const totalItems = await trx.query('SELECT SUM(amount) as total FROM shop_inventory');
-            if ((parseInt(totalItems[0].total) + amount) > shop[0].max_storage) throw new Error('The shop storage is full right now.');
+            if ((parseInt(totalItems[0].total, 10) + amount) > shop[0].max_storage) throw new Error('The shop storage is full right now.');
 
             // Transaksi (Pindah Barang & Uang)
-            await trx.query('UPDATE global_shop SET cash = cash - ? WHERE id = 1', [totalPrice]); // Uang Shop berkurang
+            await trx.query('UPDATE shop_global SET cash = cash - ? WHERE id = 1', [totalPrice]); // Uang Shop berkurang
             await trx.query('UPDATE users SET cash = cash + ? WHERE user_id = ?', [totalPrice, userId]);
             
-            await trx.query('UPDATE user_storage SET amount = amount - ? WHERE user_id = ? AND item_id = ?', [amount, userId, itemId]);
+            await ItemManager.removeItem(trx, userId, itemId, amount);
             await trx.query('INSERT INTO shop_inventory (item_id, amount) VALUES (?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?', [itemId, amount, amount]);
 
             await trx.commit();
@@ -104,14 +118,14 @@ class ShopManager {
         try {
             // A. Proses Antrian yang sudah selesai
             const now = Date.now();
-            const finishedQueues = await db.query('SELECT * FROM shop_production_queue WHERE end_time <= ?', [now]);
+            const finishedQueues = await db.query('SELECT * FROM shop_queue WHERE end_time <= ?', [now]);
             
             for (const q of finishedQueues) {
                 const recipe = shopConfig.recipes[q.recipe_id];
                 const resultAmount = recipe.result * q.amount;
                 // Masukkan hasil ke Gudang Shop
                 await db.query('INSERT INTO shop_inventory (item_id, amount) VALUES (?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?', [q.recipe_id, resultAmount, resultAmount]);
-                await db.query('DELETE FROM shop_production_queue WHERE id = ?', [q.id]);
+                await db.query('DELETE FROM shop_queue WHERE id = ?', [q.id]);
             }
 
             // B. AI Decision: Haruskah produksi barang baru?
@@ -126,7 +140,7 @@ class ShopManager {
                     // Cek apakah bahan mentah tersedia di Gudang Shop
                     for (const [ingredient, qtyRequired] of Object.entries(recipe.ingredients)) {
                         const ingStock = await db.query('SELECT amount FROM shop_inventory WHERE item_id = ?', [ingredient]);
-                        if (!ingStock[0] || ingStock[0].amount < qtyRequired) canCraft = false;
+                        if (!ingStock[0] || ingStock[0].amount < (qtyRequired * Math.min(10, recipe.max_queue))) canCraft = false;
                     }
 
                     if (canCraft) {
@@ -140,7 +154,7 @@ class ShopManager {
                         
                         // Masukkan ke antrian produksi
                         const finishTime = now + (recipe.time_mins * 60 * 1000);
-                        await db.query('INSERT INTO shop_production_queue (recipe_id, amount, end_time) VALUES (?, ?, ?)', [productId, craftAmount, finishTime]);
+                        await db.query('INSERT INTO shop_queue (recipe_id, amount, end_time) VALUES (?, ?, ?)', [productId, craftAmount, finishTime]);
                     }
                 }
             }

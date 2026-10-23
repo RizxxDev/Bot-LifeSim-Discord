@@ -59,10 +59,12 @@ for (const file of eventFiles) {
     const filePath = path.join(eventsPath, file);
     const event = require(filePath);
     
-    if (event.once) {
-        client.once(event.name, (...args) => event.handle(...args, client));
-    } else {
-        client.on(event.name, (...args) => event.handle(...args, client));
+    if (event.name && typeof event.handle === 'function') {
+        if (event.once) {
+            client.once(event.name, (...args) => event.handle(...args, client));
+        } else {
+            client.on(event.name, (...args) => event.handle(...args, client));
+        }
     }
 }
 
