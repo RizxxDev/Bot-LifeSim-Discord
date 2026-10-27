@@ -12,6 +12,8 @@ const {
     recordCollection
 } = require('../../services/inventoryService');
 const { isNewbieBoostActive, getSoftCapModifier, getLiveEconomyConfig } = require('../../services/economyService');
+const { applyTripVehicleUsage } = require('../../services/vehicleService');
+const { getCurrentWeather, getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
 const { FISHING_LOCATIONS, getFishingLocation, getLevelInfoFromXp, rollLoot } = require('../../data/locations');
 const { getItem } = require('../../data/items');
 const { ACTIVITY_COSTS } = require('../../data/constants');
@@ -24,6 +26,7 @@ function sleepMs(ms) {
 module.exports = {
     name: 'fishing',
     slash: true,
+    lockTtl: 25,
     data: new SlashCommandBuilder()
         .setName('fishing')
         .setDescription('Memancing ikan di Sungai, Danau, atau Laut Lepas.')
@@ -342,6 +345,12 @@ module.exports = {
             const softCap = getSoftCapModifier('fishing', dailyFishCount, liveCfg.soft_cap_enabled);
             const luckBuff = buffs.find(b => b.buff_type === 'luck_boost' && Number(b.expires_at) > finishNow);
             const xpBuff = buffs.find(b => b.buff_type === 'xp_boost' && Number(b.expires_at) > finishNow);
+            const weather = await getCurrentWeather(conn, finishNow);
+            const activeEvent = await getActiveSeasonalEvent(conn, finishNow);
+
+            const weatherRarity = Number(weather.fishingRarityBonus?.[pre.location.id] || 0);
+            const eventRarity = Number(activeEvent?.config?.bonuses?.rarityBonus || 0);
+            const totalBuffRarity = (luckBuff ? Number(luckBuff.multiplier) : 0) + weatherRarity + eventRarity;
 
             const loot = rollLoot({
                 isFishing: true,
@@ -350,7 +359,7 @@ module.exports = {
                 baitRarityBonus: pre.baitItem.rarityBonus || 0,
                 baitMinTier: pre.baitItem.minBoostTier || 'uncommon',
                 skillRarityBonus: pre.lvInfo.rarityBonus || 0,
-                buffRarityBonus: luckBuff ? Number(luckBuff.multiplier) : 0,
+                buffRarityBonus: totalBuffRarity,
                 softCapTrashBonus: softCap.trashBonus || 0,
                 minigameSuccess: pulledInTime
             });
@@ -369,7 +378,7 @@ module.exports = {
 
             // Hitung EXP
             const newbieMult = isNewbieBoostActive(p, finishNow) ? 1.5 : 1.0;
-            const xpBuffMult = xpBuff ? Number(xpBuff.multiplier) : 1.0;
+            const xpBuffMult = (xpBuff ? Number(xpBuff.multiplier) : 1.0) * Number(activeEvent?.config?.bonuses?.fishingXpMult || 1.0);
             const mgXpMult = pulledInTime ? 1.0 : 0.5;
             const gainedXp = Math.max(
                 1,
@@ -381,7 +390,12 @@ module.exports = {
             const newLvInfo = getLevelInfoFromXp(p.fishing_xp);
             const leveledUp = newLvInfo.level > oldLv;
 
-            const hospitalized = deductActivityVitals(p, cost, 0, finishNow);
+            const tripVeh = await applyTripVehicleUsage(conn, discordId, pre.location.id);
+            const effectiveCost = {
+                ...cost,
+                energy: Math.max(1, cost.energy - Number(tripVeh.energyDiscount || 0))
+            };
+            const hospitalized = deductActivityVitals(p, effectiveCost, 0, finishNow);
 
             await conn.execute(
                 `UPDATE players
@@ -398,6 +412,7 @@ module.exports = {
             );
 
             const remainingRodDur = Math.max(0, Number(pre.rod.row.durability) - 1);
+            const eventReward = await awardEventActivityProgress(conn, discordId, 'fishing', finishNow);
 
             return {
                 player: p,
@@ -409,11 +424,30 @@ module.exports = {
                 isNewDiscovery,
                 remainingRodDur,
                 softCap,
+                tripVeh,
+                weather,
+                weatherRarity,
+                eventReward,
                 hospitalized
             };
         });
 
         const notes = [];
+        if (outcome.weatherRarity > 0) {
+            notes.push(`${outcome.weather.emoji} **${outcome.weather.name}:** Peluang ikan langka di ${pre.location.name} meningkat **+${Math.round(outcome.weatherRarity * 100)}%**!`);
+        }
+        if (outcome.eventReward) {
+            notes.push(`${outcome.eventReward.eventConfig.emoji} **${outcome.eventReward.eventConfig.name}:** **+${outcome.eventReward.tokensAdded} ${outcome.eventReward.tokenEmoji} ${outcome.eventReward.tokenName}** (+1 Progres Komunitas)`);
+        }
+        if (outcome.tripVeh?.active && outcome.tripVeh.energyDiscount > 0) {
+            const v = outcome.tripVeh.vehicle;
+            const fuelStr = outcome.tripVeh.fuelConsumed > 0 ? ` · ⛽ -${outcome.tripVeh.fuelConsumed}L` : '';
+            notes.push(`🚘 **Perjalanan (${v.emoji} ${v.name}):** Hemat **⚡${outcome.tripVeh.energyDiscount} Energy** (+${outcome.tripVeh.kmAdded} km${fuelStr})`);
+        } else if (outcome.tripVeh?.brokeDown) {
+            notes.push(`🚨 **Kendaraan Mogok!** **${outcome.tripVeh.vehicle.name}** mogok karena telat diservis (penghematan Energy hilang).`);
+        } else if (outcome.tripVeh?.reason === 'NO_FUEL') {
+            notes.push(`⛽ **Bensin Habis!** Isi bensin **${outcome.tripVeh.vehicle.name}** lewat \`/vehicle refuel\` untuk menghemat Energy perjalanan jauh.`);
+        }
         if (!pulledInTime) {
             notes.push('⏱️ *Terlambat menarik kail!* Ikan besar sempat lolos (peluang Epic/Legendary hilang & EXP 50%).');
         }

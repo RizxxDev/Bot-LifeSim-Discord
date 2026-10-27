@@ -10,6 +10,8 @@ const {
     creditPlayerCash
 } = require('../../services/economyService');
 const { generateWorkMinigame, buildWorkMinigameRow } = require('../../services/minigameService');
+const { applyShiftVehicleUsage } = require('../../services/vehicleService');
+const { getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
 const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, formatDuration, formatVitalsCompact, buildV2Card } = require('../../utils/uiBuilder');
@@ -17,6 +19,7 @@ const { COLORS, formatLp, formatDuration, formatVitalsCompact, buildV2Card } = r
 module.exports = {
     name: 'work',
     slash: true,
+    lockTtl: 45,
     data: new SlashCommandBuilder()
         .setName('work')
         .setDescription('Jalani 1 shift pekerjaanmu, selesaikan mini-game kerja, dan terima gaji!'),
@@ -125,8 +128,8 @@ module.exports = {
         const nonce = `${discordId.slice(-4)}_${Date.now().toString(36)}`;
         const mgRow = buildWorkMinigameRow(nonce, minigame.options);
 
-        const replyMsg = await interaction.reply({
-            ...buildV2Card({
+        await interaction.reply(
+            buildV2Card({
                 accentColor: COLORS.CAREER,
                 title: `${job.emoji} Shift Kerja: ${job.name}`,
                 blocks: [
@@ -134,9 +137,9 @@ module.exports = {
                     '⏱️ Pilih jawaban yang benar dalam **30 detik** untuk mendapatkan **100% Gaji + Bonus 10%**!'
                 ],
                 actionRows: [mgRow]
-            }),
-            fetchReply: true
-        });
+            })
+        );
+        const replyMsg = await interaction.fetchReply();
 
         let chosenIndex = null;
         try {
@@ -180,11 +183,18 @@ module.exports = {
             const minigameMult = isCorrect ? 1.10 : 0.70;
             const softCap = getSoftCapModifier('work', dailyWorkCount, liveCfg.soft_cap_enabled);
             const adminSalaryMult = Number(liveCfg.salary_multiplier || 1.0);
+            const vehicleRes = await applyShiftVehicleUsage(conn, discordId, job.id);
+            const vehicleMult = 1 + Number(vehicleRes.bonusMultiplier || 0);
+
+            const activeEvent = await getActiveSeasonalEvent(conn, finishNow);
+            const lebaranThrMult = activeEvent?.lebaranThr?.active ? Number(activeEvent.lebaranThr.multiplier || 1.5) : 1.0;
 
             const grossSalary = Math.round(
                 job.baseSalary *
+                lebaranThrMult *
                 oldRank.multiplier *
                 minigameMult *
+                vehicleMult *
                 elig.yieldMultiplier *
                 softCap.multiplier *
                 adminSalaryMult
@@ -222,8 +232,11 @@ module.exports = {
                 tax: taxInfo.tax,
                 isCorrect,
                 rank: oldRank.id,
-                dailyWorkCount
+                dailyWorkCount,
+                lebaranThrMult
             }, finishNow);
+
+            const eventReward = await awardEventActivityProgress(conn, discordId, 'work', finishNow);
 
             return {
                 player: p,
@@ -237,12 +250,32 @@ module.exports = {
                 taxInfo,
                 netSalary,
                 softCap,
+                vehicleRes,
+                lebaranThrActive: Boolean(activeEvent?.lebaranThr?.active),
+                lebaranThrMult,
+                eventReward,
                 hospitalized
             };
         });
 
         const nextRank = getNextRank(outcome.newShifts);
         const notes = [];
+        if (outcome.vehicleRes?.active && outcome.vehicleRes.bonusMultiplier > 0) {
+            const v = outcome.vehicleRes.vehicle;
+            const srvWarn = outcome.vehicleRes.overdue ? ' · ⚠️ *Telat Servis (-50% bonus)*' : '';
+            const fuelInfo = outcome.vehicleRes.fuelConsumed > 0 ? ` · ⛽ -${outcome.vehicleRes.fuelConsumed}L` : '';
+            notes.push(`🚘 **Bonus Kendaraan (${v.emoji} ${v.name}):** **+${Math.round(outcome.vehicleRes.bonusMultiplier * 100)}% Gaji** (+${outcome.vehicleRes.kmAdded} km${fuelInfo}${srvWarn})`);
+        } else if (outcome.vehicleRes?.brokeDown) {
+            notes.push(`🚨 **Kendaraan Mogok!** **${outcome.vehicleRes.vehicle.name}** mogok di jalan karena terlambat diservis (bonus gaji hangus). Segera gunakan \`/vehicle service\`!`);
+        } else if (outcome.vehicleRes?.reason === 'NO_FUEL') {
+            notes.push(`⛽ **Bensin Habis!** Tangki **${outcome.vehicleRes.vehicle.name}** kosong sehingga bonus gaji tidak aktif. Isi bensin di \`/vehicle refuel\`!`);
+        }
+        if (outcome.lebaranThrActive) {
+            notes.push(`🌙 **THR Lebaran Aktif (1–3 Syawal):** Gaji dasar shift ini dikalikan **×${outcome.lebaranThrMult}**!`);
+        }
+        if (outcome.eventReward) {
+            notes.push(`${outcome.eventReward.eventConfig.emoji} **${outcome.eventReward.eventConfig.name}:** **+${outcome.eventReward.tokensAdded} ${outcome.eventReward.tokenEmoji} ${outcome.eventReward.tokenName}** (+1 Progres Komunitas)`);
+        }
         if (outcome.newbieActive) {
             notes.push(`🌱 **Newbie Boost Aktif:** Bebas pajak penghasilan & progres pengalaman kerja ×1,5 (+${outcome.shiftGain} poin shift)!`);
         }

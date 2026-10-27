@@ -14,6 +14,7 @@ const { COLORS, formatLp, buildV2Card } = require('../../utils/uiBuilder');
 module.exports = {
     name: 'buy',
     slash: true,
+    lockTtl: 45,
     data: new SlashCommandBuilder()
         .setName('buy')
         .setDescription('Beli barang secara cepat menggunakan fitur autocomplete.')
@@ -145,8 +146,8 @@ module.exports = {
                     .setStyle(ButtonStyle.Secondary)
             );
 
-            const promptMsg = await interaction.reply({
-                ...buildV2Card({
+            await interaction.reply(
+                buildV2Card({
                     accentColor: COLORS.WARNING,
                     title: '💳 Konfirmasi Pembelian Bernilai Besar',
                     blocks: [
@@ -154,9 +155,9 @@ module.exports = {
                         `Saldo Cash + Bank kamu saat ini: **${formatLp(totalBalance)}**.\nKlik tombol di bawah dalam **30 detik** untuk melanjutkan.`
                     ],
                     actionRows: [confirmRow]
-                }),
-                fetchReply: true
-            });
+                })
+            );
+            const promptMsg = await interaction.fetchReply();
 
             try {
                 const btnInt = await promptMsg.awaitMessageComponent({

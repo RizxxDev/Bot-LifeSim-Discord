@@ -20,7 +20,9 @@ module.exports = {
                     { name: '💎 Total Kekayaan (Cash + Bank)', value: 'wealth' },
                     { name: '💼 Pengalaman Kerja (Total Shift)', value: 'work' },
                     { name: '🎣 Level Skill Fishing', value: 'fishing' },
-                    { name: '⛏️ Level Skill Mining', value: 'mining' }
+                    { name: '⛏️ Level Skill Mining', value: 'mining' },
+                    { name: '🌾 Level Skill Farming', value: 'farming' },
+                    { name: '🍳 Level Skill Cooking', value: 'cooking' }
                 )
         ),
 
@@ -46,6 +48,10 @@ module.exports = {
                 sql = `SELECT username, equipped_title, fishing_xp FROM players WHERE is_banned = 0 ORDER BY fishing_xp DESC LIMIT 10`;
             } else if (cat === 'mining') {
                 sql = `SELECT username, equipped_title, mining_xp FROM players WHERE is_banned = 0 ORDER BY mining_xp DESC LIMIT 10`;
+            } else if (cat === 'farming') {
+                sql = `SELECT username, equipped_title, farming_xp FROM players WHERE is_banned = 0 ORDER BY farming_xp DESC LIMIT 10`;
+            } else if (cat === 'cooking') {
+                sql = `SELECT username, equipped_title, cooking_xp FROM players WHERE is_banned = 0 ORDER BY cooking_xp DESC LIMIT 10`;
             } else {
                 sql = `SELECT username, equipped_title, (cash + bank) AS net_worth FROM players WHERE is_banned = 0 ORDER BY net_worth DESC LIMIT 10`;
             }
@@ -71,6 +77,14 @@ module.exports = {
                 const lv = getLevelInfoFromXp(r.mining_xp);
                 return `${rankBadge} **${r.username}**${titleStr} — **Mining Lv. ${lv.level}** *(${Number(r.mining_xp).toLocaleString('id-ID')} EXP)*`;
             }
+            if (cat === 'farming') {
+                const lv = getLevelInfoFromXp(r.farming_xp || 0);
+                return `${rankBadge} **${r.username}**${titleStr} — **Farming Lv. ${lv.level}** *(${Number(r.farming_xp || 0).toLocaleString('id-ID')} EXP)*`;
+            }
+            if (cat === 'cooking') {
+                const lv = getLevelInfoFromXp(r.cooking_xp || 0);
+                return `${rankBadge} **${r.username}**${titleStr} — **Cooking Lv. ${lv.level}** *(${Number(r.cooking_xp || 0).toLocaleString('id-ID')} EXP)*`;
+            }
             return `${rankBadge} **${r.username}**${titleStr} — **${formatLp(r.net_worth)}**`;
         });
 
@@ -78,7 +92,9 @@ module.exports = {
             wealth: '💎 Peringkat Global: Warga Terkaya',
             work: '💼 Peringkat Global: Pekerja Terajin',
             fishing: '🎣 Peringkat Global: Master Pemancing',
-            mining: '⛏️ Peringkat Global: Master Penambang'
+            mining: '⛏️ Peringkat Global: Master Penambang',
+            farming: '🌾 Peringkat Global: Master Petani',
+            cooking: '🍳 Peringkat Global: Master Chef'
         };
 
         return await interaction.reply(

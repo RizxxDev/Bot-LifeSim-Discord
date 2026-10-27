@@ -49,9 +49,58 @@ const COMMAND_DETAILS = {
     sleep: {
         title: '/sleep — Tidur & Istirahat',
         usage: '`/sleep`',
-        cost: 'Waktu istirahat 60 menit',
+        cost: 'Waktu istirahat 45–60 menit',
         cooldown: 'Hanya bisa saat Energy < 80',
-        tips: 'Selama tidur (60 menit) kamu tidak bisa bekerja/memancing/menambang, namun bangun dengan +50 Energy tambahan.'
+        tips: 'Tidur memulihkan +50 Energy (atau +60 s/d +100 Energy jika kamu menyewa/membeli properti di /property).'
+    },
+    property: {
+        title: '/property — Sewa Kos, Kontrakan & Beli Rumah',
+        usage: '`/property list` · `/property info` · `/property rent` · `/property buy` · `/property status`',
+        cost: 'Sewa mulai Lp 70.000/minggu atau beli tunai',
+        cooldown: 'Tidak ada',
+        tips: 'Properti membuka fasilitas Kulkas, Freezer, Tungku Dapur, Gudang, serta menambah bonus pemulihan /sleep!'
+    },
+    storage: {
+        title: '/storage — Kulkas, Freezer, Gudang & Cooler Box',
+        usage: '`/storage view` · `/storage put` · `/storage take`',
+        cost: 'Membutuhkan fasilitas properti atau Cooler Box',
+        cooldown: 'Tidak ada',
+        tips: 'Simpan ikan & makanan segar di Kulkas (basi 3x lebih lambat) atau Freezer (tidak basi) agar tidak berubah menjadi Bahan Basi.'
+    },
+    vehicle: {
+        title: '/vehicle — Garasi Kendaraan, Bensin SPBU & Servis',
+        usage: '`/vehicle list` · `/vehicle status` · `/vehicle buy` · `/vehicle equip` · `/vehicle refuel` · `/vehicle service`',
+        cost: 'Sepeda mulai Lp 1,5 juta · BBM Lp 10.000/liter',
+        cooldown: 'Tidak ada',
+        tips: 'Kendaraan memberi bonus gaji Kurir/Ojol, membuka profesi Taksi Online/Sopir Pribadi (Mobil + SIM A), dan hemat Energy ke lokasi jauh!'
+    },
+    credit: {
+        title: '/credit — Pembiayaan Kredit Kendaraan & Properti',
+        usage: '`/credit status` · `/credit apply` · `/credit pay` · `/credit payoff`',
+        cost: 'DP 20% + Bunga Flat 5%–15% (Tenor 4, 8, 12, atau 24 minggu)',
+        cooldown: 'Penagihan otomatis setiap minggu (Bank dulu, lalu Cash)',
+        tips: 'Syarat: umur akun >= 14 hari, punya pekerjaan tetap, dan cicilan <= 50% penghasilan 7 hari terakhir. Lunasi dipercepat untuk hemat 50% sisa bunga!'
+    },
+    achievements: {
+        title: '/achievements — Pencapaian Warga & Hadiah',
+        usage: '`/achievements view [kategori]` · `/achievements claim`',
+        cost: 'Tidak ada',
+        cooldown: 'Tidak ada',
+        tips: 'Selesaikan 24 tantangan di 6 kategori untuk membuka Gelar Kehormatan (Title) dan paket hadiah item!'
+    },
+    title: {
+        title: '/title — Pasang Gelar Kehormatan (Title)',
+        usage: '`/title list` · `/title equip gelar:<nama>` · `/title unequip`',
+        cost: 'Tidak ada',
+        cooldown: 'Tidak ada',
+        tips: 'Pasang gelar dari Achievement, Event Musiman, atau Butik Prestise agar tampil keren di /profile.'
+    },
+    event: {
+        title: '/event — Cuaca 2 Mingguan & Event Musiman',
+        usage: '`/event info` · `/event shop` · `/event buy` · `/event goal` · `/event claim`',
+        cost: 'Token Event dari aktivitas harian',
+        cooldown: 'Cuaca berganti otomatis tiap 14 hari',
+        tips: 'Cek cuaca (Musim Hujan vs Kemarau), kumpulkan token saat event berlangsung, dan nikmati THR Lebaran x1,5 gaji dasar selama 3 hari pertama Lebaran!'
     },
     cooldowns: {
         title: '/cooldowns — Cek Jadwal & Cooldown Aktif',
@@ -94,6 +143,20 @@ const COMMAND_DETAILS = {
         cost: '⚡ 12 Energy · 🍔 5 Hunger · 💧 6 Thirst · -1 Durability Beliung',
         cooldown: '5 menit',
         tips: 'Gunakan Helm Keselamatan untuk mengurangi risiko kecelakaan tambang sebesar 70% dan mengakses Tambang Emas/Berlian.'
+    },
+    farm: {
+        title: '/farm — Perkebunan & Lahan Tani',
+        usage: '`/farm view` · `/farm rent` · `/farm buy` · `/farm plant` · `/farm water` · `/farm fertilize` · `/farm harvest` · `/farm kompos`',
+        cost: 'Sewa mulai Lp 15.000/mgg atau beli permanen mulai Lp 400.000 + Bibit Toko Tani',
+        cooldown: 'Tumbuh 2 fase sesuai durasi tanaman (1–12 jam)',
+        tips: 'Siram tanaman di Fase 1 (Tunas) dan Fase 2 (Berbunga). Panen sebelum 24 jam sejak matang agar tidak layu menjadi Bahan Basi!'
+    },
+    cook: {
+        title: '/cook — Memasak Hidangan Rumahan di Dapur Properti',
+        usage: '`/cook recipes` · `/cook start` · `/cook status` · `/cook collect`',
+        cost: '⚡ 3 Energy/batch + 1× Muatan LPG atau Batu Bara + Bahan di Tas',
+        cooldown: 'Durasi masak 20–120 detik per porsi',
+        tips: 'Masak hingga 5 porsi sekaligus hanya dengan 1 bahan bakar! Hidangan rumahan memulihkan stat vital besar dan memberi buff.'
     },
     shop: {
         title: '/shop — Katalog Toko Kota',
@@ -180,10 +243,10 @@ function buildHelpCategorySelect(activeCategory = 'home') {
                 default: activeCategory === 'career'
             },
             {
-                label: 'Memancing & Menambang',
+                label: 'Memancing, Tambang, Tani & Masak',
                 value: 'activities',
                 emoji: '🎣',
-                description: '/fishing, /mining, alat, umpan, & lokasi',
+                description: '/fishing, /mining, /farm, /cook, alat & resep',
                 default: activeCategory === 'activities'
             },
             {
@@ -246,11 +309,16 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
             blocks: [
                 'Karaktermu memiliki 4 stat vital (0–100): **⚡ Energy**, **🍔 Hunger**, **💧 Thirst**, dan **❤️ Health**.',
                 [
-                    '• `/profile [user]` — Lihat kartu identitas, pekerjaan, skill, dan kondisimu.',
-                    '• `/eat item [amount]` — Makan item dari tas untuk memulihkan 🍔 Hunger.',
+                    '• `/profile [user]` — Lihat kartu identitas, pekerjaan, hunian, skill, dan kondisimu.',
+                    '• `/eat item [amount]` — Makan item dari tas untuk memulihkan 🍔 Hunger (FIFO).',
                     '• `/drink item [amount]` — Minum item dari tas untuk memulihkan 💧 Thirst.',
                     '• `/use item [amount]` — Pakai obat, vitamin, surat izin, atau akta ganti nama.',
-                    '• `/sleep` — Tidur selama 60 menit untuk memulihkan +50 ⚡ Energy.',
+                    '• `/sleep` — Tidur di hunianmu untuk memulihkan +50 s/d +100 ⚡ Energy.',
+                    '• `/property` — Sewa Kos/Kontrakan atau beli Rumah untuk membuka Kulkas, Freezer, & Dapur.',
+                    '• `/storage` — Simpan makanan/ikan ke Kulkas, Freezer, Gudang, atau Cooler Box.',
+                    '• `/vehicle` — Kelola kendaraan, isi bensin di SPBU, dan servis berkala di bengkel.',
+                    '• `/achievements` & `/title` — Klaim hadiah pencapaian dan pasang Gelar Kehormatan.',
+                    '• `/event` — Cek cuaca 2 mingguan, toko token event musiman, dan target komunitas.',
                     '• `/cooldowns` — Lihat semua jadwal tunggu aktivitasmu.'
                 ].join('\n'),
                 '💡 **Tips Penting:** Saat kamu *offline*, Hunger dan Thirst berhenti berkurang di angka **20** (kamu tidak akan pingsan karena libur bermain). Namun jangan beraktivitas saat Hunger/Thirst = 0 agar Health tidak habis dan masuk Rumah Sakit!'
@@ -285,16 +353,18 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
     if (category === 'activities') {
         return buildV2Card({
             accentColor: COLORS.ACT,
-            title: '🎣 Panduan: Memancing & Menambang',
+            title: '🎣 Panduan: Memancing, Menambang, Bertani & Memasak',
             blocks: [
-                'Cari penghasilan tambahan sekaligus kumpulkan spesies ikan & mineral langka.',
+                'Cari penghasilan tambahan, kelola perkebunan, dan olah hasil panen/tangkapan menjadi masakan bernilai tinggi.',
                 [
                     '• `/fishing [lokasi] [umpan]` — Memancing ikan (cooldown 3 mnt, butuh Pancingan & Umpan).',
                     '• `/mining [lokasi]` — Menambang bijih & permata (cooldown 5 mnt, butuh Beliung).',
-                    '• `/sell` — Jual tangkapan ke Pasar Ikan, Pengepul Tambang, atau Bank Sampah.',
+                    '• `/farm` — Sewa/beli petak kebun, tanam bibit Toko Tani, siram 2 fase, pupuk, dan panen.',
+                    '• `/cook` — Masak ikan & hasil tani di tungku dapur propertimu menjadi hidangan ber-buff.',
+                    '• `/sell` — Jual tangkapan, hasil tani, atau masakan ke Pasar Dinamis.',
                     '• `/inventory` — Cek durability alat, perbaiki alat yang rusak, atau upgrade kapasitas tas.'
                 ].join('\n'),
-                '💡 **Tips Mini-Game:** Saat memancing/menambang, tunggu tombol **🎣 Tarik!** / **⛏️ Ayunkan!** muncul lalu klik dalam **6 detik** untuk peluang mendapatkan tangkapan Epic & Legendary!'
+                '💡 **Tips Produksi:** Simpan hasil panen dan masakan di **Kulkas/Freezer** (`/storage`) agar awet, atau olah **5× Bahan Basi** menjadi **Pupuk Kompos** lewat `/farm kompos`!'
             ],
             actionRows,
             footer: 'Setiap tangkapan baru otomatis tercatat di Fishpedia & Buku Mineral profilmu.',
@@ -314,6 +384,7 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                     '• `/sell [item] [amount]` — Jual hasil pancing/tambang atau cek papan harga pasar 24 jam.',
                     '• `/inventory` — Lihat isi tas (mulai 20 slot, bisa di-upgrade hingga 130 slot).',
                     '• `/balance` · `/deposit` · `/withdraw` — Kelola uang tunai (Cash) dan tabungan Bank.',
+                    '• `/credit` — Cicil Motor Baru, Mobil, Rumah, atau Rumah Mewah dengan DP 20%.',
                     '• `/pay user amount` — Transfer uang ke warga lain (pajak 5%, akun ≥7 hari).',
                     '• `/daily` — Ambil hadiah harian beruntun (streak 7 hari).',
                     '• `/leaderboard` — Lihat peringkat warga terkaya & terajin.'

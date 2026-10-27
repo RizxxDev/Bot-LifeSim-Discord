@@ -5,6 +5,7 @@ const { getPlayerInventory } = require('../../services/inventoryService');
 const { JOBS, PROMOTION_RANKS, getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
 const { meetsEducationRequirement, getEducation } = require('../../data/education');
 const { getItem } = require('../../data/items');
+const { getVehicle } = require('../../data/vehicles');
 const { COLORS, formatLp, formatDuration, buildV2Card } = require('../../utils/uiBuilder');
 
 const RESIGN_COOLDOWN_MS = 24 * 3600 * 1000;
@@ -14,6 +15,10 @@ async function buildJobListPayload(discordId, ephemeral = false) {
     const data = await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, false);
         const invRows = await getPlayerInventory(conn, discordId, false);
+        const [vehRows] = await conn.execute(
+            `SELECT vehicle_id FROM player_vehicles WHERE discord_id = ?`,
+            [discordId]
+        );
         const [histRows] = await conn.execute(
             `SELECT job_id, shifts_completed FROM player_job_history WHERE discord_id = ?`,
             [discordId]
@@ -21,27 +26,34 @@ async function buildJobListPayload(discordId, ephemeral = false) {
         return {
             player: synced.player,
             invRows,
+            vehIds: vehRows.map(v => v.vehicle_id),
             historyMap: new Map(histRows.map(r => [r.job_id, Number(r.shifts_completed)]))
         };
     });
 
-    const { player: p, invRows, historyMap } = data;
+    const { player: p, invRows, vehIds, historyMap } = data;
     const ownedItems = new Set(invRows.filter(r => r.quantity > 0).map(r => r.item_id));
+    const ownedVehicles = new Set(vehIds);
 
     const tierGroups = [0, 1, 2, 3, 4].map(tier => {
         const tierJobs = JOBS.filter(j => j.tier === tier);
         const lines = tierJobs.map(j => {
             const eduOk = meetsEducationRequirement(p.education_level, j.reqEducation);
             const itemOk = !j.reqItem || ownedItems.has(j.reqItem);
+            const vehOk = !j.reqVehicle || ownedVehicles.has(j.reqVehicle);
             const shiftsOk = p.total_shifts >= (j.reqTotalShifts || 0);
             const histOk = !j.reqJobHistory || (historyMap.get(j.reqJobHistory.jobId) || 0) >= j.reqJobHistory.shifts;
-            const unlocked = eduOk && itemOk && shiftsOk && histOk;
+            const unlocked = eduOk && itemOk && vehOk && shiftsOk && histOk;
 
             const reqParts = [];
             if (j.reqEducation) reqParts.push(`Ijazah ${j.reqEducation}`);
             if (j.reqItem) {
                 const it = getItem(j.reqItem);
                 reqParts.push(it ? it.name : j.reqItem);
+            }
+            if (j.reqVehicle) {
+                const v = getVehicle(j.reqVehicle);
+                reqParts.push(v ? v.name : j.reqVehicle);
             }
             if (j.reqTotalShifts) reqParts.push(`${j.reqTotalShifts} Total Shift`);
             if (j.reqJobHistory) reqParts.push(`Perawat ${j.reqJobHistory.shifts} Shift`);
@@ -160,6 +172,10 @@ module.exports = {
                 const it = getItem(job.reqItem);
                 reqs.push(`🧰 Kepemilikan Item: **${it ? `${it.emoji} ${it.name}` : job.reqItem}**`);
             }
+            if (job.reqVehicle) {
+                const v = getVehicle(job.reqVehicle);
+                reqs.push(`🚘 Kepemilikan Kendaraan: **${v ? `${v.emoji} ${v.name}` : job.reqVehicle}**`);
+            }
             if (job.reqTotalShifts) reqs.push(`📊 Total Shift Kerja: **≥ ${job.reqTotalShifts} shift**`);
             if (job.reqJobHistory) reqs.push(`🩺 Pengalaman Khusus: **Perawat ≥ ${job.reqJobHistory.shifts} shift**`);
 
@@ -216,6 +232,16 @@ module.exports = {
                     const hasItem = invRows.some(r => r.item_id === job.reqItem && Number(r.quantity) > 0);
                     if (!hasItem) {
                         return { error: 'REQ_ITEM', reqItem: getItem(job.reqItem) };
+                    }
+                }
+
+                if (job.reqVehicle) {
+                    const [vRows] = await conn.execute(
+                        `SELECT id FROM player_vehicles WHERE discord_id = ? AND vehicle_id = ? LIMIT 1`,
+                        [discordId, job.reqVehicle]
+                    );
+                    if (vRows.length === 0) {
+                        return { error: 'REQ_VEHICLE', reqVehicle: getVehicle(job.reqVehicle) };
                     }
                 }
 
@@ -302,6 +328,20 @@ module.exports = {
                         blocks: [
                             `Untuk melamar sebagai **${job.emoji} ${job.name}**, kamu wajib memiliki **${res.reqItem.emoji} ${res.reqItem.name}** (${formatLp(res.reqItem.buyPrice)}).`,
                             'Beli terlebih dahulu lewat `/shop` atau `/buy`!'
+                        ],
+                        ephemeral: true
+                    })
+                );
+            }
+
+            if (res.error === 'REQ_VEHICLE') {
+                return await interaction.reply(
+                    buildV2Card({
+                        accentColor: COLORS.DANGER,
+                        title: '🚘 Syarat Kendaraan Belum Terpenuhi',
+                        blocks: [
+                            `Untuk melamar sebagai **${job.emoji} ${job.name}**, kamu wajib memiliki **${res.reqVehicle.emoji} ${res.reqVehicle.name}** (${formatLp(res.reqVehicle.buyPrice)}).`,
+                            'Beli tunai di `/vehicle buy` atau ajukan cicilan DP 20% lewat `/credit apply`!'
                         ],
                         ephemeral: true
                     })

@@ -3,6 +3,13 @@ const { withTransaction, query } = require('../../database/mariadb');
 const { getActiveUserCount } = require('../../database/redis');
 const { getLiveEconomyConfig } = require('../../services/economyService');
 const { addItem, removeItem } = require('../../services/inventoryService');
+const {
+    getCurrentWeather,
+    setWeatherOverride,
+    getActiveSeasonalEvent,
+    startSeasonalEvent,
+    stopSeasonalEvent
+} = require('../../services/eventService');
 const { getItem } = require('../../data/items');
 const { COLORS, formatLp, buildV2Card } = require('../../utils/uiBuilder');
 
@@ -35,9 +42,10 @@ module.exports = {
                         .setDescription('Parameter yang ingin diubah')
                         .setRequired(true)
                         .addChoices(
-                            { name: 'Pengali Gaji Global (salary_multiplier)', value: 'salary_multiplier' },
-                            { name: 'Pengali Harga Jual NPC (sell_multiplier)', value: 'sell_multiplier' },
+                            { name: 'Pengali Gaji Global (salary_multiplier: 0.5 - 2.0)', value: 'salary_multiplier' },
+                            { name: 'Pengali Harga Jual NPC (sell_multiplier: 0.5 - 2.0)', value: 'sell_multiplier' },
                             { name: 'Pajak Penghasilan (income_tax_enabled: 1 atau 0)', value: 'income_tax_enabled' },
+                            { name: 'Pajak Kekayaan Mingguan (wealth_tax_enabled: 1 atau 0)', value: 'wealth_tax_enabled' },
                             { name: 'Soft Cap Harian (soft_cap_enabled: 1 atau 0)', value: 'soft_cap_enabled' }
                         )
                 )
@@ -72,6 +80,56 @@ module.exports = {
                 .setDescription('Ban atau unban akun warga dari sistem ekonomi.')
                 .addUserOption(opt => opt.setName('user').setDescription('Target warga').setRequired(true))
                 .addBooleanOption(opt => opt.setName('status').setDescription('True = Ban, False = Unban').setRequired(true))
+        )
+        .addSubcommand(sub =>
+            sub
+                .setName('event')
+                .setDescription('Kelola Event Musiman (Lebaran, Imlek, dll.) dan Siklus Cuaca Kota.')
+                .addStringOption(opt =>
+                    opt
+                        .setName('aksi')
+                        .setDescription('Pilih aksi manajemen event atau cuaca')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: '📊 Lihat Status Event & Cuaca', value: 'status' },
+                            { name: '▶️ Mulai Event Musiman (Start)', value: 'start' },
+                            { name: '⏹️ Hentikan Event Aktif (Stop)', value: 'stop' },
+                            { name: '🌦️ Atur Cuaca (Auto 2 Minggu / Hujan / Kemarau)', value: 'cuaca' }
+                        )
+                )
+                .addStringOption(opt =>
+                    opt
+                        .setName('event_id')
+                        .setDescription('Pilih Event Musiman (wajib untuk aksi Start)')
+                        .setRequired(false)
+                        .addChoices(
+                            { name: '🎃 Festival Malam Labu (Halloween)', value: 'halloween' },
+                            { name: '🎄 Pekan Musim Dingin & Natal', value: 'natal' },
+                            { name: '🎆 Semarak Tahun Baru', value: 'tahun_baru' },
+                            { name: '🧧 Festival Tahun Baru Imlek', value: 'imlek' },
+                            { name: '🌙 Semarak Idul Fitri & Lebaran (THR 1,5x 3 Hari)', value: 'lebaran' },
+                            { name: '🇮🇩 Gebyar Kemerdekaan 17 Agustus', value: 'kemerdekaan' }
+                        )
+                )
+                .addIntegerOption(opt =>
+                    opt
+                        .setName('durasi_hari')
+                        .setDescription('Durasi event dalam hari (default: 7 hari)')
+                        .setRequired(false)
+                        .setMinValue(1)
+                        .setMaxValue(30)
+                )
+                .addStringOption(opt =>
+                    opt
+                        .setName('cuaca')
+                        .setDescription('Pilih mode cuaca (khusus aksi Cuaca)')
+                        .setRequired(false)
+                        .addChoices(
+                            { name: '🔄 Otomatis (Siklus 2 Minggu)', value: 'auto' },
+                            { name: '🌧️ Paksa Musim Hujan', value: 'hujan' },
+                            { name: '☀️ Paksa Musim Kemarau', value: 'kemarau' }
+                        )
+                )
         ),
 
     async executeSlash(interaction) {
@@ -170,6 +228,21 @@ module.exports = {
         if (sub === 'config') {
             const key = interaction.options.getString('key', true);
             const rawVal = interaction.options.getNumber('value', true);
+
+            if (key.endsWith('_multiplier') && (rawVal < 0.5 || rawVal > 2.0)) {
+                return await interaction.reply(
+                    buildV2Card({
+                        accentColor: COLORS.DANGER,
+                        title: '⚠️ Batas Pengali Tidak Valid',
+                        blocks: [
+                            `Nilai **\`${key}\`** wajib berada di rentang **\`0.5\`** hingga **\`2.0\`** (nilai yang kamu masukkan: \`${rawVal}\`).`,
+                            'Pembatasan ini mencegah inflasi atau deflasi ekstrem akibat salah ketik.'
+                        ],
+                        ephemeral: true
+                    })
+                );
+            }
+
             const finalVal = (key.endsWith('_enabled')) ? Boolean(rawVal) : Number(rawVal);
 
             await query(
@@ -196,25 +269,77 @@ module.exports = {
             const itemQty = interaction.options.getInteger('qty') || 1;
             const isGive = sub === 'give';
 
-            await withTransaction(async (conn) => {
+            const txResult = await withTransaction(async (conn) => {
+                const [rows] = await conn.execute(
+                    `SELECT discord_id, cash, bank FROM players WHERE discord_id = ? FOR UPDATE`,
+                    [targetUser.id]
+                );
+                if (rows.length === 0) {
+                    return { error: 'NOT_REGISTERED' };
+                }
+                const targetPlayer = rows[0];
+
                 if (cashDelta > 0) {
-                    if (isGive) {
-                        await conn.execute(`UPDATE players SET cash = cash + ? WHERE discord_id = ?`, [cashDelta, targetUser.id]);
-                    } else {
-                        await conn.execute(`UPDATE players SET cash = GREATEST(0, cash - ?) WHERE discord_id = ?`, [cashDelta, targetUser.id]);
+                    const currentCash = Number(targetPlayer.cash || 0);
+                    const nextCash = isGive ? currentCash + cashDelta : Math.max(0, currentCash - cashDelta);
+                    const actualDelta = Math.abs(nextCash - currentCash);
+
+                    await conn.execute(
+                        `UPDATE players SET cash = ? WHERE discord_id = ?`,
+                        [nextCash, targetUser.id]
+                    );
+
+                    if (actualDelta > 0) {
+                        await conn.execute(
+                            `INSERT INTO economy_ledger (discord_id, type, source, amount, balance_after, meta, created_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                            [
+                                targetUser.id,
+                                isGive ? 'faucet' : 'sink',
+                                isGive ? 'admin_give' : 'admin_take',
+                                actualDelta,
+                                nextCash + Number(targetPlayer.bank || 0),
+                                JSON.stringify({ adminId: interaction.user.id }),
+                                now
+                            ]
+                        );
                     }
                 }
                 if (itemId) {
                     const it = getItem(itemId);
-                    if (it) {
-                        if (isGive) {
-                            await addItem(conn, targetUser.id, it.id, itemQty, now);
-                        } else {
-                            await removeItem(conn, targetUser.id, it.id, itemQty);
-                        }
+                    if (!it) {
+                        return { error: 'INVALID_ITEM', itemId };
+                    }
+                    if (isGive) {
+                        await addItem(conn, targetUser.id, it.id, itemQty, now);
+                    } else {
+                        await removeItem(conn, targetUser.id, it.id, itemQty);
                     }
                 }
+                return { ok: true };
             });
+
+            if (txResult.error === 'NOT_REGISTERED') {
+                return await interaction.reply(
+                    buildV2Card({
+                        accentColor: COLORS.DANGER,
+                        title: '❌ Warga Belum Terdaftar',
+                        blocks: [`User <@${targetUser.id}> belum terdaftar di database.`],
+                        ephemeral: true
+                    })
+                );
+            }
+
+            if (txResult.error === 'INVALID_ITEM') {
+                return await interaction.reply(
+                    buildV2Card({
+                        accentColor: COLORS.DANGER,
+                        title: '❌ ID Item Tidak Ditemukan',
+                        blocks: [`Item dengan ID \`${txResult.itemId}\` tidak ditemukan di katalog.`],
+                        ephemeral: true
+                    })
+                );
+            }
 
             return await interaction.reply(
                 buildV2Card({
@@ -240,6 +365,95 @@ module.exports = {
                     accentColor: status ? COLORS.DANGER : COLORS.SUCCESS,
                     title: status ? '🔨 Akun Warga Di-Ban' : '🔓 Akun Warga Di-Unban',
                     blocks: [`Status ban untuk <@${targetUser.id}> kini: **${status ? 'BANNED' : 'AKTIF'}**.`],
+                    ephemeral: true
+                })
+            );
+        }
+
+        if (sub === 'event') {
+            const aksi = interaction.options.getString('aksi', true);
+
+            if (aksi === 'start') {
+                const eventId = interaction.options.getString('event_id');
+                const durasiHari = interaction.options.getInteger('durasi_hari') || 7;
+                if (!eventId) {
+                    return await interaction.reply(
+                        buildV2Card({
+                            accentColor: COLORS.WARNING,
+                            title: '⚠️ Pilih Event yang Ingin Dimulai',
+                            blocks: ['Sertakan opsi `event_id` (misalnya `lebaran`, `imlek`, `halloween`, dll.) saat menggunakan aksi `start`.'],
+                            ephemeral: true
+                        })
+                    );
+                }
+
+                const started = await withTransaction(conn => startSeasonalEvent(conn, eventId, durasiHari, now));
+                const thrLine = started.lebaranThr?.active
+                    ? `\n• 🌙 **THR Lebaran ×${started.lebaranThr.multiplier} Gaji Dasar:** Aktif hingga <t:${Math.floor(started.lebaranThr.endsAt / 1000)}:F> (3 hari pertama)`
+                    : '';
+
+                return await interaction.reply(
+                    buildV2Card({
+                        accentColor: COLORS.SUCCESS,
+                        title: `🎉 Event Dimulai: ${started.config.emoji} ${started.config.name}`,
+                        blocks: [
+                            `Event **${started.config.name}** (\`${started.stateRow.event_key}\`) telah diaktifkan selama **${durasiHari} hari**!`,
+                            `• ⏳ **Berakhir:** <t:${Math.floor(Number(started.stateRow.ends_at) / 1000)}:F>${thrLine}`
+                        ],
+                        ephemeral: true
+                    })
+                );
+            }
+
+            if (aksi === 'stop') {
+                const stopped = await withTransaction(conn => stopSeasonalEvent(conn, now));
+                return await interaction.reply(
+                    buildV2Card({
+                        accentColor: COLORS.WARNING,
+                        title: '⏹️ Event Musiman Dihentikan',
+                        blocks: [
+                            stopped.length > 0
+                                ? `Event aktif (**${stopped.map(s => s.event_key).join(', ')}**) telah dinonaktifkan.`
+                                : 'Tidak ada event musiman yang sedang aktif.'
+                        ],
+                        ephemeral: true
+                    })
+                );
+            }
+
+            if (aksi === 'cuaca') {
+                const mode = interaction.options.getString('cuaca') || 'auto';
+                const weather = await withTransaction(conn => setWeatherOverride(conn, mode, now));
+                return await interaction.reply(
+                    buildV2Card({
+                        accentColor: COLORS.SUCCESS,
+                        title: `🌦️ Pengaturan Cuaca Diperbarui`,
+                        blocks: [
+                            `Mode cuaca kini diatur ke: **${mode === 'auto' ? 'Otomatis (Siklus 2 Minggu)' : `Manual (${weather.name})`}**.`,
+                            `• Cuaca Aktif Saat Ini: **${weather.emoji} ${weather.name}**`
+                        ],
+                        ephemeral: true
+                    })
+                );
+            }
+
+            // Default: status
+            const statusData = await withTransaction(async (conn) => {
+                const weather = await getCurrentWeather(conn, now);
+                const active = await getActiveSeasonalEvent(conn, now);
+                return { weather, active };
+            });
+
+            return await interaction.reply(
+                buildV2Card({
+                    accentColor: COLORS.ADMIN,
+                    title: '🎪 Status Event & Cuaca (Admin)',
+                    blocks: [
+                        `• **Cuaca Saat Ini:** ${statusData.weather.emoji} **${statusData.weather.name}** (${statusData.weather.isOverride ? 'Override Manual' : 'Siklus Otomatis 2 Minggu'})`,
+                        statusData.active
+                            ? `• **Event Aktif:** ${statusData.active.config.emoji} **${statusData.active.config.name}** (\`${statusData.active.stateRow.event_key}\`)\n• **Progres Komunitas:** **${statusData.active.stateRow.community_progress}/${statusData.active.config.communityGoal.target}**\n• **THR Lebaran:** ${statusData.active.lebaranThr?.active ? `Aktif (×${statusData.active.lebaranThr.multiplier})` : 'Tidak Aktif'}`
+                            : '• **Event Aktif:** *Tidak ada event aktif*'
+                    ],
                     ephemeral: true
                 })
             );

@@ -12,11 +12,11 @@ module.exports = {
     slash: true,
     data: new SlashCommandBuilder()
         .setName('sell')
-        .setDescription('Jual ikan, hasil tambang, atau sampah ke pasar dinamis (kosongkan item untuk cek papan harga).')
+        .setDescription('Jual ikan, tambang, panen tani, atau masakan ke pasar dinamis (kosongkan item untuk papan harga).')
         .addStringOption(opt =>
             opt
                 .setName('item')
-                .setDescription('Pilih item atau opsi cepat (semua_ikan, semua_tambang, semua_sampah, semua_hasil)')
+                .setDescription('Pilih item atau opsi cepat (semua_ikan, semua_tambang, semua_tani, semua_masakan, semua_hasil)')
                 .setAutocomplete(true)
                 .setRequired(false)
         )
@@ -34,8 +34,10 @@ module.exports = {
         const bulkOptions = [
             { name: '🐟 Jual Semua Ikan di Tas (semua_ikan)', value: 'semua_ikan' },
             { name: '⛏️ Jual Semua Hasil Tambang di Tas (semua_tambang)', value: 'semua_tambang' },
+            { name: '🌾 Jual Semua Hasil Tani Mentah di Tas (semua_tani)', value: 'semua_tani' },
+            { name: '🍛 Jual Semua Masakan Rumahan di Tas (semua_masakan)', value: 'semua_masakan' },
             { name: '♻️ Jual Semua Sampah di Tas (semua_sampah)', value: 'semua_sampah' },
-            { name: '💰 Jual Seluruh Ikan, Tambang & Sampah (semua_hasil)', value: 'semua_hasil' }
+            { name: '💰 Jual Seluruh Ikan, Tambang, Tani & Sampah (semua_hasil)', value: 'semua_hasil' }
         ];
 
         const choices = bulkOptions.filter(o => o.name.toLowerCase().includes(focused) || o.value.includes(focused));
@@ -44,7 +46,7 @@ module.exports = {
             const rows = await query(
                 `SELECT item_id, SUM(quantity) AS total_qty
                  FROM player_inventory
-                 WHERE discord_id = ? AND quantity > 0
+                 WHERE discord_id = ? AND storage_location = 'bag' AND quantity > 0
                  GROUP BY item_id`,
                 [interaction.user.id]
             );
@@ -84,14 +86,18 @@ module.exports = {
             });
 
             const sellMultiplier = Number(data.liveCfg.sell_multiplier || 1.0);
-            const sellableInBag = [];
+            const groupedInBag = new Map();
 
             for (const row of data.invRows) {
                 const it = getItem(row.item_id);
                 if (it && it.sellPrice > 0) {
-                    sellableInBag.push({ item: it, qty: Number(row.quantity) });
+                    const prev = groupedInBag.get(it.id) || { item: it, qty: 0 };
+                    prev.qty += Number(row.quantity);
+                    groupedInBag.set(it.id, prev);
                 }
             }
+
+            const sellableInBag = Array.from(groupedInBag.values());
 
             const bagPriceLines = [];
             let estimatedBagTotal = 0;
@@ -143,24 +149,32 @@ module.exports = {
 
             const toSell = [];
 
-            if (['semua_ikan', 'semua_tambang', 'semua_sampah', 'semua_hasil'].includes(itemArg)) {
+            if (['semua_ikan', 'semua_tambang', 'semua_tani', 'semua_masakan', 'semua_sampah', 'semua_hasil'].includes(itemArg)) {
+                const groupedSell = new Map();
                 for (const row of invRows) {
                     const it = getItem(row.item_id);
                     if (!it || !it.sellPrice || Number(row.quantity) <= 0) continue;
 
                     const isFish = it.tags.includes('fish');
                     const isMineral = it.tags.includes('mineral');
+                    const isCrop = it.tags.includes('crop');
+                    const isCooked = it.tags.includes('cooked');
                     const isTrash = it.tags.includes('trash');
 
                     if (
                         (itemArg === 'semua_ikan' && isFish) ||
                         (itemArg === 'semua_tambang' && isMineral) ||
+                        (itemArg === 'semua_tani' && isCrop) ||
+                        (itemArg === 'semua_masakan' && isCooked) ||
                         (itemArg === 'semua_sampah' && isTrash) ||
-                        (itemArg === 'semua_hasil' && (isFish || isMineral || isTrash))
+                        (itemArg === 'semua_hasil' && (isFish || isMineral || isCrop || isTrash))
                     ) {
-                        toSell.push({ item: it, qty: Number(row.quantity) });
+                        const prev = groupedSell.get(it.id) || { item: it, qty: 0 };
+                        prev.qty += Number(row.quantity);
+                        groupedSell.set(it.id, prev);
                     }
                 }
+                toSell.push(...groupedSell.values());
             } else {
                 const it = getItem(itemArg);
                 if (!it || !it.sellPrice) {

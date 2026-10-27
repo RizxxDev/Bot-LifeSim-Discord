@@ -22,6 +22,8 @@ const {
 const { buildHelpCategoryPayload } = require('../commands/onboarding/help');
 const { buildJobListPayload } = require('../commands/career/job');
 const { handleRepairAllTools } = require('../commands/economy/inventory');
+const { handleFarmQuickAction } = require('../commands/activities/farm');
+const { handleCookQuickCollect } = require('../commands/activities/cook');
 const { getItem } = require('../data/items');
 const { COLORS, formatLp, buildV2Card, validateUsername } = require('../utils/uiBuilder');
 
@@ -67,7 +69,8 @@ module.exports = {
                     }
                 }
 
-                const lockToken = await acquireUserLock(userId, 15);
+                const lockTtl = Number(command.lockTtl) || 15;
+                const lockToken = await acquireUserLock(userId, lockTtl);
                 if (!lockToken) {
                     return await interaction.reply(
                         buildV2Card({
@@ -138,6 +141,15 @@ module.exports = {
                 if (cid === 'job_quick_list') {
                     const payload = await buildJobListPayload(userId, true);
                     return await interaction.reply(payload);
+                }
+
+                if (cid.startsWith('farm_quick_')) {
+                    const actionType = cid.replace('farm_quick_', '');
+                    return await handleFarmQuickAction(interaction, actionType);
+                }
+
+                if (cid === 'cook_quick_collect') {
+                    return await handleCookQuickCollect(interaction);
                 }
 
                 if (cid.startsWith('shop_jump_')) {

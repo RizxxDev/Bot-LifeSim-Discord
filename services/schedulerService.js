@@ -1,5 +1,8 @@
 const { withTransaction, query } = require('../database/mariadb');
 const { calculateMarginalWealthTax, getLiveEconomyConfig } = require('./economyService');
+const { processDuePropertyBillings } = require('./propertyService');
+const { processDueFarmPlotBillings } = require('./farmService');
+const { processDueCreditInstallments } = require('./creditService');
 const { BANK } = require('../data/constants');
 
 function getWibParts(ts = Date.now()) {
@@ -101,6 +104,13 @@ async function runPeriodicEconomyMaintenance(now = Date.now()) {
             });
         }
     }
+
+    // 3. Tagihan Sewa Properti Mingguan, Masa Tenggang 3 Hari, PBB Bulanan, Sewa Kebun Mingguan, & Kredit (Idempoten)
+    await withTransaction(async (conn) => {
+        await processDuePropertyBillings(conn, now);
+        await processDueFarmPlotBillings(conn, now);
+        await processDueCreditInstallments(conn, now);
+    });
 }
 
 function startMaintenanceScheduler() {

@@ -127,6 +127,24 @@ async function acquireUserLock(discordId, ttlSeconds = 15) {
     return token;
 }
 
+async function extendUserLock(discordId, token, ttlSeconds = 30) {
+    const key = `lock:user:${discordId}`;
+    if (isReady()) {
+        const current = await redisClient.get(key);
+        if (current === token) {
+            await redisClient.pexpire(key, ttlSeconds * 1000);
+            return true;
+        }
+        return false;
+    }
+    const existing = cleanupMemKey(memKv, key);
+    if (existing && existing.val === token) {
+        existing.expiresAt = Date.now() + ttlSeconds * 1000;
+        return true;
+    }
+    return false;
+}
+
 async function releaseUserLock(discordId, token) {
     const key = `lock:user:${discordId}`;
     if (isReady()) {
@@ -296,6 +314,7 @@ module.exports = {
     delVal,
     incrByVal,
     acquireUserLock,
+    extendUserLock,
     releaseUserLock,
     getCooldownRemaining,
     setCooldown,

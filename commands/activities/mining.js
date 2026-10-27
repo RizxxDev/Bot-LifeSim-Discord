@@ -11,6 +11,8 @@ const {
     recordCollection
 } = require('../../services/inventoryService');
 const { isNewbieBoostActive, getSoftCapModifier, getLiveEconomyConfig } = require('../../services/economyService');
+const { applyTripVehicleUsage } = require('../../services/vehicleService');
+const { getCurrentWeather, getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
 const { getMiningLocation, getLevelInfoFromXp, rollLoot } = require('../../data/locations');
 const { getItem } = require('../../data/items');
 const { ACTIVITY_COSTS } = require('../../data/constants');
@@ -23,6 +25,7 @@ function sleepMs(ms) {
 module.exports = {
     name: 'mining',
     slash: true,
+    lockTtl: 25,
     data: new SlashCommandBuilder()
         .setName('mining')
         .setDescription('Menambang batu, bijih logam, emas, dan berlian di dalam terowongan tambang.')
@@ -266,13 +269,18 @@ module.exports = {
             const softCap = getSoftCapModifier('mining', dailyMineCount, liveCfg.soft_cap_enabled);
             const luckBuff = buffs.find(b => b.buff_type === 'luck_boost' && Number(b.expires_at) > finishNow);
             const xpBuff = buffs.find(b => b.buff_type === 'xp_boost' && Number(b.expires_at) > finishNow);
+            const weather = await getCurrentWeather(conn, finishNow);
+            const activeEvent = await getActiveSeasonalEvent(conn, finishNow);
+
+            const eventRarity = Number(activeEvent?.config?.bonuses?.rarityBonus || 0);
+            const totalBuffRarity = (luckBuff ? Number(luckBuff.multiplier) : 0) + eventRarity;
 
             const loot = rollLoot({
                 isFishing: false,
                 location: pre.location,
                 toolRarityBonus: pre.pickaxe.item.rarityBonus || 0,
                 skillRarityBonus: pre.lvInfo.rarityBonus || 0,
-                buffRarityBonus: luckBuff ? Number(luckBuff.multiplier) : 0,
+                buffRarityBonus: totalBuffRarity,
                 minigameSuccess: swungInTime
             });
 
@@ -286,8 +294,8 @@ module.exports = {
             await addItem(conn, discordId, minedItem.id, loot.quantity, finishNow);
             const isNewDiscovery = await recordCollection(conn, discordId, minedItem.id, loot.quantity, finishNow);
 
-            // Cek risiko kecelakaan tambang (dikurangi 70% oleh Helm)
-            const baseAccident = pre.location.accidentChance || 0.03;
+            // Cek risiko kecelakaan tambang (dikurangi 70% oleh Helm, ditambah cuaca musim hujan +1%)
+            const baseAccident = (pre.location.accidentChance || 0.03) + Number(weather.miningAccidentDelta || 0);
             const finalAccidentChance = pre.helmet ? baseAccident * 0.30 : baseAccident;
             let accidentDamage = 0;
             if (Math.random() < finalAccidentChance) {
@@ -295,7 +303,7 @@ module.exports = {
             }
 
             const newbieMult = isNewbieBoostActive(p, finishNow) ? 1.5 : 1.0;
-            const xpBuffMult = xpBuff ? Number(xpBuff.multiplier) : 1.0;
+            const xpBuffMult = (xpBuff ? Number(xpBuff.multiplier) : 1.0) * Number(activeEvent?.config?.bonuses?.miningXpMult || 1.0);
             const mgXpMult = swungInTime ? 1.0 : 0.5;
             const gainedXp = Math.max(
                 1,
@@ -307,7 +315,12 @@ module.exports = {
             const newLvInfo = getLevelInfoFromXp(p.mining_xp);
             const leveledUp = newLvInfo.level > oldLv;
 
-            const hospitalized = deductActivityVitals(p, cost, accidentDamage, finishNow);
+            const tripVeh = await applyTripVehicleUsage(conn, discordId, pre.location.id);
+            const effectiveCost = {
+                ...cost,
+                energy: Math.max(1, cost.energy - Number(tripVeh.energyDiscount || 0))
+            };
+            const hospitalized = deductActivityVitals(p, effectiveCost, accidentDamage, finishNow);
             if (hospitalized && hospitalized.totalPaid > 0) {
                 await conn.execute(
                     `INSERT INTO economy_ledger (discord_id, type, source, amount, balance_after, meta, created_at)
@@ -337,6 +350,7 @@ module.exports = {
             );
 
             const remainingPickDur = Math.max(0, Number(pre.pickaxe.row.durability) - 1);
+            const eventReward = await awardEventActivityProgress(conn, discordId, 'mining', finishNow);
 
             return {
                 player: p,
@@ -349,11 +363,25 @@ module.exports = {
                 accidentDamage,
                 remainingPickDur,
                 softCap,
+                tripVeh,
+                eventReward,
                 hospitalized
             };
         });
 
         const notes = [];
+        if (outcome.eventReward) {
+            notes.push(`${outcome.eventReward.eventConfig.emoji} **${outcome.eventReward.eventConfig.name}:** **+${outcome.eventReward.tokensAdded} ${outcome.eventReward.tokenEmoji} ${outcome.eventReward.tokenName}** (+1 Progres Komunitas)`);
+        }
+        if (outcome.tripVeh?.active && outcome.tripVeh.energyDiscount > 0) {
+            const v = outcome.tripVeh.vehicle;
+            const fuelStr = outcome.tripVeh.fuelConsumed > 0 ? ` · ⛽ -${outcome.tripVeh.fuelConsumed}L` : '';
+            notes.push(`🚘 **Perjalanan (${v.emoji} ${v.name}):** Hemat **⚡${outcome.tripVeh.energyDiscount} Energy** (+${outcome.tripVeh.kmAdded} km${fuelStr})`);
+        } else if (outcome.tripVeh?.brokeDown) {
+            notes.push(`🚨 **Kendaraan Mogok!** **${outcome.tripVeh.vehicle.name}** mogok karena telat diservis (penghematan Energy hilang).`);
+        } else if (outcome.tripVeh?.reason === 'NO_FUEL') {
+            notes.push(`⛽ **Bensin Habis!** Isi bensin **${outcome.tripVeh.vehicle.name}** lewat \`/vehicle refuel\` untuk menghemat Energy perjalanan jauh.`);
+        }
         if (!swungInTime) {
             notes.push('⏱️ *Ayunan kurang tepat waktu!* Kamu kehilangan peluang mendapatkan Epic/Legendary dan EXP 50%.');
         }

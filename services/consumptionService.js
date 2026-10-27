@@ -14,7 +14,7 @@ async function autocompleteInventoryByTags(interaction, allowedTags = []) {
         const rows = await query(
             `SELECT item_id, SUM(quantity) AS total_qty
              FROM player_inventory
-             WHERE discord_id = ? AND quantity > 0
+             WHERE discord_id = ? AND storage_location = 'bag' AND quantity > 0
              GROUP BY item_id`,
             [interaction.user.id]
         );
@@ -140,9 +140,30 @@ async function handleConsumptionCommand(interaction, mode = 'eat') {
                 return { equippedTitle: item.titleLabel, player };
             }
 
-            // Jika item berupa SIM C / Laptop (pasif)
-            if (item.id === 'sim_c' || item.id === 'laptop') {
+            // Jika item berupa SIM C / SIM A / Laptop (pasif)
+            if (item.id === 'sim_c' || item.id === 'sim_a' || item.id === 'laptop') {
                 return { error: 'PASSIVE_ITEM' };
+            }
+
+            // Jika item berupa Tabung Gas LPG 3kg: tambahkan +10 muatan kompor per tabung
+            if (item.id === 'gas_lpg') {
+                const useGas = Math.min(ownedQty, requestedAmount);
+                const addedCharges = useGas * (item.lpgCharges || 10);
+                await removeItem(conn, discordId, item.id, useGas);
+                const newCharges = Number(player.lpg_charges || 0) + addedCharges;
+                await conn.execute(
+                    `UPDATE players SET lpg_charges = ? WHERE discord_id = ?`,
+                    [newCharges, discordId]
+                );
+                player.lpg_charges = newCharges;
+                return {
+                    lpgRefilled: true,
+                    usedCount: useGas,
+                    addedCharges,
+                    totalCharges: newCharges,
+                    remainingOwned: ownedQty - useGas,
+                    player
+                };
             }
 
             const maxUsable = Math.min(ownedQty, requestedAmount);
@@ -200,21 +221,33 @@ async function handleConsumptionCommand(interaction, mode = 'eat') {
 
             await removeItem(conn, discordId, item.id, usedCount);
 
+            const isCookedDish = item.tags && item.tags.includes('cooked');
+            const addedCookedEaten = isCookedDish ? usedCount : 0;
+            player.cooked_dishes_eaten = Number(player.cooked_dishes_eaten || 0) + addedCookedEaten;
+
             await conn.execute(
-                `UPDATE players SET energy = ?, hunger = ?, thirst = ?, health = ? WHERE discord_id = ?`,
-                [player.energy, player.hunger, player.thirst, player.health, discordId]
+                `UPDATE players SET energy = ?, hunger = ?, thirst = ?, health = ?, cooked_dishes_eaten = cooked_dishes_eaten + ? WHERE discord_id = ?`,
+                [player.energy, player.hunger, player.thirst, player.health, addedCookedEaten, discordId]
             );
 
             let appliedBuff = null;
+            let buffSkippedStronger = false;
             if (item.buff) {
-                const expiresAt = now + item.buff.durationSec * 1000;
-                await conn.execute(
-                    `INSERT INTO player_buffs (discord_id, buff_type, multiplier, expires_at)
-                     VALUES (?, ?, ?, ?)
-                     ON DUPLICATE KEY UPDATE multiplier = VALUES(multiplier), expires_at = VALUES(expires_at)`,
-                    [discordId, item.buff.type, item.buff.multiplier, expiresAt]
+                const existingBuff = (synced.buffs || []).find(
+                    b => b.buff_type === item.buff.type && Number(b.expires_at) > now
                 );
-                appliedBuff = item.buff;
+                if (item.buff.isHomeCooked && existingBuff && Number(existingBuff.multiplier) > Number(item.buff.multiplier)) {
+                    buffSkippedStronger = true;
+                } else {
+                    const expiresAt = now + item.buff.durationSec * 1000;
+                    await conn.execute(
+                        `INSERT INTO player_buffs (discord_id, buff_type, multiplier, expires_at)
+                         VALUES (?, ?, ?, ?)
+                         ON DUPLICATE KEY UPDATE multiplier = VALUES(multiplier), expires_at = VALUES(expires_at)`,
+                        [discordId, item.buff.type, item.buff.multiplier, expiresAt]
+                    );
+                    appliedBuff = item.buff;
+                }
             }
 
             return {
@@ -223,6 +256,7 @@ async function handleConsumptionCommand(interaction, mode = 'eat') {
                 totalGain,
                 caffeineReducedCount,
                 appliedBuff,
+                buffSkippedStronger,
                 player
             };
         });
@@ -279,6 +313,19 @@ async function handleConsumptionCommand(interaction, mode = 'eat') {
         );
     }
 
+    if (result.lpgRefilled) {
+        return await interaction.reply(
+            buildV2Card({
+                accentColor: COLORS.SUCCESS,
+                title: '🟢 Tabung Gas LPG Dipasang!',
+                blocks: [
+                    `Kamu memasang **${result.usedCount}× ${item.emoji} ${item.name}** ke kompor propertimu *(tersisa ${result.remainingOwned} di tas)*.`,
+                    `🔥 **Muatan Kompor Bertambah:** **+${result.addedCharges}x masak** (Total cadangan: **${result.totalCharges}x masak**).`
+                ]
+            })
+        );
+    }
+
     if (item.caffeineType && result.usedCount > 0) {
         await incrementCaffeineCount(discordId, item.caffeineType, result.usedCount, now);
     }
@@ -296,6 +343,9 @@ async function handleConsumptionCommand(interaction, mode = 'eat') {
     }
     if (result.caffeineReducedCount > 0) {
         notes.push(`☕ *Toleransi Kafein Harian:* Konsumsi ke-3 dst hari ini memberikan efek Energy yang lebih kecil.`);
+    }
+    if (result.buffSkippedStronger) {
+        notes.push(`ℹ️ *Buff Restoran Tetap Aktif:* Kamu sedang memiliki buff restoran yang lebih kuat, sehingga buff masakan rumahan tidak menimpa buff aktifmu.`);
     }
 
     const actionVerb = item.tags.includes('fish')

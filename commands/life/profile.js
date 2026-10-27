@@ -2,6 +2,9 @@ const { SlashCommandBuilder } = require('discord.js');
 const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
 const { getPlayerInventory, calculateSlotsUsed } = require('../../services/inventoryService');
+const { getPlayerPropertyStatus } = require('../../services/propertyService');
+const { getEquippedVehicle } = require('../../services/vehicleService');
+const { evaluatePlayerAchievements } = require('../../services/achievementService');
 const { isNewbieBoostActive } = require('../../services/economyService');
 const { getEducation } = require('../../data/education');
 const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
@@ -34,8 +37,10 @@ module.exports = {
             const synced = await syncPlayerVitals(conn, targetUser.id, now, true);
             if (!synced) return null;
 
-            const invRows = await getPlayerInventory(conn, targetUser.id, false);
+            const invRows = await getPlayerInventory(conn, targetUser.id, false, 'bag', now);
             const slotsUsed = calculateSlotsUsed(invRows);
+            const propStatus = await getPlayerPropertyStatus(conn, targetUser.id, synced.player.max_slots, now, false);
+            const equippedVehicle = await getEquippedVehicle(conn, targetUser.id, false);
 
             let jobShifts = 0;
             if (synced.player.current_job) {
@@ -50,12 +55,16 @@ module.exports = {
                 `SELECT item_id FROM player_collections WHERE discord_id = ?`,
                 [targetUser.id]
             );
+            const achEval = await evaluatePlayerAchievements(conn, synced.player, now);
 
             return {
                 player: synced.player,
                 buffs: synced.buffs,
                 slotsUsed,
+                propStatus,
+                equippedVehicle,
                 jobShifts,
+                achEval,
                 collections: colRows.map(r => r.item_id)
             };
         });
@@ -71,11 +80,13 @@ module.exports = {
             );
         }
 
-        const { player: p, buffs, slotsUsed, jobShifts, collections } = data;
+        const { player: p, buffs, slotsUsed, propStatus, equippedVehicle, jobShifts, achEval, collections } = data;
         const edu = getEducation(p.education_level);
         const backpack = getBackpackByTier(p.backpack_tier);
         const fishLv = getLevelInfoFromXp(p.fishing_xp);
         const mineLv = getLevelInfoFromXp(p.mining_xp);
+        const farmLv = getLevelInfoFromXp(p.farming_xp || 0);
+        const cookLv = getLevelInfoFromXp(p.cooking_xp || 0);
 
         // Hitung koleksi
         const fishCollected = collections.filter(id => {
@@ -125,6 +136,16 @@ module.exports = {
 
         const fishStars = fishLv.masteryStars > 0 ? ` ⭐×${fishLv.masteryStars}` : '';
         const mineStars = mineLv.masteryStars > 0 ? ` ⭐×${mineLv.masteryStars}` : '';
+        const farmStars = farmLv.masteryStars > 0 ? ` ⭐×${farmLv.masteryStars}` : '';
+        const cookStars = cookLv.masteryStars > 0 ? ` ⭐×${cookLv.masteryStars}` : '';
+
+        const propLabel = propStatus.effectiveTier.id === 'tunawisma'
+            ? `${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}**`
+            : `${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}** *(${propStatus.row?.ownership_type === 'owned' ? 'Milik Pribadi' : 'Sewa'})*`;
+
+        const vehLabel = equippedVehicle?.vehicle
+            ? `${equippedVehicle.vehicle.emoji} **${equippedVehicle.vehicle.name}** *(${equippedVehicle.odometer_km.toFixed(0)} km${equippedVehicle.vehicle.tankCapacity > 0 ? ` · ⛽ ${equippedVehicle.fuel_liters.toFixed(1)}L` : ''})*`
+            : '🚶 *Jalan Kaki*';
 
         return await interaction.reply(
             buildV2Card({
@@ -145,17 +166,22 @@ module.exports = {
                         `❤️ Health : \`${renderBar(p.health, 100)}\``
                     ].join('\n'),
                     [
-                        '**💼 Karir & Pendidikan:**',
+                        '**💼 Karir, Pendidikan & Hunian:**',
                         `• Pekerjaan : ${jobText}`,
                         `• Total Shift: **${p.total_shifts} shift**`,
-                        `• Pendidikan: ${eduText}`
+                        `• Pendidikan: ${eduText}`,
+                        `• Hunian    : ${propLabel}`,
+                        `• Kendaraan : ${vehLabel}`
                     ].join('\n'),
                     [
                         '**🎣 Keahlian & Eksplorasi:**',
                         `• Fishing : **Lv. ${fishLv.level}**${fishStars} (\`${fishLv.currentXp}/${fishLv.requiredXp} EXP\`)`,
                         `• Mining  : **Lv. ${mineLv.level}**${mineStars} (\`${mineLv.currentXp}/${mineLv.requiredXp} EXP\`)`,
+                        `• Farming : **Lv. ${farmLv.level}**${farmStars} (\`${farmLv.currentXp}/${farmLv.requiredXp} EXP\`)`,
+                        `• Cooking : **Lv. ${cookLv.level}**${cookStars} (\`${cookLv.currentXp}/${cookLv.requiredXp} EXP\`)`,
                         `• Tas     : ${backpack.emoji} **${backpack.name}** (\`${slotsUsed} / ${p.max_slots} slot\`)`,
-                        `• Koleksi : 🐟 Fishpedia **${fishCollected}/${TOTAL_FISH_SPECIES}** · 💎 Mineral **${mineralCollected}/${TOTAL_MINERAL_TYPES}**`
+                        `• Koleksi : 🐟 Fishpedia **${fishCollected}/${TOTAL_FISH_SPECIES}** · 💎 Mineral **${mineralCollected}/${TOTAL_MINERAL_TYPES}**`,
+                        `• Prestasi: 🏆 Achievement **${achEval.unlockedCount}/${achEval.totalCount}**${achEval.claimableCount > 0 ? ` *(🎁 ${achEval.claimableCount} siap klaim di /achievements)*` : ''}`
                     ].join('\n')
                 ],
                 footer: `Warga sejak ${new Date(Number(p.created_at)).toLocaleDateString('id-ID')} · Streak Harian: ${p.daily_streak} hari`

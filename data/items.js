@@ -1,8 +1,12 @@
+const { CROPS } = require('./crops');
+const { RECIPES } = require('./recipes');
+
 const SHOPS = [
     { id: 'warung', name: 'Warung & Minimarket', emoji: '🏪', description: 'Kebutuhan makan dan minum sehari-hari dengan harga terjangkau.' },
     { id: 'restoran', name: 'Restoran Bintang Lima', emoji: '🍽️', description: 'Hidangan mewah yang memberikan efek buff sementara.' },
     { id: 'apotek', name: 'Apotek Sehat', emoji: '💊', description: 'Obat-obatan, vitamin, P3K, dan minuman berenergi.' },
     { id: 'perkakas', name: 'Toko Perkakas & Outdoor', emoji: '🔧', description: 'Pancingan, umpan, beliung tambang, helm, serta upgrade tas.' },
+    { id: 'tani', name: 'Toko Tani & Dapur', emoji: '🌾', description: 'Bibit tanaman kebun, pupuk urea, dan tabung gas LPG untuk memasak.' },
     { id: 'elektronik', name: 'Toko Elektronik', emoji: '💻', description: 'Perangkat kerja penunjang karir profesional.' },
     { id: 'layanan', name: 'Kantor Layanan Publik', emoji: '📄', description: 'Pembuatan SIM, surat izin melaut, dan dokumen resmi.' },
     { id: 'prestise', name: 'Butik Prestise', emoji: '👑', description: 'Gelar dan koleksi eksklusif penanda status warga.' }
@@ -266,9 +270,9 @@ const ITEMS = [
         buyPrice: 1500000,
         sellPrice: 0,
         stackSize: 1,
-        maxDurability: 500,
+        maxDurability: 350,
         rarityBonus: 0.25,
-        description: 'Joran serat karbon ringan untuk memancing di Laut (Durability 500, Bonus Rarity +25%).'
+        description: 'Joran serat karbon ringan untuk memancing di Laut (Durability 350, Bonus Rarity +25%).'
     },
     {
         id: 'pancing_pro',
@@ -280,9 +284,9 @@ const ITEMS = [
         buyPrice: 6000000,
         sellPrice: 0,
         stackSize: 1,
-        maxDurability: 1000,
+        maxDurability: 500,
         rarityBonus: 0.45,
-        description: 'Pancingan kelas turnamen dengan akurasi tertinggi (Durability 1000, Bonus Rarity +45%).'
+        description: 'Pancingan kelas turnamen dengan akurasi tertinggi (Durability 500, Bonus Rarity +45%).'
     },
     {
         id: 'umpan_cacing',
@@ -363,9 +367,9 @@ const ITEMS = [
         buyPrice: 1800000,
         sellPrice: 0,
         stackSize: 1,
-        maxDurability: 500,
+        maxDurability: 350,
         rarityBonus: 0.25,
-        description: 'Beliung baja untuk menembus Tambang Emas (Durability 500, Bonus Rarity +25%).'
+        description: 'Beliung baja untuk menembus Tambang Emas (Durability 350, Bonus Rarity +25%).'
     },
     {
         id: 'beliung_titanium',
@@ -377,9 +381,9 @@ const ITEMS = [
         buyPrice: 7000000,
         sellPrice: 0,
         stackSize: 1,
-        maxDurability: 1000,
+        maxDurability: 500,
         rarityBonus: 0.45,
-        description: 'Beliung terbaik untuk Tambang Berlian (Durability 1000, Bonus Rarity +45%).'
+        description: 'Beliung terbaik untuk Tambang Berlian (Durability 500, Bonus Rarity +45%).'
     },
     {
         id: 'helm_tambang',
@@ -423,6 +427,17 @@ const ITEMS = [
         sellPrice: 0,
         stackSize: 0,
         description: 'Surat Izin Mengemudi kendaraan roda dua. Syarat melamar Ojek Online.'
+    },
+    {
+        id: 'sim_a',
+        name: 'SIM A',
+        emoji: '🪪',
+        shop: 'layanan',
+        tags: ['license'],
+        buyPrice: 150000,
+        sellPrice: 0,
+        stackSize: 0,
+        description: 'Surat Izin Mengemudi kendaraan roda empat (Mobil). Syarat melamar Taksi Online & Sopir Pribadi.'
     },
     {
         id: 'izin_melaut',
@@ -1111,8 +1126,225 @@ const ITEMS = [
         baseSupplyThreshold: 4,
         stackSize: 20,
         description: 'Permata paling langka dan paling berharga di dunia!'
+    },
+
+    // ==========================================
+    // 10. RILIS 2A: PENYIMPANAN & SISTEM BASI
+    // ==========================================
+    {
+        id: 'cooler_box',
+        name: 'Cooler Box Portabel',
+        emoji: '🧊',
+        shop: 'perkakas',
+        tags: ['device', 'storage'],
+        buyPrice: 150000,
+        sellPrice: 0,
+        stackSize: 0,
+        storageSlots: 8,
+        description: 'Kotak pendingin portabel (8 slot) yang memperlambat proses basi hingga 2× lipat tanpa perlu rumah.'
+    },
+    {
+        id: 'bahan_basi',
+        name: 'Bahan Basi',
+        emoji: '🤢',
+        shop: null,
+        tags: ['trash', 'spoiled'],
+        buyPrice: 0,
+        sellPrice: 300,
+        baseSupplyThreshold: 500,
+        stackSize: 20,
+        description: 'Sisa ikan/makanan yang telah melewati batas kesegaran. Bisa dijual ke Bank Sampah (Lp 300) atau diolah jadi Kompos.'
+    },
+
+    // ==========================================
+    // 11. RILIS 2B: PERTANIAN & MEMASAK
+    // ==========================================
+    {
+        id: 'pupuk_urea',
+        name: 'Pupuk Urea',
+        emoji: '🧪',
+        shop: 'tani',
+        tags: ['fertilizer'],
+        buyPrice: 5000,
+        sellPrice: 0,
+        stackSize: 20,
+        description: 'Pupuk kimia yang mempercepat durasi tumbuh tanaman sebesar 25%.'
+    },
+    {
+        id: 'kompos',
+        name: 'Pupuk Kompos Organik',
+        emoji: '🌱',
+        shop: null,
+        tags: ['fertilizer'],
+        buyPrice: 0,
+        sellPrice: 1200,
+        baseSupplyThreshold: 200,
+        stackSize: 20,
+        description: 'Pupuk hasil daur ulang 5 Bahan Basi (/farm kompos). Menambah hasil panen +1 unit.'
+    },
+    {
+        id: 'gas_lpg',
+        name: 'Tabung Gas LPG 3Kg',
+        emoji: '🔥',
+        shop: 'tani',
+        tags: ['fuel', 'service'],
+        buyPrice: 20000,
+        sellPrice: 0,
+        stackSize: 20,
+        lpgCharges: 10,
+        description: 'Bahan bakar dapur untuk 10 batch memasak (/cook).'
+    },
+
+    // ==========================================
+    // 12. RILIS 2D: ITEM & HIDANGAN EVENT MUSIMAN
+    // ==========================================
+    {
+        id: 'kolak_labu',
+        name: 'Kolak Labu Manis',
+        emoji: '🎃',
+        shop: null,
+        tags: ['food', 'drink', 'event_item'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 20,
+        effects: { hunger: 60, thirst: 40, energy: 25, stress: -10 },
+        description: 'Sajian manis labu kuning edisi Festival Malam Labu (+60 Hunger, +40 Thirst, +25 Energy, -10 Stress).'
+    },
+    {
+        id: 'kue_natal',
+        name: 'Kue Jahe Natal',
+        emoji: '🍪',
+        shop: null,
+        tags: ['food', 'event_item'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 20,
+        effects: { hunger: 55, thirst: 25, energy: 30, stress: -15 },
+        description: 'Kue rempah jahe hangat edisi Pekan Natal (+55 Hunger, +25 Thirst, +30 Energy, -15 Stress).'
+    },
+    {
+        id: 'kue_keranjang',
+        name: 'Kue Keranjang Hoki',
+        emoji: '🥮',
+        shop: null,
+        tags: ['food', 'event_item'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 20,
+        effects: { hunger: 65, thirst: 20, energy: 30, stress: -15 },
+        description: 'Kue manis legit khas Festival Imlek (+65 Hunger, +20 Thirst, +30 Energy, -15 Stress).'
+    },
+    {
+        id: 'ketupat_opor',
+        name: 'Ketupat Opor Spesial',
+        emoji: '🍲',
+        shop: null,
+        tags: ['food', 'drink', 'event_item'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 20,
+        effects: { hunger: 80, thirst: 45, energy: 30, stress: -20 },
+        description: 'Hidangan istimewa Hari Raya Idul Fitri (+80 Hunger, +45 Thirst, +30 Energy, -20 Stress).'
+    },
+    {
+        id: 'tumpeng_merdeka',
+        name: 'Tumpeng Merdeka',
+        emoji: '🍛',
+        shop: null,
+        tags: ['food', 'drink', 'event_item'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 20,
+        effects: { hunger: 85, thirst: 40, energy: 30, stress: -20 },
+        description: 'Nasi tumpeng komplit perayaan Kemerdekaan 17 Agustus (+85 Hunger, +40 Thirst, +30 Energy, -20 Stress).'
     }
 ];
+
+// Tambahkan bibit & hasil panen dari katalog CROPS
+for (const c of CROPS) {
+    ITEMS.push({
+        id: c.seedId,
+        name: `Bibit ${c.name.split(' ')[0]}`,
+        emoji: '🌱',
+        shop: 'tani',
+        tags: ['seed'],
+        buyPrice: c.seedPrice,
+        sellPrice: 0,
+        stackSize: 100,
+        cropId: c.id,
+        description: `Bibit ${c.name} (Farming Lv. ${c.minLevel} · Tumbuh ${c.growthHours} jam · Hasil dasar ${c.baseYield}).`
+    });
+
+    ITEMS.push({
+        id: c.id,
+        name: c.name,
+        emoji: c.emoji,
+        shop: null,
+        tags: ['crop', ...(c.spoilageCategory !== 'biji' ? ['food'] : [])],
+        buyPrice: 0,
+        sellPrice: c.sellPrice,
+        baseSupplyThreshold: 140,
+        stackSize: 20,
+        shelfLifeHours: c.shelfLifeHours,
+        spoilageCategory: c.spoilageCategory,
+        effects: c.spoilageCategory !== 'biji' ? { hunger: 8 } : undefined,
+        description: `Hasil panen kebun (Harga dasar ${c.sellPrice} · Umur segar ${c.shelfLifeHours / 24} hari).`
+    });
+}
+
+// Tambahkan masakan normal & sempurna dari katalog RECIPES
+for (const r of RECIPES) {
+    ITEMS.push({
+        id: r.id,
+        name: r.name,
+        emoji: r.emoji,
+        shop: null,
+        tags: [...r.tags],
+        buyPrice: 0,
+        sellPrice: r.sellPrice,
+        baseSupplyThreshold: 30,
+        stackSize: 20,
+        shelfLifeHours: 48,
+        spoilageCategory: 'masakan',
+        caffeineType: r.caffeineType || undefined,
+        effects: r.effects ? { ...r.effects } : undefined,
+        buff: r.buff ? { ...r.buff, isHomeCooked: true } : undefined,
+        description: `Masakan dapur rumah (Umur segar 48 jam).`
+    });
+
+    if (r.perfectItemId && r.perfectItemId !== r.id) {
+        const perfEffects = {};
+        if (r.effects) {
+            for (const [k, v] of Object.entries(r.effects)) {
+                perfEffects[k] = Math.round(v * 1.5);
+            }
+        }
+        ITEMS.push({
+            id: r.perfectItemId,
+            name: `✨ ${r.name} (Sempurna)`,
+            emoji: r.emoji,
+            shop: null,
+            tags: [...r.tags, 'perfect_dish'],
+            buyPrice: 0,
+            sellPrice: Math.round(r.sellPrice * 1.1),
+            baseSupplyThreshold: 25,
+            stackSize: 20,
+            shelfLifeHours: 48,
+            spoilageCategory: 'masakan',
+            caffeineType: r.caffeineType || undefined,
+            effects: perfEffects,
+            buff: r.buff ? { ...r.buff, isHomeCooked: true } : undefined,
+            description: `Masakan kualitas sempurna dengan efek stat ×1,5 (Umur segar 48 jam).`
+        });
+    }
+}
+
+for (const it of ITEMS) {
+    if (it.tags && it.tags.includes('fish') && !it.shelfLifeHours) {
+        it.shelfLifeHours = 72;
+        it.spoilageCategory = 'fish';
+    }
+}
 
 const ITEM_MAP = new Map(ITEMS.map(it => [it.id, it]));
 

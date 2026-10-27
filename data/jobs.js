@@ -123,6 +123,36 @@ const JOBS = [
         minigameType: 'rute',
         description: 'Mengantar penumpang dan makanan melewati kemacetan kota.'
     },
+    {
+        id: 'taksi_online',
+        name: 'Taksi Online',
+        emoji: '🚕',
+        tier: 2,
+        reqEducation: 'SMA',
+        reqItem: 'sim_a',
+        reqVehicle: 'mobil',
+        reqTotalShifts: 0,
+        reqJobHistory: null,
+        baseSalary: 140000,
+        energyCost: 20,
+        minigameType: 'rute',
+        description: 'Mengemudikan mobil pribadi untuk layanan transportasi penumpang dalam kota.'
+    },
+    {
+        id: 'sopir_pribadi',
+        name: 'Sopir Pribadi',
+        emoji: '🧑‍✈️',
+        tier: 3,
+        reqEducation: 'SMA',
+        reqItem: 'sim_a',
+        reqVehicle: 'mobil',
+        reqTotalShifts: 100,
+        reqJobHistory: null,
+        baseSalary: 160000,
+        energyCost: 20,
+        minigameType: 'rute',
+        description: 'Sopir eksekutif berpengalaman untuk mobilitas VIP dengan penghasilan tinggi.'
+    },
 
     // TIER 3 (D3 / S1)
     {

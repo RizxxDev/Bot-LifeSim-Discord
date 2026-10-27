@@ -10,14 +10,14 @@ module.exports = {
         .setDescription('Cek latensi respon bot dan koneksi WebSocket Discord.'),
 
     async executeSlash(interaction) {
-        const sent = await interaction.reply({
-            ...buildV2Card({
+        await interaction.reply(
+            buildV2Card({
                 accentColor: COLORS.PRIMARY,
                 title: '🏓 Pinging...',
                 blocks: ['Mengukur latensi respon server...']
-            }),
-            fetchReply: true
-        });
+            })
+        );
+        const sent = await interaction.fetchReply();
 
         const latency = sent.createdTimestamp - interaction.createdTimestamp;
         const apiPing = Math.round(interaction.client.ws.ping);

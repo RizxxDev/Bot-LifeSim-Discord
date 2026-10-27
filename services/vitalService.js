@@ -1,9 +1,10 @@
 const { VITALS, HOSPITAL } = require('../data/constants');
+const { getPropertyTier } = require('../data/properties');
 
 /**
  * Pure function untuk menghitung perubahan stat berbasis waktu (Lazy Evaluation).
  */
-function computeLazyVitals(playerRow, now = Date.now(), activeBuffs = []) {
+function computeLazyVitals(playerRow, now = Date.now(), activeBuffs = [], propertyTierObj = null) {
     let energy = Number(playerRow.energy);
     let hunger = Number(playerRow.hunger);
     let thirst = Number(playerRow.thirst);
@@ -15,9 +16,12 @@ function computeLazyVitals(playerRow, now = Date.now(), activeBuffs = []) {
     let wokeUp = false;
     let discharged = false;
 
+    const sleepBonus = propertyTierObj?.sleepEnergyBonus || VITALS.SLEEP_ENERGY_BONUS;
+    const passiveRegenBonus = Number(propertyTierObj?.passiveEnergyRegenBonus || 0);
+
     // 1. Cek selesai tidur
     if (sleepingUntil > 0 && now >= sleepingUntil) {
-        energy = Math.min(VITALS.MAX, energy + VITALS.SLEEP_ENERGY_BONUS);
+        energy = Math.min(VITALS.MAX, energy + sleepBonus);
         sleepingUntil = 0;
         wokeUp = true;
     }
@@ -35,8 +39,11 @@ function computeLazyVitals(playerRow, now = Date.now(), activeBuffs = []) {
     const dtHours = Math.max(0, (now - lastTickAt) / 3600000);
 
     if (dtHours > 0) {
-        // Regen Energy pasif (+12/jam)
-        energy = Math.min(VITALS.MAX, energy + VITALS.ENERGY_REGEN_PER_HOUR * dtHours);
+        // Regen Energy pasif (+12/jam + bonus properti Rumah/Rumah Mewah), dikali buff energy_regen bila aktif
+        const energyRegenBuff = activeBuffs.find(b => b.buff_type === 'energy_regen' && Number(b.expires_at) > now);
+        const energyRegenMult = energyRegenBuff ? Number(energyRegenBuff.multiplier || 1.0) : 1.0;
+        const hourlyEnergyRegen = (VITALS.ENERGY_REGEN_PER_HOUR + passiveRegenBonus) * energyRegenMult;
+        energy = Math.min(VITALS.MAX, energy + hourlyEnergyRegen * dtHours);
 
         // Penurunan Hunger & Thirst karena waktu berhenti di batas bawah offline (20)
         if (hunger > VITALS.OFFLINE_FLOOR) {
@@ -117,8 +124,15 @@ async function syncPlayerVitals(conn, discordId, now = Date.now(), forUpdate = t
         `SELECT * FROM player_buffs WHERE discord_id = ? AND expires_at > ?`,
         [discordId, now]
     );
+    const [propRows] = await conn.execute(
+        `SELECT property_tier, is_evicted FROM player_properties WHERE discord_id = ? LIMIT 1`,
+        [discordId]
+    );
+    const activePropTier = (propRows.length > 0 && Number(propRows[0].is_evicted) === 0)
+        ? getPropertyTier(propRows[0].property_tier)
+        : getPropertyTier('tunawisma');
 
-    const lazy = computeLazyVitals(player, now, buffRows);
+    const lazy = computeLazyVitals(player, now, buffRows, activePropTier);
     player.energy = lazy.energy;
     player.hunger = lazy.hunger;
     player.thirst = lazy.thirst;

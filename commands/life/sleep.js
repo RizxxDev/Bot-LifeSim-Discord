@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
+const { getPlayerPropertyStatus } = require('../../services/propertyService');
 const { VITALS } = require('../../data/constants');
 const { COLORS, formatDuration, formatVitalsCompact, buildV2Card } = require('../../utils/uiBuilder');
 
@@ -9,7 +10,7 @@ module.exports = {
     slash: true,
     data: new SlashCommandBuilder()
         .setName('sleep')
-        .setDescription('Tidur selama 60 menit untuk memulihkan +50 Energy tambahan.'),
+        .setDescription('Tidur dan beristirahat di hunianmu untuk memulihkan Energy tambahan.'),
 
     async executeSlash(interaction) {
         const now = Date.now();
@@ -27,13 +28,18 @@ module.exports = {
                 return { error: 'ENERGY_HIGH', player: p };
             }
 
-            const wakeAt = now + VITALS.SLEEP_DURATION_SEC * 1000;
+            const propStatus = await getPlayerPropertyStatus(conn, interaction.user.id, p.max_slots, now, false);
+            const propTier = propStatus.effectiveTier;
+            const durationSec = propTier.sleepDurationSec || VITALS.SLEEP_DURATION_SEC;
+            const energyBonus = propTier.sleepEnergyBonus || VITALS.SLEEP_ENERGY_BONUS;
+
+            const wakeAt = now + durationSec * 1000;
             await conn.execute(
                 `UPDATE players SET sleeping_until = ? WHERE discord_id = ?`,
                 [wakeAt, interaction.user.id]
             );
             p.sleeping_until = wakeAt;
-            return { player: p, wakeAt };
+            return { player: p, wakeAt, propTier, durationSec, energyBonus };
         });
 
         if (res.error === 'HOSPITAL') {
@@ -73,13 +79,14 @@ module.exports = {
         }
 
         const wakeUnix = Math.floor(res.wakeAt / 1000);
+        const durationMin = Math.round(res.durationSec / 60);
         return await interaction.reply(
             buildV2Card({
                 accentColor: COLORS.LIFE,
-                title: '🛌 Selamat Istirahat!',
+                title: `🛌 Tidur di ${res.propTier.emoji} ${res.propTier.name}`,
                 blocks: [
-                    `**${res.player.username}** mulai tidur nyenyak selama **60 menit** (bangun <t:${wakeUnix}:R>).`,
-                    `Saat bangun nanti, kamu akan mendapatkan tambahan **+${VITALS.SLEEP_ENERGY_BONUS} ⚡ Energy** di luar pemulihan pasif.`
+                    `**${res.player.username}** mulai tidur nyenyak selama **${durationMin} menit** (bangun <t:${wakeUnix}:R>).`,
+                    `Saat bangun nanti, kamu akan mendapatkan tambahan **+${res.energyBonus} ⚡ Energy** di luar pemulihan pasif.`
                 ],
                 footer: 'Selama tidur, kamu tidak dapat melakukan aktivitas /work, /study, /fishing, atau /mining.'
             })

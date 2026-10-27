@@ -66,9 +66,9 @@ module.exports = {
 
     WEALTH_TAX_BRACKETS: [
         { upTo: 25000000, rate: 0.00 },
-        { upTo: 250000000, rate: 0.005 },
-        { upTo: 2500000000, rate: 0.01 },
-        { upTo: Infinity, rate: 0.015 }
+        { upTo: 100000000, rate: 0.025 },
+        { upTo: 500000000, rate: 0.04 },
+        { upTo: Infinity, rate: 0.06 }
     ],
 
     BANK: {

@@ -165,6 +165,22 @@ async function creditPlayerCash(conn, player, amount, source, meta = {}, now = D
     return gain;
 }
 
+async function logLedger(conn, discordId, type, source, amount, balanceAfter, meta = {}, now = Date.now()) {
+    await conn.execute(
+        `INSERT INTO economy_ledger (discord_id, type, source, amount, balance_after, meta, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+            discordId,
+            type,
+            source,
+            Math.round(Number(amount || 0)),
+            Math.round(Number(balanceAfter || 0)),
+            JSON.stringify(meta || {}),
+            now
+        ]
+    );
+}
+
 module.exports = {
     isNewbieBoostActive,
     calculateIncomeTax,
@@ -172,5 +188,6 @@ module.exports = {
     getSoftCapModifier,
     getLiveEconomyConfig,
     debitPlayerFunds,
-    creditPlayerCash
+    creditPlayerCash,
+    logLedger
 };

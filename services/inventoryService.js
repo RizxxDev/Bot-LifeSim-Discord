@@ -1,10 +1,17 @@
 const { getItem } = require('../data/items');
+const {
+    BATCH_MERGE_TOLERANCE_MS,
+    getInitialFreshnessMs,
+    syncInventoryFreshness
+} = require('./spoilageService');
 
 /**
- * Menghitung jumlah slot tas yang terpakai dari daftar row player_inventory.
+ * Menghitung jumlah slot penyimpanan yang terpakai dari daftar row player_inventory.
+ * Item yang memiliki batch kesegaran berbeda dihitung per tumpukan batch.
  */
 function calculateSlotsUsed(inventoryRows = []) {
-    const stackTotals = new Map();
+    const nonPerishableTotals = new Map();
+    const perishableBatches = [];
     let toolSlots = 0;
 
     for (const row of inventoryRows) {
@@ -14,7 +21,7 @@ function calculateSlotsUsed(inventoryRows = []) {
         const item = getItem(row.item_id);
         if (!item) continue;
 
-        // Lisensi, laptop, dan item prestise tidak memakan slot
+        // Lisensi, laptop, cooler_box, dan item prestise tidak memakan slot
         if (item.stackSize === 0) continue;
 
         // Alat ber-durability memakan 1 slot per unit
@@ -23,29 +30,47 @@ function calculateSlotsUsed(inventoryRows = []) {
             continue;
         }
 
-        const prev = stackTotals.get(item.id) || 0;
-        stackTotals.set(item.id, prev + qty);
+        if (row.freshness_remaining_ms !== null && row.freshness_remaining_ms !== undefined) {
+            const rem = Number(row.freshness_remaining_ms);
+            const existingBatch = perishableBatches.find(
+                b => b.itemId === item.id && Math.abs(b.freshnessMs - rem) <= BATCH_MERGE_TOLERANCE_MS
+            );
+            if (existingBatch) {
+                existingBatch.qty += qty;
+            } else {
+                perishableBatches.push({ itemId: item.id, freshnessMs: rem, qty });
+            }
+        } else {
+            const prev = nonPerishableTotals.get(item.id) || 0;
+            nonPerishableTotals.set(item.id, prev + qty);
+        }
     }
 
     let stackSlots = 0;
-    for (const [itemId, totalQty] of stackTotals.entries()) {
+    for (const [itemId, totalQty] of nonPerishableTotals.entries()) {
         const item = getItem(itemId);
         const stackSize = (item && item.stackSize > 0) ? item.stackSize : 20;
         stackSlots += Math.ceil(totalQty / stackSize);
+    }
+
+    for (const batch of perishableBatches) {
+        const item = getItem(batch.itemId);
+        const stackSize = (item && item.stackSize > 0) ? item.stackSize : 20;
+        stackSlots += Math.ceil(batch.qty / stackSize);
     }
 
     return toolSlots + stackSlots;
 }
 
 /**
- * Mengecek apakah penambahan item baru masih muat di dalam kapasitas slot tas.
+ * Mengecek apakah penambahan item baru masih muat di dalam kapasitas slot penyimpanan.
  */
 function canFitItems(inventoryRows, maxSlots, itemsToAdd = []) {
-    // Klon daftar untuk simulasi
     const simulated = inventoryRows.map(r => ({
         item_id: r.item_id,
         quantity: Number(r.quantity || 0),
-        durability: r.durability
+        durability: r.durability,
+        freshness_remaining_ms: r.freshness_remaining_ms ?? null
     }));
 
     for (const add of itemsToAdd) {
@@ -55,14 +80,47 @@ function canFitItems(inventoryRows, maxSlots, itemsToAdd = []) {
 
         if (item.maxDurability) {
             for (let i = 0; i < add.qty; i++) {
-                simulated.push({ item_id: item.id, quantity: 1, durability: item.maxDurability });
+                simulated.push({
+                    item_id: item.id,
+                    quantity: 1,
+                    durability: item.maxDurability,
+                    freshness_remaining_ms: null
+                });
+            }
+            continue;
+        }
+
+        const addFreshness = add.freshnessMs !== undefined
+            ? add.freshnessMs
+            : getInitialFreshnessMs(item);
+
+        if (addFreshness !== null && addFreshness !== undefined) {
+            const existingBatch = simulated.find(
+                r => r.item_id === item.id &&
+                     r.freshness_remaining_ms !== null &&
+                     Math.abs(Number(r.freshness_remaining_ms) - Number(addFreshness)) <= BATCH_MERGE_TOLERANCE_MS
+            );
+            if (existingBatch) {
+                existingBatch.quantity += add.qty;
+            } else {
+                simulated.push({
+                    item_id: item.id,
+                    quantity: add.qty,
+                    durability: null,
+                    freshness_remaining_ms: addFreshness
+                });
             }
         } else {
-            const existing = simulated.find(r => r.item_id === item.id);
+            const existing = simulated.find(r => r.item_id === item.id && r.freshness_remaining_ms === null);
             if (existing) {
                 existing.quantity += add.qty;
             } else {
-                simulated.push({ item_id: item.id, quantity: add.qty, durability: null });
+                simulated.push({
+                    item_id: item.id,
+                    quantity: add.qty,
+                    durability: null,
+                    freshness_remaining_ms: null
+                });
             }
         }
     }
@@ -77,33 +135,100 @@ function canFitItems(inventoryRows, maxSlots, itemsToAdd = []) {
     };
 }
 
-async function getPlayerInventory(conn, discordId, forUpdate = false) {
+/**
+ * Mengambil isi inventory player di lokasi tertentu (default: 'bag').
+ * Gunakan location = 'all' untuk mengambil seluruh lokasi sekaligus.
+ */
+async function getPlayerInventory(conn, discordId, forUpdate = false, location = 'bag', now = Date.now()) {
+    await syncInventoryFreshness(conn, discordId, now);
+
     const lock = forUpdate ? ' FOR UPDATE' : '';
+    if (location === 'all' || location === null) {
+        const [rows] = await conn.execute(
+            `SELECT * FROM player_inventory
+             WHERE discord_id = ? AND quantity > 0
+             ORDER BY CASE WHEN freshness_remaining_ms IS NULL THEN 1 ELSE 0 END ASC,
+                      freshness_remaining_ms ASC, id ASC${lock}`,
+            [discordId]
+        );
+        return rows;
+    }
+
     const [rows] = await conn.execute(
-        `SELECT * FROM player_inventory WHERE discord_id = ? AND quantity > 0 ORDER BY id ASC${lock}`,
-        [discordId]
+        `SELECT * FROM player_inventory
+         WHERE discord_id = ? AND storage_location = ? AND quantity > 0
+         ORDER BY CASE WHEN freshness_remaining_ms IS NULL THEN 1 ELSE 0 END ASC,
+                  freshness_remaining_ms ASC, id ASC${lock}`,
+        [discordId, location]
     );
     return rows;
 }
 
-async function addItem(conn, discordId, itemId, qty = 1, now = Date.now()) {
+/**
+ * Menambahkan item ke lokasi penyimpanan tertentu (default: 'bag').
+ * Mendukung penggabungan tumpukan per batch kesegaran (toleransi 1 jam).
+ */
+async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), location = 'bag', customFreshnessMs = undefined) {
     const item = getItem(itemId);
     if (!item || qty <= 0) return;
+
+    const loc = String(location || 'bag').toLowerCase();
 
     if (item.maxDurability) {
         for (let i = 0; i < qty; i++) {
             await conn.execute(
-                `INSERT INTO player_inventory (discord_id, item_id, quantity, durability, created_at)
-                 VALUES (?, ?, 1, ?, ?)`,
-                [discordId, item.id, item.maxDurability, now]
+                `INSERT INTO player_inventory
+                 (discord_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
+                 VALUES (?, ?, 1, ?, ?, NULL, NULL, ?)`,
+                [discordId, item.id, item.maxDurability, loc, now]
             );
         }
         return;
     }
 
+    const initialFreshness = customFreshnessMs !== undefined
+        ? customFreshnessMs
+        : getInitialFreshnessMs(item);
+
+    if (initialFreshness !== null && initialFreshness !== undefined) {
+        const [existingBatches] = await conn.execute(
+            `SELECT id, quantity, freshness_remaining_ms
+             FROM player_inventory
+             WHERE discord_id = ? AND storage_location = ? AND item_id = ?
+               AND durability IS NULL AND freshness_remaining_ms IS NOT NULL
+               AND ABS(freshness_remaining_ms - ?) <= ?
+             ORDER BY freshness_remaining_ms ASC
+             LIMIT 1 FOR UPDATE`,
+            [discordId, loc, item.id, initialFreshness, BATCH_MERGE_TOLERANCE_MS]
+        );
+
+        if (existingBatches.length > 0) {
+            const batch = existingBatches[0];
+            const mergedFreshness = Math.min(Number(batch.freshness_remaining_ms), Number(initialFreshness));
+            await conn.execute(
+                `UPDATE player_inventory
+                 SET quantity = quantity + ?, freshness_remaining_ms = ?, freshness_updated_at = ?
+                 WHERE id = ?`,
+                [qty, mergedFreshness, now, batch.id]
+            );
+            return;
+        }
+
+        await conn.execute(
+            `INSERT INTO player_inventory
+             (discord_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
+             VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
+            [discordId, item.id, qty, loc, initialFreshness, now, now]
+        );
+        return;
+    }
+
     const [existing] = await conn.execute(
-        `SELECT id, quantity FROM player_inventory WHERE discord_id = ? AND item_id = ? AND durability IS NULL LIMIT 1 FOR UPDATE`,
-        [discordId, item.id]
+        `SELECT id, quantity FROM player_inventory
+         WHERE discord_id = ? AND storage_location = ? AND item_id = ?
+           AND durability IS NULL AND freshness_remaining_ms IS NULL
+         LIMIT 1 FOR UPDATE`,
+        [discordId, loc, item.id]
     );
 
     if (existing.length > 0) {
@@ -113,27 +238,48 @@ async function addItem(conn, discordId, itemId, qty = 1, now = Date.now()) {
         );
     } else {
         await conn.execute(
-            `INSERT INTO player_inventory (discord_id, item_id, quantity, durability, created_at)
-             VALUES (?, ?, ?, NULL, ?)`,
-            [discordId, item.id, qty, now]
+            `INSERT INTO player_inventory
+             (discord_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
+             VALUES (?, ?, ?, NULL, ?, NULL, NULL, ?)`,
+            [discordId, item.id, qty, loc, now]
         );
     }
 }
 
-async function removeItem(conn, discordId, itemId, qty = 1) {
-    if (qty <= 0) return true;
+/**
+ * Mengurangi item dari lokasi penyimpanan dengan urutan FIFO (yang paling dekat basi dipakai lebih dulu).
+ * Mengembalikan array batch yang diambil (truthy) atau false bila stok kurang.
+ */
+async function removeItem(conn, discordId, itemId, qty = 1, location = 'bag') {
+    if (qty <= 0) return [];
+    const loc = String(location || 'bag').toLowerCase();
+
     const [rows] = await conn.execute(
-        `SELECT id, quantity FROM player_inventory WHERE discord_id = ? AND item_id = ? AND quantity > 0 ORDER BY id ASC FOR UPDATE`,
-        [discordId, itemId]
+        `SELECT id, quantity, freshness_remaining_ms
+         FROM player_inventory
+         WHERE discord_id = ? AND storage_location = ? AND item_id = ? AND quantity > 0
+         ORDER BY CASE WHEN freshness_remaining_ms IS NULL THEN 1 ELSE 0 END ASC,
+                  freshness_remaining_ms ASC, id ASC
+         FOR UPDATE`,
+        [discordId, loc, itemId]
     );
 
     const totalOwned = rows.reduce((acc, r) => acc + Number(r.quantity), 0);
     if (totalOwned < qty) return false;
 
     let remainingToRemove = qty;
+    const removedBatches = [];
+
     for (const row of rows) {
         if (remainingToRemove <= 0) break;
         const rowQty = Number(row.quantity);
+        const takeQty = Math.min(rowQty, remainingToRemove);
+
+        removedBatches.push({
+            qty: takeQty,
+            freshnessMs: row.freshness_remaining_ms !== null ? Number(row.freshness_remaining_ms) : null
+        });
+
         if (rowQty <= remainingToRemove) {
             await conn.execute(`DELETE FROM player_inventory WHERE id = ?`, [row.id]);
             remainingToRemove -= rowQty;
@@ -145,7 +291,8 @@ async function removeItem(conn, discordId, itemId, qty = 1) {
             remainingToRemove = 0;
         }
     }
-    return true;
+
+    return removedBatches;
 }
 
 function getBestWorkingTool(inventoryRows, toolTag) {

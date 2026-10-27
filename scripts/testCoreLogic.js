@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 
 const { validateUsername, buildV2Card, COLORS } = require('../utils/uiBuilder');
-const { computeLazyVitals, calculateHospitalAdmission, checkActivityEligibility } = require('../services/vitalService');
+const { computeLazyVitals, calculateHospitalAdmission } = require('../services/vitalService');
 const { calculateSlotsUsed, canFitItems } = require('../services/inventoryService');
 const {
     isNewbieBoostActive,
@@ -13,8 +13,20 @@ const {
 } = require('../services/economyService');
 const { computeDynamicPriceMultiplier } = require('../services/marketService');
 const { generateWorkMinigame } = require('../services/minigameService');
-const { getLevelInfoFromXp, rollLoot, getFishingLocation } = require('../data/locations');
+const { rollLoot, getFishingLocation } = require('../data/locations');
 const { STARTER_PACK } = require('../data/constants');
+const { getMigrationFiles, splitSqlStatements } = require('../database/mariadb');
+const { acquireUserLock, extendUserLock, releaseUserLock } = require('../database/redis');
+const { getPropertyTier, calculateMonthlyPbb } = require('../data/properties');
+const { calculateProratedUpgradeRent } = require('../services/propertyService');
+const { computeLazyRowFreshness, getDecayRateForLocation } = require('../services/spoilageService');
+const { getCrop, getRentPlotPrice, getBuyPlotPrice, getBonusYieldChanceFromLevel } = require('../data/crops');
+const { computeLazyPlotState, getPhaseDurationMs } = require('../services/farmService');
+const { getRecipe, getPerfectCookChance } = require('../data/recipes');
+const { resolveRecipeIngredientsFromBag, resolveFuelSource } = require('../services/cookService');
+const { getVehicle, isFarLocation } = require('../data/vehicles');
+const { isServiceOverdue, calculateShiftVehicleBonus, calculateTripVehicleDiscount } = require('../services/vehicleService');
+const { calculateCreditPlan, calculateEarlyPayoff, calculateRepossessionRefund } = require('../services/creditService');
 
 function collectCommandFiles(dir, list = []) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -25,20 +37,27 @@ function collectCommandFiles(dir, list = []) {
     return list;
 }
 
-function runTests() {
+async function runTests() {
     console.log('🧪 Menjalankan pengujian unit logika inti (testCoreLogic.js)...\n');
 
-    // 1. Verifikasi seluruh Slash Command berhasil di-load & valid JSON
+    // 1. Verifikasi seluruh Slash Command berhasil di-load, valid JSON, & bebas fetchReply deprecated
     const cmdFiles = collectCommandFiles(path.join(__dirname, '..', 'commands'));
     assert(cmdFiles.length >= 20, `Harusnya ada >= 20 command, ditemukan: ${cmdFiles.length}`);
     for (const file of cmdFiles) {
+        const rawSrc = fs.readFileSync(file, 'utf8');
+        assert(!rawSrc.includes('fetchReply: true'), `Command ${file} masih mengandung opsi deprecated fetchReply: true`);
+
         const cmd = require(file);
         assert(cmd.name, `Command di ${file} tidak punya name`);
         assert(cmd.data, `Command ${cmd.name} tidak punya SlashCommandBuilder data`);
         const json = cmd.data.toJSON();
         assert.strictEqual(json.name, cmd.name);
     }
-    console.log(`✅ [1/8] ${cmdFiles.length} Slash Commands berhasil dimuat & tervalidasi.`);
+    const workCmd = require('../commands/career/work');
+    const buyCmd = require('../commands/economy/buy');
+    assert(workCmd.lockTtl >= 45, 'Command /work harus punya lockTtl >= 45 detik');
+    assert(buyCmd.lockTtl >= 45, 'Command /buy harus punya lockTtl >= 45 detik');
+    console.log(`✅ [1/10] ${cmdFiles.length} Slash Commands berhasil dimuat, tervalidasi, & bebas fetchReply deprecated.`);
 
     // 2. Validasi Username & Blacklist
     assert.strictEqual(validateUsername('Budi_99').valid, true);
@@ -46,7 +65,7 @@ function runTests() {
     assert.strictEqual(validateUsername('Nama Pakai Spasi').valid, false, 'Spasi harus ditolak');
     assert.strictEqual(validateUsername('Admin_Kota').valid, false, 'Kata admin harus ditolak');
     assert.strictEqual(validateUsername('4dm1n_99').valid, false, 'Leetspeak admin harus ditolak');
-    console.log('✅ [2/8] Validasi Username & Filter Blacklist bekerja akurat.');
+    console.log('✅ [2/10] Validasi Username & Filter Blacklist bekerja akurat.');
 
     // 3. Lazy Evaluation Stat Vital & Batas Bawah Offline 20
     const baseTime = 1_700_000_000_000;
@@ -73,7 +92,7 @@ function runTests() {
     assert.strictEqual(after7d.hunger, 20, 'Hunger offline harus tertahan di angka 20');
     assert.strictEqual(after7d.thirst, 20, 'Thirst offline harus tertahan di angka 20');
     assert(after7d.health > 0, 'Player tidak boleh pingsan hanya karena offline');
-    console.log('✅ [3/8] Lazy Evaluation Stat Vital & Offline Floor (20) terverifikasi.');
+    console.log('✅ [3/10] Lazy Evaluation Stat Vital & Offline Floor (20) terverifikasi.');
 
     // 4. Perhitungan Biaya Rumah Sakit (Cash dulu lalu Bank, tidak pernah minus)
     const adm1 = calculateHospitalAdmission(200000, 500000, baseTime);
@@ -87,7 +106,7 @@ function runTests() {
     assert.strictEqual(admBroke.totalPaid, 5000);
     assert.strictEqual(admBroke.newCash, 0);
     assert.strictEqual(admBroke.lockSeconds, 3600, 'Jika tidak mampu bayar penuh, opname 60 menit');
-    console.log('✅ [4/8] Rumus Rumah Sakit & Proteksi Saldo Anti-Minus terverifikasi.');
+    console.log('✅ [4/10] Rumus Rumah Sakit & Proteksi Saldo Anti-Minus terverifikasi.');
 
     // 5. Perhitungan Kapasitas Slot Tas (Inventory Slots)
     const starterInv = STARTER_PACK.items.map(it => ({
@@ -95,18 +114,15 @@ function runTests() {
         quantity: it.qty,
         durability: it.itemId.startsWith('pancing') || it.itemId.startsWith('beliung') ? 100 : null
     }));
-    // pancing_bambu (1 slot) + beliung_batu (1 slot) + 20 cacing (1 slot) + 3 nasi (1 slot) + 3 roti (1 slot) + 6 air (1 slot) = 6 slot
     const starterSlots = calculateSlotsUsed(starterInv);
     assert.strictEqual(starterSlots, 6, `Starter pack harus memakan 6 slot, terhitung: ${starterSlots}`);
 
-    // Lisensi (SIM C) tidak memakan slot
     const fitLicense = canFitItems(starterInv, 6, [{ itemId: 'sim_c', qty: 1 }]);
     assert.strictEqual(fitLicense.fits, true, 'SIM C harus 0 slot dan muat walau slot pas');
 
-    // Menambah 1 alat baru saat slot 6/6 harus ditolak
     const fitExtraTool = canFitItems(starterInv, 6, [{ itemId: 'pancing_bambu', qty: 1 }]);
     assert.strictEqual(fitExtraTool.fits, false, 'Harus menolak jika melebihi max_slots');
-    console.log('✅ [5/8] Sistem Kapasitas Slot Tas & Stackable Rules terverifikasi.');
+    console.log('✅ [5/10] Sistem Kapasitas Slot Tas & Stackable Rules terverifikasi.');
 
     // 6. Pajak Penghasilan Progresif, Newbie Boost, Pajak Kekayaan & Soft Cap
     const newbiePlayer = { created_at: baseTime };
@@ -120,7 +136,7 @@ function runTests() {
     assert.strictEqual(getSoftCapModifier('work', 6).multiplier, 1.0);
     assert.strictEqual(getSoftCapModifier('work', 8).multiplier, 0.75);
     assert.strictEqual(getSoftCapModifier('work', 12).multiplier, 0.50);
-    console.log('✅ [6/8] Pajak Progresif, Newbie Boost, Pajak Kekayaan & Soft Cap terverifikasi.');
+    console.log('✅ [6/10] Pajak Progresif, Newbie Boost, Pajak Kekayaan & Soft Cap terverifikasi.');
 
     // 7. Pasar Dinamis 24 Jam & Loot Roller
     const stableMkt = computeDynamicPriceMultiplier(100, 200, 50);
@@ -131,7 +147,7 @@ function runTests() {
     const sungai = getFishingLocation('sungai');
     const sampleLoot = rollLoot({ isFishing: true, location: sungai, minigameSuccess: false });
     assert(!['epic', 'legendary'].includes(sampleLoot.rarity), 'Gagal mini-game tidak boleh dapat Epic/Legendary');
-    console.log('✅ [7/8] Rumus Harga Pasar Dinamis & Tabel Loot Rarity terverifikasi.');
+    console.log('✅ [7/10] Rumus Harga Pasar Dinamis & Tabel Loot Rarity terverifikasi.');
 
     // 8. Discord Components V2 Builder & Mini-Game Generator
     const v2Payload = buildV2Card({
@@ -149,8 +165,273 @@ function runTests() {
         assert.strictEqual(mg.options.length, 4);
         assert.strictEqual(mg.options.filter(o => o.isCorrect).length, 1);
     }
-    console.log('✅ [8/8] Builder Discord Components V2 & 6 Tipe Mini-Game Kerja terverifikasi.\n');
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (8/8 PASSED)!');
+    console.log('✅ [8/10] Builder Discord Components V2 & 6 Tipe Mini-Game Kerja terverifikasi.');
+
+    // 9. Versioned Migration Engine & SQL Parser
+    const migrations = getMigrationFiles();
+    assert(migrations.length >= 2, `Harusnya minimal 2 file migrasi, ditemukan: ${migrations.length}`);
+    assert.strictEqual(migrations[0].version, 1);
+    assert(migrations[0].statements.length >= 8, 'Migrasi 001 harus memiliki >= 8 tabel DDL');
+    const sampleStmts = splitSqlStatements('-- komentar\nCREATE TABLE a (id INT);\n-- komentar 2\nCREATE TABLE b (id INT);');
+    assert.strictEqual(sampleStmts.length, 2);
+    console.log('✅ [9/10] Versioned Migration Engine & SQL Parser terverifikasi.');
+
+    // 10. Dynamic User Lock & extendUserLock
+    const testUserId = 'test_lock_user_999';
+    const token1 = await acquireUserLock(testUserId, 15);
+    assert(token1, 'Lock pertama harus berhasil diperoleh');
+    const token2 = await acquireUserLock(testUserId, 15);
+    assert.strictEqual(token2, null, 'Lock kedua untuk user yang sama harus ditolak');
+    const extendedWrong = await extendUserLock(testUserId, 'wrong_token', 45);
+    assert.strictEqual(extendedWrong, false, 'Extend lock dengan token salah harus gagal');
+    const extendedOk = await extendUserLock(testUserId, token1, 45);
+    assert.strictEqual(extendedOk, true, 'Extend lock dengan token valid harus berhasil');
+    await releaseUserLock(testUserId, token1);
+    const token3 = await acquireUserLock(testUserId, 15);
+    assert(token3, 'Lock harus bisa diperoleh kembali setelah dilepas');
+    await releaseUserLock(testUserId, token3);
+    console.log('✅ [10/12] Dynamic User Lock & extendUserLock Anti-Race Condition terverifikasi.');
+
+    // 11. Rilis 2A: Properti, Prorata Sewa, & PBB Bulanan
+    const kos = getPropertyTier('kos');
+    const kontrakan = getPropertyTier('kontrakan');
+    const rumah = getPropertyTier('rumah');
+    assert.strictEqual(kos.rentPerWeek, 70000);
+    assert.strictEqual(calculateMonthlyPbb(rumah), 150000, 'PBB Rumah 75jt @ 0,2% harus Lp 150.000');
+
+    // Simulasi prorata: sisa setengah minggu sewa Kos (Lp 35.000) saat pindah ke Kontrakan (Lp 175.000) -> bayar Lp 140.000
+    const halfWeekLater = baseTime + 3.5 * 86400000;
+    const prorated = calculateProratedUpgradeRent(
+        {
+            property_tier: 'kos',
+            ownership_type: 'rent',
+            is_evicted: 0,
+            grace_until: 0,
+            next_billing_at: baseTime + 7 * 86400000
+        },
+        kontrakan,
+        halfWeekLater
+    );
+    assert.strictEqual(prorated.unusedCredit, 35000);
+    assert.strictEqual(prorated.netPayable, 140000);
+    console.log('✅ [11/12] Rilis 2A: Katalog Properti, Prorata Upgrade Sewa & PBB Bulanan terverifikasi.');
+
+    // 12. Rilis 2A: Sistem Basi (Lazy Spoilage), Laju Penyimpanan & Tumpukan Batch
+    assert.strictEqual(getDecayRateForLocation('bag', false), 1.0);
+    assert.strictEqual(getDecayRateForLocation('coolerbox', false), 0.5);
+    assert(Math.abs(getDecayRateForLocation('kulkas', false) - 1 / 3) < 0.001);
+    assert.strictEqual(getDecayRateForLocation('kulkas', true), 1.0, 'Saat terusir, kulkas membusuk laju normal');
+    assert.strictEqual(getDecayRateForLocation('freezer', true), 0.0, 'Saat terusir, freezer tetap beku');
+
+    const fishRowInKulkas = {
+        item_id: 'ikan_nila',
+        quantity: 5,
+        storage_location: 'kulkas',
+        freshness_remaining_ms: 72 * 3600000,
+        freshness_updated_at: baseTime
+    };
+    const after36hInKulkas = computeLazyRowFreshness(fishRowInKulkas, baseTime + 36 * 3600000, false);
+    assert.strictEqual(after36hInKulkas.spoiled, false);
+    assert.strictEqual(after36hInKulkas.remainingMs, 60 * 3600000, '36 jam di kulkas (×1/3) hanya mengurangi 12 jam kesegaran');
+
+    // Dua batch ikan yang berbeda > 1 jam harus terhitung 2 slot terpisah meskipun totalnya <= 20
+    const batchSlots = calculateSlotsUsed([
+        { item_id: 'ikan_nila', quantity: 5, freshness_remaining_ms: 70 * 3600000 },
+        { item_id: 'ikan_nila', quantity: 5, freshness_remaining_ms: 40 * 3600000 }
+    ]);
+    assert.strictEqual(batchSlots, 2, '2 batch ikan beda hari harus menempati 2 slot terpisah');
+    console.log('✅ [12/14] Rilis 2A: Lazy Spoilage, Kulkas/Freezer & Aturan Tumpukan Batch terverifikasi.');
+
+    // 13. Rilis 2B: Pertanian (Lazy Plot Growth, Urea -25%, Layu 24 Jam, & Harga Petak Progresif)
+    assert.strictEqual(getRentPlotPrice(1), 15000);
+    assert.strictEqual(getRentPlotPrice(3), 25000);
+    assert.strictEqual(getBuyPlotPrice(1), 400000);
+    assert.strictEqual(getBuyPlotPrice(2), 500000);
+    assert.strictEqual(getBonusYieldChanceFromLevel(10), 0.05);
+
+    const bayamPlot = {
+        plot_number: 1,
+        crop_id: 'bayam', // 2 jam (120m) total -> 60m per fase (45m per fase jika pakai urea)
+        phase: 1,
+        watered: 1,
+        fertilizer_type: 'urea',
+        phase_started_at: baseTime,
+        mature_at: 0
+    };
+    const after46m = computeLazyPlotState(bayamPlot, baseTime + 46 * 60000);
+    assert.strictEqual(after46m.phase, 2, 'Bayam + Urea harus naik ke Fase 2 setelah 45 menit');
+    assert.strictEqual(after46m.watered, 0, 'Transisi ke Fase 2 harus mereset status siram ke 0');
+
+    const wateredPhase2 = { ...after46m, watered: 1, phase_started_at: baseTime + 46 * 60000 };
+    const afterMature = computeLazyPlotState(wateredPhase2, baseTime + 92 * 60000);
+    assert.strictEqual(afterMature.phase, 3, 'Bayam harus matang (Fase 3) setelah Fase 2 selesai');
+
+    const afterWilt = computeLazyPlotState(afterMature, afterMature.mature_at + 25 * 3600000);
+    assert.strictEqual(afterWilt.phase, 4, 'Tanaman matang yang dibiarkan > 24 jam harus layu (Fase 4)');
+    console.log('✅ [13/14] Rilis 2B: Lazy Plot Growth, Pupuk Urea, Layu 24 Jam & Harga Petak terverifikasi.');
+
+    // 14. Rilis 2B: Memasak (Katalog 12 Resep, Pencocokan Ikan Fleksibel, Bahan Bakar & Masakan Sempurna)
+    const seafoodBakar = getRecipe('seafood_bakar');
+    assert(seafoodBakar, 'Resep seafood_bakar harus tersedia');
+    assert.strictEqual(getPerfectCookChance(100), 0.25, 'Peluang Masakan Sempurna maksimal harus 25%');
+
+    const mockBagForCook = [
+        { item_id: 'ikan_kakap', quantity: 2 },
+        { item_id: 'cabai', quantity: 4 },
+        { item_id: 'gas_lpg', quantity: 1 }
+    ];
+    const ingMatch = resolveRecipeIngredientsFromBag(mockBagForCook, seafoodBakar, 2);
+    assert.strictEqual(ingMatch.ok, true, 'Ikan Kakap harus cocok sebagai sea_fish_uncommon_plus untuk 2 porsi Seafood Bakar');
+    assert.strictEqual(ingMatch.toConsume.ikan_kakap, 2);
+    assert.strictEqual(ingMatch.toConsume.cabai, 4);
+
+    const fuelAuto = resolveFuelSource({ lpg_charges: 0 }, mockBagForCook, 'auto');
+    assert.strictEqual(fuelAuto.ok, true);
+    assert.strictEqual(fuelAuto.mode, 'open_gas_lpg', 'Jika muatan LPG 0 tapi ada gas_lpg di tas, otomatis buka tabung');
+    console.log('✅ [14/16] Rilis 2B: Katalog 12 Resep, Pencocokan Bahan Fleksibel & Bahan Bakar terverifikasi.');
+
+    // 15. Rilis 2C: Kendaraan, BBM, Odometer Servis & Diskon Lokasi Jauh
+    assert.strictEqual(isFarLocation('laut'), true);
+    assert.strictEqual(isFarLocation('sungai'), false);
+
+    const motorBaruRow = {
+        vehicle_id: 'motor_baru',
+        fuel_liters: 5.0,
+        odometer_km: 500,
+        last_service_km: 0
+    };
+    const shiftBonusNormal = calculateShiftVehicleBonus(motorBaruRow, 'ojek_online', () => 0.5);
+    assert.strictEqual(shiftBonusNormal.active, true);
+    assert.strictEqual(shiftBonusNormal.bonusMultiplier, 0.45, 'Motor Baru harus memberi +45% gaji Ojek Online');
+    assert.strictEqual(shiftBonusNormal.fuelConsumed, 0.25);
+    assert.strictEqual(shiftBonusNormal.kmAdded, 15);
+
+    const overdueMotorRow = {
+        vehicle_id: 'motor_baru',
+        fuel_liters: 5.0,
+        odometer_km: 2100, // melewati interval 2.000 km
+        last_service_km: 0
+    };
+    assert.strictEqual(isServiceOverdue(overdueMotorRow), true);
+    const shiftBonusOverdue = calculateShiftVehicleBonus(overdueMotorRow, 'ojek_online', () => 0.5);
+    assert.strictEqual(shiftBonusOverdue.bonusMultiplier, 0.225, 'Telat servis harus memotong bonus gaji menjadi 50% (22.5%)');
+    const shiftBreakdown = calculateShiftVehicleBonus(overdueMotorRow, 'ojek_online', () => 0.02); // < 0.10 mogok
+    assert.strictEqual(shiftBreakdown.brokeDown, true, 'Peluang 10% mogok saat telat servis harus menghilangkan bonus');
+    assert.strictEqual(shiftBreakdown.bonusMultiplier, 0);
+
+    const tripMobil = calculateTripVehicleDiscount(
+        { vehicle_id: 'mobil', fuel_liters: 10, odometer_km: 100, last_service_km: 0 },
+        'tambang_berlian',
+        () => 0.5
+    );
+    assert.strictEqual(tripMobil.energyDiscount, 3, 'Mobil harus menghemat 3 Energy ke lokasi jauh');
+    console.log('✅ [15/16] Rilis 2C: Sistem Kendaraan, BBM, Odometer Servis & Diskon Energy terverifikasi.');
+
+    // 16. Rilis 2C: Kredit (DP 20%, Bunga Flat, Pelunasan Dipercepat & Sita 50% Pokok)
+    const planMobil12 = calculateCreditPlan('mobil', 12); // Harga 150jt, DP 30jt, Pokok 120jt, Bunga 10% = 12jt
+    assert.strictEqual(planMobil12.downPayment, 30000000);
+    assert.strictEqual(planMobil12.principalAmount, 120000000);
+    assert.strictEqual(planMobil12.interestAmount, 12000000);
+    assert.strictEqual(planMobil12.weeklyInstallment, 11000000); // 10jt pokok + 1jt bunga per minggu
+
+    const halfPaidCredit = {
+        down_payment: 30000000,
+        principal_amount: 120000000,
+        interest_amount: 12000000,
+        tenor_weeks: 12,
+        weeks_paid: 6,
+        principal_paid: 60000000,
+        interest_paid: 6000000
+    };
+    const earlyPayoff = calculateEarlyPayoff(halfPaidCredit);
+    // Sisa pokok 60jt + 50% sisa bunga (3jt) = 63jt (hemat 3jt)
+    assert.strictEqual(earlyPayoff.remainingPrincipal, 60000000);
+    assert.strictEqual(earlyPayoff.discountedInterest, 3000000);
+    assert.strictEqual(earlyPayoff.interestSaved, 3000000);
+    assert.strictEqual(earlyPayoff.totalPayoff, 63000000);
+
+    // Jika disita setelah 6 minggu: 50% dari (DP 30jt + pokok terbayar 60jt = 90jt) = 45jt
+    assert.strictEqual(calculateRepossessionRefund(halfPaidCredit), 45000000);
+    console.log('✅ [16/18] Rilis 2C: Sistem Kredit, Bunga Flat, Pelunasan Dipercepat & Sita Aset terverifikasi.');
+
+    // ====================================================
+    // 17. TEST RILIS 2D: ACHIEVEMENT & TITLE
+    // ====================================================
+    const { ACHIEVEMENT_CATEGORIES, ACHIEVEMENTS, getAchievement } = require('../data/achievements');
+    const { getItem } = require('../data/items');
+    assert.strictEqual(ACHIEVEMENT_CATEGORIES.length, 6);
+    assert.strictEqual(ACHIEVEMENTS.length, 24);
+    for (const ach of ACHIEVEMENTS) {
+        assert.ok(getAchievement(ach.id), `Achievement ${ach.id} harus dapat diakses`);
+        for (const rw of (ach.itemRewards || [])) {
+            assert.ok(getItem(rw.itemId), `Reward item ${rw.itemId} pada ${ach.id} harus terdaftar di data/items.js`);
+        }
+    }
+    console.log('✅ [17/18] Rilis 2D: Katalog 24 Achievement (6 Kategori, Non-Uang + Title) terverifikasi.');
+
+    // ====================================================
+    // 18. TEST RILIS 2D: SIKLUS CUACA 2 MINGGU & EVENT MUSIMAN (THR LEBARAN)
+    // ====================================================
+    const {
+        WEATHER_CYCLE_DURATION_MS,
+        WEATHER_SEASONS,
+        SEASONAL_EVENTS,
+        getWeatherSeason,
+        getFixedCalendarEventForTimestamp
+    } = require('../data/events');
+    const { isLebaranThrActive } = require('../services/eventService');
+
+    assert.strictEqual(WEATHER_CYCLE_DURATION_MS, 14 * 24 * 60 * 60 * 1000);
+    const w0 = getWeatherSeason(0);
+    const w1 = getWeatherSeason(WEATHER_CYCLE_DURATION_MS);
+    assert.strictEqual(w0.id, 'hujan');
+    assert.strictEqual(w1.id, 'kemarau');
+
+    // Musim Hujan: otomatis menyiram tanaman saat computeLazyPlotState
+    const rainPlot = computeLazyPlotState({
+        plot_number: 1,
+        crop_id: 'bayam',
+        phase: 1,
+        watered: 0,
+        fertilizer_type: null,
+        phase_started_at: 1000,
+        mature_at: 0
+    }, 1000, WEATHER_SEASONS.hujan);
+    assert.strictEqual(rainPlot.watered, 1, 'Musim hujan wajib menyiram petak Fase 1 secara otomatis');
+
+    // Musim Kemarau: Cabai & Kopi tumbuh 10% lebih cepat
+    const cabaiCrop = getCrop('cabai');
+    const normalPhaseMs = getPhaseDurationMs(cabaiCrop, null, WEATHER_SEASONS.hujan);
+    const dryPhaseMs = getPhaseDurationMs(cabaiCrop, null, WEATHER_SEASONS.kemarau);
+    assert.strictEqual(dryPhaseMs, Math.round(normalPhaseMs * 0.90));
+
+    // THR Lebaran: x1.5 selama 3 hari pertama (72 jam), lalu nonaktif di hari ke-4
+    const lebaranStart = Date.UTC(2026, 2, 20, 0, 0, 0);
+    const lebaranState = {
+        event_key: 'lebaran_2026',
+        event_id: 'lebaran',
+        starts_at: lebaranStart,
+        ends_at: lebaranStart + 7 * 86400000,
+        is_active: 1
+    };
+    const thrDay2 = isLebaranThrActive(lebaranState, lebaranStart + 2 * 86400000);
+    const thrDay4 = isLebaranThrActive(lebaranState, lebaranStart + 4 * 86400000);
+    assert.strictEqual(thrDay2.active, true);
+    assert.strictEqual(thrDay2.multiplier, 1.5);
+    assert.strictEqual(thrDay4.active, false);
+    assert.strictEqual(thrDay4.multiplier, 1.0);
+
+    // Kalender tanggal tetap: 17 Agustus (10-24 Agu) & Halloween (25 Okt - 1 Nov)
+    assert.strictEqual(SEASONAL_EVENTS.length, 6);
+    const aug17Ts = Date.UTC(2026, 7, 17, 5, 0, 0);
+    const matchedAug = getFixedCalendarEventForTimestamp(aug17Ts);
+    assert.ok(matchedAug && matchedAug.eventConfig.id === 'kemerdekaan');
+    console.log('✅ [18/18] Rilis 2D: Siklus Cuaca 2 Minggu, THR Lebaran 1,5x (3 Hari), & Event Musiman terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (18/18 PASSED)!');
 }
 
-runTests();
+runTests().catch(err => {
+    console.error('❌ Pengujian gagal:', err);
+    process.exit(1);
+});
