@@ -110,11 +110,12 @@ function select(mod, action, ownerId, opts = {}, now = Date.now()) {
  * Membuat ActionRow berisi UserSelectMenuBuilder bawaan Discord.
  */
 function userSelect(mod, action, ownerId, opts = {}, now = Date.now()) {
+    const normalizedOpts = typeof opts === 'string' ? { placeholder: opts } : (opts || {});
     const {
         placeholder = '🔍 Pilih warga...',
         arg = '',
         disabled = false
-    } = opts;
+    } = normalizedOpts;
 
     const menu = new UserSelectMenuBuilder()
         .setCustomId(makeId(mod, action, ownerId, arg, now))
@@ -244,7 +245,7 @@ function pageRow(mod, action, ownerId, opts = {}, now = Date.now()) {
         btn(mod, action, ownerId, {
             emoji: '◀️',
             style: ButtonStyle.Secondary,
-            arg: makePageArg(Math.max(1, page - 1)),
+            arg: makePageArg(page - 1),
             disabled: page <= 1
         }, now),
         btn(mod, 'noop', ownerId, {
@@ -256,7 +257,7 @@ function pageRow(mod, action, ownerId, opts = {}, now = Date.now()) {
         btn(mod, action, ownerId, {
             emoji: '▶️',
             style: ButtonStyle.Secondary,
-            arg: makePageArg(Math.min(totalPages, page + 1)),
+            arg: makePageArg(page + 1),
             disabled: page >= totalPages
         }, now)
     ];
@@ -318,6 +319,30 @@ function assertComponentLimit(payloadMeta) {
     if (total > MAX_V2_COMPONENTS) {
         throw new Error(`Total komponen V2 (${total}) melebihi batas maksimal Discord (${MAX_V2_COMPONENTS}).`);
     }
+
+    // Validasi tidak ada custom_id yang duplikat dalam satu payload pesan
+    const seenCustomIds = new Set();
+    for (const b of (payloadMeta.blocks || [])) {
+        const cid = b?.button?.data?.custom_id;
+        if (cid) {
+            if (seenCustomIds.has(cid)) {
+                throw new Error(`Duplicate custom_id terdeteksi pada block button: ${cid}`);
+            }
+            seenCustomIds.add(cid);
+        }
+    }
+    for (const row of rows) {
+        for (const comp of (row.components || [])) {
+            const cid = comp?.data?.custom_id;
+            if (cid) {
+                if (seenCustomIds.has(cid)) {
+                    throw new Error(`Duplicate custom_id terdeteksi pada ActionRow: ${cid}`);
+                }
+                seenCustomIds.add(cid);
+            }
+        }
+    }
+
     return total;
 }
 
@@ -495,7 +520,9 @@ function numberModal(mod, action, ownerId, opts = {}, now = Date.now()) {
 /**
  * Membaca dan memvalidasi angka bulat positif dari ModalSubmitInteraction.
  */
-function parseModalNumber(interaction, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+function parseModalNumber(interaction, optsOrField = {}, maybeOpts = {}) {
+    const opts = typeof optsOrField === 'string' ? (maybeOpts || {}) : (optsOrField || {});
+    const { min = 1, max = Number.MAX_SAFE_INTEGER } = opts;
     const raw = (interaction.fields.getTextInputValue('value') || '').trim();
     const cleaned = raw.replace(/[.,_\s]/g, '').replace(/^lp/i, '');
     if (!/^\d+$/.test(cleaned)) {

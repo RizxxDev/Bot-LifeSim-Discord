@@ -119,7 +119,13 @@ function buildSellPanel({
 
     if (selectedEntry) {
         rows.push(
-            quantityRow('sell', 'qty', ownerId, selectedEntry.qty, now, selectedEntry.item.id)
+            quantityRow('sell', 'qty', ownerId, {
+                presets: [1, 5, 10],
+                maxLabel: 'Semua',
+                argPrefix: selectedEntry.item.id,
+                customAction: 'qty_open_modal',
+                disableMulti: selectedEntry.qty <= 1
+            }, now)
         );
     }
 
@@ -229,21 +235,7 @@ module.exports = {
             async qty(interaction, parsed) {
                 const now = Date.now();
                 const userId = interaction.user.id;
-                const rawArg = String(parsed.arg || '');
-                const sepIdx = rawArg.indexOf('_');
-                const qtySpec = sepIdx >= 0 ? rawArg.slice(0, sepIdx) : rawArg;
-                const itemId = sepIdx >= 0 ? rawArg.slice(sepIdx + 1) : '';
-
-                if (qtySpec === 'custom') {
-                    const it = getItem(itemId);
-                    const modal = numberModal('sell', 'qty_modal', userId, {
-                        title: `💰 Jual ${it ? it.name : itemId}`,
-                        label: 'Jumlah yang ingin dijual (angka bulat)',
-                        placeholder: 'Contoh: 15',
-                        arg: itemId
-                    }, now);
-                    return await interaction.showModal(modal);
-                }
+                const [itemId, qtySpec] = String(parsed.arg || '').split(':');
 
                 const amount = qtySpec === 'max' ? 'max' : (Number(qtySpec) || 1);
                 const res = await executeSellItems(userId, itemId, amount, now);
@@ -256,6 +248,19 @@ module.exports = {
                         now
                     })
                 );
+            },
+            async qty_open_modal(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const itemId = parsed.arg || '';
+                const it = getItem(itemId);
+                const modal = numberModal('sell', 'qty_modal', userId, {
+                    title: `💰 Jual ${it ? it.name : itemId}`,
+                    label: 'Jumlah yang ingin dijual (angka bulat)',
+                    placeholder: 'Contoh: 15',
+                    arg: itemId
+                }, now);
+                return await interaction.showModal(modal);
             }
         },
         selects: {

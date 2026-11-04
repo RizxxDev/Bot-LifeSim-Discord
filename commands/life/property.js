@@ -147,7 +147,8 @@ function buildPropertyPanel({
             btn('property', 'home', ownerId, {
                 label: 'Semua Katalog',
                 emoji: '📋',
-                style: ButtonStyle.Secondary
+                style: ButtonStyle.Secondary,
+                arg: 'all'
             }, now)
         );
     }

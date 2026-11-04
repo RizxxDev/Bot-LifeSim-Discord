@@ -93,7 +93,11 @@ function buildPayPanel({
 
     if (targetId && r) {
         rows.push(
-            percentRow('pay', 'amt', ownerId, maxTransferable, now, 'Nominal Lain', targetId)
+            percentRow('pay', 'amt', ownerId, {
+                argPrefix: targetId,
+                customAction: 'amt_open_modal',
+                disabled: maxTransferable < 1000
+            }, now)
         );
     }
 
@@ -172,7 +176,7 @@ module.exports = {
             async amt(interaction, parsed) {
                 const now = Date.now();
                 const senderId = interaction.user.id;
-                const [pctOrCustom, targetId] = String(parsed.arg || '').split('_');
+                const [targetId, pctStr] = String(parsed.arg || '').split(':');
 
                 if (!targetId) {
                     const state = await fetchPayState(senderId, null, now);
@@ -185,16 +189,6 @@ module.exports = {
                     );
                 }
 
-                if (pctOrCustom === 'custom') {
-                    const modal = numberModal('pay', 'amt_modal', senderId, {
-                        title: '💸 Nominal Transfer Uang (Lp)',
-                        label: 'Jumlah Lp yang diterima tujuan (Min 1.000)',
-                        placeholder: 'Contoh: 50000',
-                        arg: targetId
-                    }, now);
-                    return await interaction.showModal(modal);
-                }
-
                 const state = await fetchPayState(senderId, targetId, now);
                 const totalFunds = Number(state.sender.cash) + Number(state.sender.bank);
                 const maxAffordableSend = Math.max(0, Math.floor(totalFunds / (1 + PAY_RULES.TAX_RATE)));
@@ -202,7 +196,7 @@ module.exports = {
                 const remainingRecvQuota = Math.max(0, PAY_RULES.MAX_DAILY_RECEIVE - state.recvToday);
                 const maxTransferable = Math.min(maxAffordableSend, remainingSendQuota, remainingRecvQuota);
 
-                const pct = Number(pctOrCustom) || 25;
+                const pct = Number(pctStr) || 25;
                 const amount = Math.floor((maxTransferable * pct) / 100);
 
                 if (amount < 1000) {
@@ -217,6 +211,18 @@ module.exports = {
                 }
 
                 return await interaction.update(buildPayConfirmView({ state, targetId, amount, now }));
+            },
+            async amt_open_modal(interaction, parsed) {
+                const now = Date.now();
+                const senderId = interaction.user.id;
+                const targetId = parsed.arg || '';
+                const modal = numberModal('pay', 'amt_modal', senderId, {
+                    title: '💸 Nominal Transfer Uang (Lp)',
+                    label: 'Jumlah Lp yang diterima tujuan (Min 1.000)',
+                    placeholder: 'Contoh: 50000',
+                    arg: targetId
+                }, now);
+                return await interaction.showModal(modal);
             },
             async send_confirm(interaction, parsed) {
                 const now = Date.now();

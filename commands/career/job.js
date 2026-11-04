@@ -195,7 +195,8 @@ function buildJobPanel({
             btn('job', 'home', ownerId, {
                 label: 'Semua Lowongan',
                 emoji: '📋',
-                style: ButtonStyle.Secondary
+                style: ButtonStyle.Secondary,
+                arg: 'all'
             }, now)
         );
     }

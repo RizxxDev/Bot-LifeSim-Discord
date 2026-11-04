@@ -516,6 +516,8 @@ async function runTests() {
     // 20. TEST BATCH 2–4 UI REVAMP: SINGLE-COMMAND PANELS & COMPONENT LIMITS
     // ====================================================
     const { countV2Components } = require('../utils/panelBuilder');
+    const { buildJobPanel } = require('../commands/career/job');
+    const { buildPropertyPanel } = require('../commands/life/property');
     const { buildVehiclePanel } = require('../commands/life/vehicle');
     const { buildCreditPanel } = require('../commands/economy/credit');
     const { buildPayPanel } = require('../commands/economy/pay');
@@ -523,8 +525,34 @@ async function runTests() {
     const { buildLeaderboardPanel } = require('../commands/economy/leaderboard');
     const { buildDailyPanel } = require('../commands/economy/daily');
 
+    const jobPanelAll = buildJobPanel({
+        state: { player: samplePlayer, invRows: [], vehIds: [], historyMap: new Map() },
+        selectedJobId: null,
+        now: nowTs
+    });
+    const jobPanelSelected = buildJobPanel({
+        state: { player: samplePlayer, invRows: [], vehIds: [], historyMap: new Map() },
+        selectedJobId: 'tukang_parkir',
+        now: nowTs
+    });
+    const propPanelSelected = buildPropertyPanel({
+        state: {
+            player: samplePlayer,
+            status: {
+                row: null,
+                isEvicted: false,
+                inGracePeriod: false,
+                actualTier: getPropertyTier('tunawisma'),
+                effectiveTier: getPropertyTier('tunawisma'),
+                capacities: { bag: 20, kulkas: 0, freezer: 0, gudang: 0, stove: 0, coolerbox: 0 }
+            }
+        },
+        selectedTierId: 'kos',
+        now: nowTs
+    });
     const vehPanel = buildVehiclePanel({
         state: { player: samplePlayer, owned: [] },
+        selectedVehicleId: 'sepeda',
         now: nowTs
     });
     const credPanel = buildCreditPanel({
@@ -537,7 +565,18 @@ async function runTests() {
         now: nowTs
     });
     const sellPanel = buildSellPanel({
-        state: { player: samplePlayer, bagEntries: [], estimatedBagTotal: 0, marketBoard: [] },
+        state: {
+            player: samplePlayer,
+            bagEntries: [{
+                item: { id: 'ikan_lele', name: 'Ikan Lele', emoji: '🐟', tags: ['fish'] },
+                qty: 5,
+                info: { unitPrice: 12000, percentOfBase: 100, trend: '🟢 Stabil' },
+                subTotal: 60000
+            }],
+            estimatedBagTotal: 60000,
+            marketBoard: []
+        },
+        selectedItemId: 'ikan_lele',
         now: nowTs
     });
     const lbPanel = buildLeaderboardPanel({
@@ -550,6 +589,9 @@ async function runTests() {
     });
 
     for (const [name, pObj] of [
+        ['job (all)', jobPanelAll],
+        ['job (selected)', jobPanelSelected],
+        ['property (selected)', propPanelSelected],
         ['vehicle', vehPanel],
         ['credit', credPanel],
         ['pay', payPanel],
