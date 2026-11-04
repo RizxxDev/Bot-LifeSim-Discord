@@ -1,9 +1,8 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
 const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
 const {
     getPlayerVehicles,
-    getEquippedVehicle,
     buyVehicleCash,
     equipVehicle,
     refuelVehicle,
@@ -14,14 +13,13 @@ const {
     getAllVehicles,
     getVehicle
 } = require('../../data/vehicles');
-const { COLORS, formatLp, buildV2Card } = require('../../utils/uiBuilder');
-
-const VEHICLE_CHOICES = [
-    { name: '🚲 Sepeda Onthel (Lp 1.500.000)', value: 'sepeda' },
-    { name: '🛵 Motor Bebek Bekas (Lp 6.000.000)', value: 'motor_bekas' },
-    { name: '🏍️ Motor Matic Baru (Lp 22.000.000 · Bisa Kredit)', value: 'motor_baru' },
-    { name: '🚗 Mobil Sedan Keluarga (Lp 150.000.000 · Bisa Kredit)', value: 'mobil' }
-];
+const { COLORS, formatLp } = require('../../utils/uiBuilder');
+const {
+    buildPanel,
+    btn,
+    select,
+    confirmView
+} = require('../../utils/panelBuilder');
 
 function formatVehicleRowStatus(vRow) {
     const v = vRow.vehicle;
@@ -44,235 +42,333 @@ function formatVehicleRowStatus(vRow) {
     ].join('\n');
 }
 
+async function fetchVehicleState(discordId, now = Date.now()) {
+    return await withTransaction(async (conn) => {
+        const synced = await syncPlayerVitals(conn, discordId, now, false);
+        const owned = await getPlayerVehicles(conn, discordId, false);
+        return { player: synced.player, owned };
+    });
+}
+
+function buildVehiclePanel({
+    state,
+    selectedVehicleId = null,
+    banner = null,
+    now = Date.now()
+}) {
+    const { player: p, owned } = state;
+    const ownerId = p.discord_id;
+    const allVehicles = getAllVehicles();
+    const ownedMap = new Map(owned.map(o => [o.vehicle_id, o]));
+    const equippedRow = owned.find(o => o.is_equipped === 1) || owned[0] || null;
+
+    const activeId = selectedVehicleId || (equippedRow ? equippedRow.vehicle_id : null);
+    const activeVeh = activeId ? getVehicle(activeId) : null;
+    const activeOwnedRow = activeVeh ? ownedMap.get(activeVeh.id) || null : null;
+
+    const garageLines = owned.length > 0
+        ? owned.map(formatVehicleRowStatus).join('\n\n')
+        : '⚪ *Garasimu masih kosong. Pilih kendaraan di bawah untuk membeli tunai atau cicil di `/credit`.*';
+
+    const blocks = [
+        [
+            `🚘 **Garasi Kendaraanmu (${owned.length}/${allVehicles.length} Unit)** · ⛽ **Harga BBM SPBU:** **${formatLp(FUEL_PRICE_PER_LITER)}/L**`,
+            garageLines
+        ].join('\n')
+    ];
+
+    if (activeVeh) {
+        const fuelSpec = activeVeh.tankCapacity > 0
+            ? `Tangki **${activeVeh.tankCapacity} L** (Kerja: ${activeVeh.fuelPerShift} L · Lokasi Jauh: ${activeVeh.fuelPerTrip} L)`
+            : 'Tanpa BBM (Tenaga Kayuh)';
+        const ownBadge = activeOwnedRow
+            ? (activeOwnedRow.is_equipped === 1 ? '🟢 **Sedang Dipakai**' : '✅ **Dimiliki di Garasi**')
+            : (activeVeh.canCredit ? '💳 *Belum Dimiliki (Bisa Tunai / Kredit `/credit`)*' : '💵 *Belum Dimiliki (Beli Tunai)*');
+
+        blocks.push(
+            [
+                `🔎 **Spesifikasi Kendaraan: ${activeVeh.emoji} ${activeVeh.name}** — ${ownBadge}`,
+                `• 💰 Harga Dealer : **${formatLp(activeVeh.buyPrice)}**`,
+                `• ⛽ Konsumsi BBM : ${fuelSpec}`,
+                `• 🔧 Servis Rutin : Tiap **${activeVeh.serviceIntervalKm} km** (**${formatLp(activeVeh.serviceCost)}**)`,
+                `• ✨ Manfaat      : ${activeVeh.description}`
+            ].join('\n')
+        );
+    } else {
+        const dealerLines = allVehicles.map(v => {
+            const isOwned = ownedMap.has(v.id);
+            const badge = isOwned ? '✅ **Dimiliki**' : (v.canCredit ? '💳 *Tunai/Kredit*' : '💵 *Tunai*');
+            return `${v.emoji} **${v.name}** — **${formatLp(v.buyPrice)}** (${badge})\n   └ ✨ ${v.description}`;
+        });
+        blocks.push(`**📋 Katalog Dealer Kendaraan Kota:**\n${dealerLines.join('\n')}`);
+    }
+
+    const rows = [
+        select('vehicle', 'pick', ownerId, {
+            placeholder: '🚘 Pilih kendaraan untuk dikelola atau dibeli...',
+            options: allVehicles.map(v => {
+                const row = ownedMap.get(v.id);
+                const statusTag = row
+                    ? (row.is_equipped === 1 ? ' [AKTIF]' : ' [DIMILIKI]')
+                    : '';
+                return {
+                    label: `${v.name}${statusTag}`,
+                    value: v.id,
+                    emoji: v.emoji,
+                    description: `${formatLp(v.buyPrice)} — ${v.description.slice(0, 70)}`,
+                    default: activeVeh ? activeVeh.id === v.id : false
+                };
+            })
+        }, now)
+    ];
+
+    const actionButtons = [];
+    if (activeVeh) {
+        if (activeOwnedRow) {
+            if (activeOwnedRow.is_equipped !== 1) {
+                actionButtons.push(
+                    btn('vehicle', 'equip', ownerId, {
+                        label: 'Pakai Kendaraan',
+                        emoji: '🔑',
+                        style: ButtonStyle.Primary,
+                        arg: activeVeh.id
+                    }, now)
+                );
+            }
+            if (activeVeh.tankCapacity > 0 && activeOwnedRow. is_equipped === 1) {
+                const missingLiters = Math.max(0, Number((activeVeh.tankCapacity - activeOwnedRow.fuel_liters).toFixed(2)));
+                const refuelCost = Math.max(100, Math.round(missingLiters * FUEL_PRICE_PER_LITER));
+                actionButtons.push(
+                    btn('vehicle', 'refuel', ownerId, {
+                        label: missingLiters > 0.01 ? `Isi Penuh BBM (${formatLp(refuelCost)})` : 'Tangki Penuh',
+                        emoji: '⛽',
+                        style: ButtonStyle.Success,
+                        disabled: missingLiters <= 0.01
+                    }, now)
+                );
+            }
+            const kmSince = Math.max(0, Number((activeOwnedRow.odometer_km - activeOwnedRow.last_service_km).toFixed(1)));
+            actionButtons.push(
+                btn('vehicle', 'service', ownerId, {
+                    label: `Servis (${formatLp(activeVeh.serviceCost)})`,
+                    emoji: '🔧',
+                    style: activeOwnedRow.overdue ? ButtonStyle.Danger : ButtonStyle.Secondary,
+                    disabled: kmSince < 10,
+                    arg: activeVeh.id
+                }, now)
+            );
+        } else {
+            actionButtons.push(
+                btn('vehicle', 'buy_prompt', ownerId, {
+                    label: `Beli Tunai (${formatLp(activeVeh.buyPrice)})`,
+                    emoji: '💵',
+                    style: ButtonStyle.Success,
+                    arg: activeVeh.id
+                }, now)
+            );
+        }
+    } else if (equippedRow && equippedRow.vehicle && equippedRow.vehicle.tankCapacity > 0) {
+        const missingLiters = Math.max(0, Number((equippedRow.vehicle.tankCapacity - equippedRow.fuel_liters).toFixed(2)));
+        const refuelCost = Math.max(100, Math.round(missingLiters * FUEL_PRICE_PER_LITER));
+        actionButtons.push(
+            btn('vehicle', 'refuel', ownerId, {
+                label: missingLiters > 0.01 ? `Isi Penuh BBM (${formatLp(refuelCost)})` : 'Tangki Penuh',
+                emoji: '⛽',
+                style: ButtonStyle.Success,
+                disabled: missingLiters <= 0.01
+            }, now)
+        );
+    }
+
+    actionButtons.push(
+        btn('vehicle', 'catalog', ownerId, {
+            label: 'Semua Katalog',
+            emoji: '📋',
+            style: ButtonStyle.Secondary
+        }, now),
+        btn('vehicle', 'home', ownerId, {
+            label: 'Segarkan',
+            emoji: '🔄',
+            style: ButtonStyle.Secondary
+        }, now)
+    );
+
+    rows.push(new ActionRowBuilder().addComponents(actionButtons.slice(0, 5)));
+
+    const hasOverdue = owned.some(o => o.overdue);
+    return buildPanel({
+        mod: 'vehicle',
+        ownerId,
+        accentColor: hasOverdue ? COLORS.WARNING : COLORS.PRIMARY,
+        title: `🚘 Garasi, SPBU & Dealer Kendaraan`,
+        player: p,
+        banner,
+        blocks,
+        rows,
+        footer: 'Kendaraan aktif memberi bonus gaji /work dan diskon Energy ke lokasi jauh (/fishing & /mining).',
+        now
+    });
+}
+
 module.exports = {
     name: 'vehicle',
     slash: true,
     data: new SlashCommandBuilder()
         .setName('vehicle')
-        .setDescription('Kelola garasi kendaraan, beli kendaraan, isi bensin SPBU, dan servis berkala')
-        .addSubcommand(sub =>
-            sub.setName('list')
-                .setDescription('Lihat katalog dealer kendaraan kota beserta spesifikasi dan bonusnya')
-        )
-        .addSubcommand(sub =>
-            sub.setName('status')
-                .setDescription('Cek kondisi kendaraan di garasimu, sisa bensin, dan odometer servis')
-        )
-        .addSubcommand(sub =>
-            sub.setName('buy')
-                .setDescription('Beli kendaraan secara tunai (atau gunakan /credit apply untuk mencicil)')
-                .addStringOption(opt =>
-                    opt.setName('kendaraan')
-                        .setDescription('Pilih kendaraan yang ingin dibeli')
-                        .setRequired(true)
-                        .addChoices(...VEHICLE_CHOICES)
-                )
-        )
-        .addSubcommand(sub =>
-            sub.setName('equip')
-                .setDescription('Pilih kendaraan utama yang aktif digunakan untuk bekerja & bepergian')
-                .addStringOption(opt =>
-                    opt.setName('kendaraan')
-                        .setDescription('Pilih kendaraan milikmu')
-                        .setRequired(true)
-                        .addChoices(...VEHICLE_CHOICES)
-                )
-        )
-        .addSubcommand(sub =>
-            sub.setName('refuel')
-                .setDescription('Isi bensin kendaraan aktifmu di SPBU (Lp 10.000 per liter)')
-                .addNumberOption(opt =>
-                    opt.setName('liter')
-                        .setDescription('Jumlah liter bensin (kosongkan untuk isi penuh Full Tank)')
-                        .setMinValue(0.1)
-                        .setMaxValue(40)
-                )
-        )
-        .addSubcommand(sub =>
-            sub.setName('service')
-                .setDescription('Servis berkala kendaraan di bengkel resmi agar performa kembali 100%')
-                .addStringOption(opt =>
-                    opt.setName('kendaraan')
-                        .setDescription('Pilih kendaraan yang ingin diservis (kosongkan untuk kendaraan aktif)')
-                        .addChoices(...VEHICLE_CHOICES)
-                )
-        ),
+        .setDescription('Buka panel kendaraan interaktif: garasi, beli kendaraan, isi bensin SPBU, dan servis berkala.'),
 
     async executeSlash(interaction) {
-        const sub = interaction.options.getSubcommand();
-        const discordId = interaction.user.id;
         const now = Date.now();
+        const state = await fetchVehicleState(interaction.user.id, now);
+        return await interaction.reply(buildVehiclePanel({ state, now }));
+    },
 
-        const payload = await withTransaction(async (conn) => {
-            const synced = await syncPlayerVitals(conn, discordId, now, true);
-            const player = synced.player;
-
-            if (sub === 'list') {
-                const owned = await getPlayerVehicles(conn, discordId, false);
-                const ownedIds = new Set(owned.map(o => o.vehicle_id));
-
-                const lines = getAllVehicles().map(v => {
-                    const badge = ownedIds.has(v.id)
-                        ? '✅ **Dimiliki**'
-                        : (v.canCredit ? `💳 *Bisa Kredit (/credit)*` : `💵 *Tunai*`);
-                    const fuelLine = v.tankCapacity > 0
-                        ? `Tangki **${v.tankCapacity} L** (Kerja: ${v.fuelPerShift} L · Perjalanan jauh: ${v.fuelPerTrip} L)`
-                        : 'Bebas BBM';
-                    return [
-                        `${v.emoji} **${v.name}** (\`${v.id}\`) — **${formatLp(v.buyPrice)}** · ${badge}`,
-                        `• ⛽ ${fuelLine} · 🔧 Servis tiap **${v.serviceIntervalKm} km** (${formatLp(v.serviceCost)})`,
-                        `• ✨ Efek: ${v.description}`
-                    ].join('\n');
+    panel: {
+        buttons: {
+            async home(interaction) {
+                const now = Date.now();
+                const state = await fetchVehicleState(interaction.user.id, now);
+                return await interaction.update(buildVehiclePanel({ state, now }));
+            },
+            async catalog(interaction) {
+                const now = Date.now();
+                const state = await fetchVehicleState(interaction.user.id, now);
+                return await interaction.update(buildVehiclePanel({ state, selectedVehicleId: '', now }));
+            },
+            async equip(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const vehId = parsed.arg || '';
+                const res = await withTransaction(async (conn) => {
+                    await syncPlayerVitals(conn, userId, now, true);
+                    return await equipVehicle(conn, userId, vehId);
                 });
 
-                return buildV2Card({
-                    accentColor: COLORS.PRIMARY,
-                    title: '🚘 Dealer & Bengkel Kendaraan Kota (/vehicle list)',
-                    blocks: [
-                        `💵 **Dompet:** ${formatLp(player.cash)} · 🏦 **Bank:** ${formatLp(player.bank)} · ⛽ **Harga BBM SPBU:** ${formatLp(FUEL_PRICE_PER_LITER)}/L`,
-                        lines.join('\n\n'),
-                        '💡 *Lokasi jauh yang mendapat diskon Energy kendaraan: Danau, Laut, Tambang Tembaga, Emas, & Berlian.*'
-                    ]
+                const state = await fetchVehicleState(userId, now);
+                const banner = res.ok
+                    ? { type: 'success', text: `🔑 **${res.vehicle.emoji} ${res.vehicle.name}** kini dipasang sebagai kendaraan utama!` }
+                    : { type: 'warning', text: 'Kendaraan tersebut belum ada di garasimu.' };
+                return await interaction.update(buildVehiclePanel({ state, selectedVehicleId: vehId, banner, now }));
+            },
+            async refuel(interaction) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const res = await withTransaction(async (conn) => {
+                    const synced = await syncPlayerVitals(conn, userId, now, true);
+                    return await refuelVehicle(conn, synced.player, null, now);
                 });
-            }
 
-            if (sub === 'status') {
-                const owned = await getPlayerVehicles(conn, discordId, false);
-                if (owned.length === 0) {
-                    return buildV2Card({
-                        accentColor: COLORS.PRIMARY,
-                        title: '🚘 Garasi Kendaraanmu Kosong',
-                        blocks: [
-                            'Kamu belum memiliki kendaraan pribadi.',
-                            '• Gunakan `/vehicle list` untuk melihat katalog kendaraan.\n• Gunakan `/vehicle buy` untuk membeli tunai atau `/credit apply` untuk mencicil Motor Baru / Mobil!'
-                        ]
-                    });
+                const state = await fetchVehicleState(userId, now);
+                let banner = null;
+                if (res.ok) {
+                    banner = {
+                        type: 'success',
+                        text: `⛽ Berhasil mengisi **+${res.litersAdded} L** BBM untuk **${res.vehicle.emoji} ${res.vehicle.name}** seharga **${formatLp(res.totalCost)}**!`
+                    };
+                } else if (res.error === 'TANK_ALREADY_FULL') {
+                    banner = { type: 'info', text: `⛽ Tangki **${res.vehicle.emoji} ${res.vehicle.name}** sudah penuh!` };
+                } else if (res.error === 'INSUFFICIENT_FUNDS') {
+                    banner = { type: 'danger', text: `Saldo tidak cukup untuk membeli **${res.litersToBuy} L** bensin seharga **${formatLp(res.required)}**.` };
+                } else {
+                    banner = { type: 'warning', text: 'Tidak dapat mengisi bensin untuk kendaraan ini.' };
                 }
 
-                return buildV2Card({
-                    accentColor: COLORS.PRIMARY,
-                    title: `🚘 Garasi Kendaraan: ${player.username}`,
-                    blocks: [
-                        `💵 **Dompet:** ${formatLp(player.cash)} · 🏦 **Bank:** ${formatLp(player.bank)}`,
-                        owned.map(formatVehicleRowStatus).join('\n\n'),
-                        '💡 *Gunakan `/vehicle refuel` untuk isi bensin di SPBU dan `/vehicle service` saat mendekati batas kilometer servis.*'
-                    ]
+                return await interaction.update(buildVehiclePanel({ state, banner, now }));
+            },
+            async service(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const vehId = parsed.arg || null;
+                const res = await withTransaction(async (conn) => {
+                    const synced = await syncPlayerVitals(conn, userId, now, true);
+                    return await serviceVehicle(conn, synced.player, vehId, now);
                 });
-            }
 
-            if (sub === 'buy') {
-                const vehId = interaction.options.getString('kendaraan', true);
-                const res = await buyVehicleCash(conn, player, vehId, now);
-
-                if (!res.ok) {
-                    let msg = 'Gagal membeli kendaraan.';
-                    if (res.error === 'ALREADY_OWNED') {
-                        msg = `Kamu sudah memiliki **${res.vehicle.emoji} ${res.vehicle.name}** di garasimu!`;
-                    } else if (res.error === 'INSUFFICIENT_FUNDS') {
-                        const creditHint = res.vehicle.canCredit
-                            ? `\n💡 *Uang tunai belum cukup? Kamu bisa mencicil **${res.vehicle.name}** dengan DP 20% (${formatLp(Math.round(res.required * 0.2))}) lewat \`/credit apply\`!*`
-                            : '';
-                        msg = `Saldo Cash + Bank kamu (**${formatLp(res.totalFunds)}**) belum cukup untuk membeli **${res.vehicle.emoji} ${res.vehicle.name}** seharga **${formatLp(res.required)}**.${creditHint}`;
-                    }
-                    return buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '⚠️ Pembelian Kendaraan Gagal',
-                        blocks: [msg],
-                        ephemeral: true
-                    });
+                const state = await fetchVehicleState(userId, now);
+                let banner = null;
+                if (res.ok) {
+                    banner = {
+                        type: 'success',
+                        text: `🔧 Servis berkala **${res.vehicle.emoji} ${res.vehicle.name}** selesai pada odometer **${res.odometerKm.toFixed(1)} km** (Biaya **${formatLp(res.cost)}**). Performa kembali 100%!`
+                    };
+                } else if (res.error === 'ALREADY_FRESH') {
+                    banner = { type: 'info', text: `🔧 Kondisi **${res.vehicle.emoji} ${res.vehicle.name}** masih prima (baru menempuh ${res.kmSinceLast} km sejak servis terakhir).` };
+                } else if (res.error === 'INSUFFICIENT_FUNDS') {
+                    banner = { type: 'danger', text: `Saldo tidak cukup! Biaya servis **${formatLp(res.required)}**, saldo Cash + Bank kamu **${formatLp(res.totalFunds)}**.` };
+                } else {
+                    banner = { type: 'warning', text: 'Gagal melakukan servis kendaraan.' };
                 }
 
-                return buildV2Card({
-                    accentColor: COLORS.SUCCESS,
-                    title: `🎉 Kendaraan Baru Dibeli: ${res.vehicle.emoji} ${res.vehicle.name}!`,
-                    blocks: [
-                        `Selamat! **${res.vehicle.emoji} ${res.vehicle.name}** telah masuk ke garasimu dengan tangki bensin penuh dan langsung dipasang sebagai kendaraan utama!`,
-                        `💳 **Total Dibayar:** **${formatLp(res.paid)}**\n💵 **Sisa Cash:** ${formatLp(res.player.cash)} · 🏦 **Sisa Bank:** ${formatLp(res.player.bank)}`
-                    ]
-                });
-            }
+                return await interaction.update(buildVehiclePanel({ state, selectedVehicleId: vehId, banner, now }));
+            },
+            async buy_prompt(interaction, parsed) {
+                const now = Date.now();
+                const vehId = parsed.arg || 'sepeda';
+                const veh = getVehicle(vehId);
+                const state = await fetchVehicleState(interaction.user.id, now);
 
-            if (sub === 'equip') {
-                const vehId = interaction.options.getString('kendaraan', true);
-                const res = await equipVehicle(conn, discordId, vehId);
-                if (!res.ok) {
-                    const v = getVehicle(vehId);
-                    return buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '⚠️ Kendaraan Tidak Dimiliki',
-                        blocks: [`Kamu belum memiliki **${v ? `${v.emoji} ${v.name}` : vehId}** di garasimu.`],
-                        ephemeral: true
-                    });
+                return await interaction.update(
+                    confirmView({
+                        mod: 'vehicle',
+                        confirmAction: 'buy_confirm',
+                        cancelAction: 'home',
+                        ownerId: interaction.user.id,
+                        title: `🚘 Konfirmasi Pembelian ${veh.emoji} ${veh.name}`,
+                        description: [
+                            `Kamu akan membeli **${veh.emoji} ${veh.name}** secara tunai:`,
+                            `• Harga Beli Tunai: **${formatLp(veh.buyPrice)}**\n• Manfaat: ${veh.description}`,
+                            'Kendaraan akan langsung masuk ke garasi dengan tangki bensin penuh. Lanjutkan pembelian?'
+                        ],
+                        confirmLabel: `Ya, Beli (${formatLp(veh.buyPrice)})`,
+                        confirmStyle: ButtonStyle.Success,
+                        arg: veh.id,
+                        player: state.player,
+                        now
+                    })
+                );
+            },
+            async buy_confirm(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const vehId = parsed.arg || 'sepeda';
+                const res = await withTransaction(async (conn) => {
+                    const synced = await syncPlayerVitals(conn, userId, now, true);
+                    return await buyVehicleCash(conn, synced.player, vehId, now);
+                });
+
+                const state = await fetchVehicleState(userId, now);
+                let banner = null;
+                if (res.ok) {
+                    banner = {
+                        type: 'success',
+                        text: `🎉 Selamat! **${res.vehicle.emoji} ${res.vehicle.name}** berhasil dibeli seharga **${formatLp(res.paid)}** dan langsung aktif digunakan!`
+                    };
+                } else if (res.error === 'ALREADY_OWNED') {
+                    banner = { type: 'warning', text: `Kamu sudah memiliki **${res.vehicle.emoji} ${res.vehicle.name}** di garasimu!` };
+                } else if (res.error === 'INSUFFICIENT_FUNDS') {
+                    const creditHint = res.vehicle.canCredit
+                        ? ` Kamu juga bisa mencicilnya dengan DP 20% (${formatLp(Math.round(res.required * 0.2))}) di \`/credit\`.`
+                        : '';
+                    banner = {
+                        type: 'danger',
+                        text: `Saldo Cash + Bank (${formatLp(res.totalFunds)}) belum cukup untuk membeli **${res.vehicle.name}** (${formatLp(res.required)}).${creditHint}`
+                    };
+                } else {
+                    banner = { type: 'danger', text: 'Gagal membeli kendaraan.' };
                 }
 
-                return buildV2Card({
-                    accentColor: COLORS.SUCCESS,
-                    title: `🔑 Kendaraan Utama Diganti: ${res.vehicle.emoji} ${res.vehicle.name}`,
-                    blocks: [
-                        `Kamu kini menggunakan **${res.vehicle.emoji} ${res.vehicle.name}** untuk bekerja dan bepergian ke lokasi jauh.`,
-                        formatVehicleRowStatus({ ...res.row, is_equipped: 1 })
-                    ]
-                });
+                return await interaction.update(buildVehiclePanel({ state, selectedVehicleId: vehId, banner, now }));
             }
-
-            if (sub === 'refuel') {
-                const liters = interaction.options.getNumber('liter');
-                const res = await refuelVehicle(conn, player, liters, now);
-
-                if (!res.ok) {
-                    let msg = 'Tidak dapat mengisi bensin.';
-                    if (res.error === 'NO_VEHICLE') msg = 'Kamu belum memiliki kendaraan aktif di garasi.';
-                    else if (res.error === 'NO_TANK') msg = `**${res.vehicle.emoji} ${res.vehicle.name}** tidak membutuhkan bensin!`;
-                    else if (res.error === 'TANK_ALREADY_FULL') msg = `Tangki **${res.vehicle.emoji} ${res.vehicle.name}** sudah penuh (**${res.currentFuel}/${res.vehicle.tankCapacity} L**)!`;
-                    else if (res.error === 'INSUFFICIENT_FUNDS') msg = `Saldo tidak cukup untuk membeli **${res.litersToBuy} L** bensin seharga **${formatLp(res.required)}**.`;
-
-                    return buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '⛽ Gagal Mengisi Bensin SPBU',
-                        blocks: [msg],
-                        ephemeral: true
-                    });
-                }
-
-                return buildV2Card({
-                    accentColor: COLORS.SUCCESS,
-                    title: `⛽ Pengisian BBM Berhasil: +${res.litersAdded} Liter`,
-                    blocks: [
-                        `Tangki **${res.vehicle.emoji} ${res.vehicle.name}** kini terisi **${res.newFuel} / ${res.vehicle.tankCapacity} Liter**.`,
-                        `💳 **Biaya SPBU:** **${formatLp(res.totalCost)}** (${formatLp(FUEL_PRICE_PER_LITER)}/L)\n💵 **Sisa Cash:** ${formatLp(res.player.cash)} · 🏦 **Sisa Bank:** ${formatLp(res.player.bank)}`
-                    ]
-                });
+        },
+        selects: {
+            async pick(interaction) {
+                const now = Date.now();
+                const vehId = interaction.values[0] || '';
+                const state = await fetchVehicleState(interaction.user.id, now);
+                return await interaction.update(buildVehiclePanel({ state, selectedVehicleId: vehId, now }));
             }
+        }
+    },
 
-            if (sub === 'service') {
-                const vehId = interaction.options.getString('kendaraan');
-                const res = await serviceVehicle(conn, player, vehId, now);
-
-                if (!res.ok) {
-                    let msg = 'Tidak dapat melakukan servis kendaraan.';
-                    if (res.error === 'NO_VEHICLE' || res.error === 'NOT_OWNED') msg = 'Kamu belum memiliki kendaraan tersebut di garasimu.';
-                    else if (res.error === 'ALREADY_FRESH') msg = `Kondisi **${res.vehicle.emoji} ${res.vehicle.name}** masih sangat prima (baru menempuh **${res.kmSinceLast} km** sejak servis terakhir).`;
-                    else if (res.error === 'INSUFFICIENT_FUNDS') msg = `Biaya servis berkala **${res.vehicle.emoji} ${res.vehicle.name}** adalah **${formatLp(res.required)}**, sedangkan saldo Cash + Bank kamu **${formatLp(res.totalFunds)}**.`;
-
-                    return buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '🔧 Gagal Servis Kendaraan',
-                        blocks: [msg],
-                        ephemeral: true
-                    });
-                }
-
-                return buildV2Card({
-                    accentColor: COLORS.SUCCESS,
-                    title: `🔧 Servis Berkala Selesai: ${res.vehicle.emoji} ${res.vehicle.name}`,
-                    blocks: [
-                        `Mesin & komponen **${res.vehicle.emoji} ${res.vehicle.name}** telah diservis penuh pada odometer **${res.odometerKm.toFixed(1)} km** (setelah pemakaian ${res.kmServiced} km). Performa kembali **100%**!`,
-                        `💳 **Biaya Bengkel:** **${formatLp(res.cost)}**\n💵 **Sisa Cash:** ${formatLp(res.player.cash)} · 🏦 **Sisa Bank:** ${formatLp(res.player.bank)}`
-                    ]
-                });
-            }
-        });
-
-        return await interaction.reply(payload);
-    }
+    buildVehiclePanel
 };

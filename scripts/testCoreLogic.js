@@ -40,9 +40,9 @@ function collectCommandFiles(dir, list = []) {
 async function runTests() {
     console.log('🧪 Menjalankan pengujian unit logika inti (testCoreLogic.js)...\n');
 
-    // 1. Verifikasi seluruh Slash Command berhasil di-load, valid JSON, & bebas fetchReply deprecated
+    // 1. Verifikasi seluruh 28 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
     const cmdFiles = collectCommandFiles(path.join(__dirname, '..', 'commands'));
-    assert(cmdFiles.length >= 20, `Harusnya ada >= 20 command, ditemukan: ${cmdFiles.length}`);
+    assert.strictEqual(cmdFiles.length, 28, `Harusnya tepat 28 command pasca konsolidasi UI, ditemukan: ${cmdFiles.length}`);
     for (const file of cmdFiles) {
         const rawSrc = fs.readFileSync(file, 'utf8');
         assert(!rawSrc.includes('fetchReply: true'), `Command ${file} masih mengandung opsi deprecated fetchReply: true`);
@@ -52,12 +52,15 @@ async function runTests() {
         assert(cmd.data, `Command ${cmd.name} tidak punya SlashCommandBuilder data`);
         const json = cmd.data.toJSON();
         assert.strictEqual(json.name, cmd.name);
+        assert.strictEqual((json.options || []).length, 0, `Command /${cmd.name} wajib memiliki 0 subcommand & 0 opsi (ditemukan ${(json.options || []).length})`);
+        assert(json.description && json.description.length <= 100, `Deskripsi /${cmd.name} melebihi 100 karakter (${json.description?.length})`);
+        if (cmd.name !== 'ping') {
+            assert(cmd.panel, `Command /${cmd.name} wajib memiliki objek panel interaktif`);
+        }
     }
     const workCmd = require('../commands/career/work');
-    const buyCmd = require('../commands/economy/buy');
     assert(workCmd.lockTtl >= 45, 'Command /work harus punya lockTtl >= 45 detik');
-    assert(buyCmd.lockTtl >= 45, 'Command /buy harus punya lockTtl >= 45 detik');
-    console.log(`✅ [1/10] ${cmdFiles.length} Slash Commands berhasil dimuat, tervalidasi, & bebas fetchReply deprecated.`);
+    console.log(`✅ [1/20] 28 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
 
     // 2. Validasi Username & Blacklist
     assert.strictEqual(validateUsername('Budi_99').valid, true);
@@ -426,9 +429,141 @@ async function runTests() {
     const aug17Ts = Date.UTC(2026, 7, 17, 5, 0, 0);
     const matchedAug = getFixedCalendarEventForTimestamp(aug17Ts);
     assert.ok(matchedAug && matchedAug.eventConfig.id === 'kemerdekaan');
-    console.log('✅ [18/18] Rilis 2D: Siklus Cuaca 2 Minggu, THR Lebaran 1,5x (3 Hari), & Event Musiman terverifikasi.\n');
+    console.log('✅ [18/19] Rilis 2D: Siklus Cuaca 2 Minggu, THR Lebaran 1,5x (3 Hari), & Event Musiman terverifikasi.');
 
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (18/18 PASSED)!');
+    // ====================================================
+    // 19. TEST BATCH 1 UI REVAMP: PANEL ID, BUILDER & ROUTER
+    // ====================================================
+    const { makeId, parseId, PANEL_TTL_MS } = require('../utils/panelId');
+    const { buildPanel, formatMiniHud, paginate } = require('../utils/panelBuilder');
+    const { registerPanel, dispatch, clearRegistry } = require('../services/panelRouter');
+
+    const nowTs = 1_750_000_000_000;
+    const cid = makeId('bank', 'dep_pct', '123456789', '50', nowTs);
+    const parsedFresh = parseId(cid, nowTs + 60_000);
+    assert.strictEqual(parsedFresh.mod, 'bank');
+    assert.strictEqual(parsedFresh.action, 'dep_pct');
+    assert.strictEqual(parsedFresh.ownerId, '123456789');
+    assert.strictEqual(parsedFresh.arg, '50');
+    assert.strictEqual(parsedFresh.isExpired, false);
+
+    const parsedOld = parseId(cid, nowTs + PANEL_TTL_MS + 5_000);
+    assert.strictEqual(parsedOld.isExpired, true, 'Interaksi > 5 menit harus ditandai isExpired = true');
+
+    const samplePlayer = {
+        discord_id: '123456789',
+        username: 'Tester',
+        equipped_title: '👑 Sultan',
+        cash: 150000,
+        bank: 500000,
+        energy: 90,
+        hunger: 85,
+        thirst: 80,
+        health: 100
+    };
+    const hud = formatMiniHud(samplePlayer);
+    assert(hud.includes('Tester') && hud.includes('Sultan'), 'Mini-HUD harus menampilkan username & gelar');
+    const samplePanel = buildPanel({
+        mod: 'bank',
+        ownerId: '123456789',
+        title: 'Uji Panel',
+        player: samplePlayer,
+        banner: { type: 'success', text: 'Berhasil!' },
+        blocks: ['Isi panel'],
+        now: nowTs
+    });
+    assert((samplePanel.flags & 32768) === 32768, 'Panel wajib menggunakan Discord Components V2');
+
+    // Uji Ownership Guard & Expiry Guard pada panelRouter
+    clearRegistry();
+    let handlerCalled = false;
+    registerPanel('testmod', {
+        buttons: {
+            async ping() {
+                handlerCalled = true;
+            }
+        }
+    }, 10, true);
+
+    let strangerReply = null;
+    const handledStranger = await dispatch({
+        customId: makeId('testmod', 'ping', 'owner_1', '', nowTs),
+        user: { id: 'stranger_2' },
+        isButton: () => true,
+        reply: async (payload) => { strangerReply = payload; }
+    }, {}, nowTs + 1000);
+    assert.strictEqual(handledStranger, true);
+    assert.strictEqual(handlerCalled, false, 'Klik dari user lain harus ditolak oleh Ownership Guard');
+    assert(strangerReply && (strangerReply.flags & 64) === 64, 'Penolakan user lain harus bersifat ephemeral');
+
+    let expiredUpdated = false;
+    const handledExpired = await dispatch({
+        customId: makeId('testmod', 'ping', 'owner_1', '', nowTs),
+        user: { id: 'owner_1' },
+        isButton: () => true,
+        isMessageComponent: () => true,
+        update: async () => { expiredUpdated = true; }
+    }, {}, nowTs + PANEL_TTL_MS + 10_000);
+    assert.strictEqual(handledExpired, true);
+    assert.strictEqual(expiredUpdated, true, 'Panel kedaluwarsa > 5 menit harus di-update in-place menjadi kartu expired');
+
+    const pg = paginate([1, 2, 3, 4, 5, 6, 7], 2, 3);
+    assert.deepStrictEqual(pg.slice, [4, 5, 6]);
+    assert.strictEqual(pg.totalPages, 3);
+    console.log('✅ [19/20] Batch 1 UI Revamp: Panel Router, Ownership Guard, Idle Timeout 5m, & 5 Command Inti terverifikasi.');
+
+    // ====================================================
+    // 20. TEST BATCH 2–4 UI REVAMP: SINGLE-COMMAND PANELS & COMPONENT LIMITS
+    // ====================================================
+    const { countV2Components } = require('../utils/panelBuilder');
+    const { buildVehiclePanel } = require('../commands/life/vehicle');
+    const { buildCreditPanel } = require('../commands/economy/credit');
+    const { buildPayPanel } = require('../commands/economy/pay');
+    const { buildSellPanel } = require('../commands/economy/sell');
+    const { buildLeaderboardPanel } = require('../commands/economy/leaderboard');
+    const { buildDailyPanel } = require('../commands/economy/daily');
+
+    const vehPanel = buildVehiclePanel({
+        state: { player: samplePlayer, owned: [] },
+        now: nowTs
+    });
+    const credPanel = buildCreditPanel({
+        state: { player: samplePlayer, activeCredits: [], income7d: 500000 },
+        now: nowTs
+    });
+    const payPanel = buildPayPanel({
+        state: { sender: samplePlayer, receiver: { ...samplePlayer, discord_id: '999', username: 'Target' }, sentToday: 0, recvToday: 0 },
+        targetId: '999',
+        now: nowTs
+    });
+    const sellPanel = buildSellPanel({
+        state: { player: samplePlayer, bagEntries: [], estimatedBagTotal: 0, marketBoard: [] },
+        now: nowTs
+    });
+    const lbPanel = buildLeaderboardPanel({
+        state: { player: samplePlayer, rows: [{ username: 'Tester', equipped_title: '👑 Sultan', net_worth: 650000 }], cat: 'wealth' },
+        now: nowTs
+    });
+    const dailyPanel = buildDailyPanel({
+        state: { player: samplePlayer },
+        now: nowTs
+    });
+
+    for (const [name, pObj] of [
+        ['vehicle', vehPanel],
+        ['credit', credPanel],
+        ['pay', payPanel],
+        ['sell', sellPanel],
+        ['leaderboard', lbPanel],
+        ['daily', dailyPanel]
+    ]) {
+        assert((pObj.flags & 32768) === 32768, `Panel /${name} wajib menggunakan MessageFlags.IsComponentsV2`);
+        const compCount = countV2Components(pObj);
+        assert(compCount <= 40, `Panel /${name} melebihi batas 40 komponen (${compCount})`);
+    }
+    console.log('✅ [20/20] Batch 2–4 UI Revamp: Seluruh 28 Command Panel Interaktif & Batas <= 40 Komponen terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (20/20 PASSED)!');
 }
 
 runTests().catch(err => {

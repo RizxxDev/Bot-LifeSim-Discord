@@ -1,21 +1,21 @@
-const {
-    ActionRowBuilder,
-    StringSelectMenuBuilder,
-    ButtonBuilder,
-    ButtonStyle,
-    ModalBuilder,
-    TextInputBuilder,
-    TextInputStyle
-} = require('discord.js');
+const { ButtonStyle } = require('discord.js');
 const { withTransaction } = require('../database/mariadb');
 const { syncPlayerVitals } = require('./vitalService');
 const { getPlayerInventory, canFitItems, addItem, calculateSlotsUsed } = require('./inventoryService');
 const { debitPlayerFunds, getLiveEconomyConfig } = require('./economyService');
 const { SHOPS, getItem, getItemsByShop } = require('../data/items');
 const { getBackpackByTier, getNextBackpackTier } = require('../data/backpacks');
-const { COLORS, formatLp, buildV2Card } = require('../utils/uiBuilder');
+const { COLORS, formatLp } = require('../utils/uiBuilder');
+const {
+    buildPanel,
+    btn,
+    select,
+    quantityRow,
+    pageRow
+} = require('../utils/panelBuilder');
 
 const ITEMS_PER_PAGE = 5;
+const EXPENSIVE_PURCHASE_THRESHOLD = 1000000;
 
 function getEffectiveItemPrice(item, liveConfig = {}) {
     if (!item) return 0;
@@ -27,166 +27,162 @@ function getEffectiveItemPrice(item, liveConfig = {}) {
     return item.buyPrice;
 }
 
-async function buildShopViewPayload(discordId, shopId = 'warung', page = 0, ephemeral = false) {
-    const shop = SHOPS.find(s => s.id === shopId) || SHOPS[0];
-    const allItems = getItemsByShop(shop.id);
-
-    const data = await withTransaction(async (conn) => {
-        const synced = await syncPlayerVitals(conn, discordId, Date.now(), false);
-        const invRows = await getPlayerInventory(conn, discordId, false);
+async function fetchShopState(discordId, now = Date.now()) {
+    return await withTransaction(async (conn) => {
+        const synced = await syncPlayerVitals(conn, discordId, now, false);
+        const invRows = await getPlayerInventory(conn, discordId, false, 'bag', now);
         const liveCfg = await getLiveEconomyConfig(conn);
         return {
             player: synced.player,
+            invRows,
             slotsUsed: calculateSlotsUsed(invRows),
             liveCfg
         };
     });
+}
 
-    const { player: p, slotsUsed, liveCfg } = data;
+function buildShopPanel({
+    state,
+    shopId = 'warung',
+    page = 1,
+    selectedItemId = null,
+    banner = null,
+    now = Date.now()
+}) {
+    const { player: p, slotsUsed, liveCfg } = state;
+    const ownerId = p.discord_id;
+    const shop = SHOPS.find(s => s.id === shopId) || SHOPS[0];
+    const allItems = getItemsByShop(shop.id);
+
     const totalPages = Math.max(1, Math.ceil(allItems.length / ITEMS_PER_PAGE));
-    const safePage = Math.max(0, Math.min(totalPages - 1, Number(page || 0)));
-    const pageItems = allItems.slice(safePage * ITEMS_PER_PAGE, (safePage + 1) * ITEMS_PER_PAGE);
+    const safePage = Math.max(1, Math.min(totalPages, Number(page) || 1));
+    const pageItems = allItems.slice((safePage - 1) * ITEMS_PER_PAGE, safePage * ITEMS_PER_PAGE);
+
+    const activeItem = allItems.find(it => it.id === selectedItemId) || pageItems[0] || allItems[0] || null;
+    const activeItemId = activeItem ? activeItem.id : null;
 
     const blocks = [
-        `${shop.description}\n💵 **Cash:** ${formatLp(p.cash)} · 🏦 **Bank:** ${formatLp(p.bank)} · 🎒 **Tas:** \`${slotsUsed}/${p.max_slots} slot\``
+        `${shop.description}\n🎒 **Kapasitas Tas:** \`${slotsUsed}/${p.max_slots} slot terpakai\``
     ];
 
-    // Jika di Toko Perkakas halaman 1, tampilkan penawaran Upgrade Tas di bagian atas
-    if (shop.id === 'perkakas' && safePage === 0) {
+    const extraNavBtns = [];
+
+    if (shop.id === 'perkakas') {
         const curBag = getBackpackByTier(p.backpack_tier);
         const nextBag = getNextBackpackTier(p.backpack_tier);
         if (nextBag) {
-            blocks.push({
-                text: `🎒 **Upgrade Kapasitas Tas:** ${curBag.name} (${curBag.slots} slot) ➡️ **${nextBag.emoji} ${nextBag.name} (${nextBag.slots} slot)**\nHarga Upgrade: **${formatLp(nextBag.price)}** — *${nextBag.description}*`,
-                button: new ButtonBuilder()
-                    .setCustomId('shop_upgrade_bag')
-                    .setLabel(`Upgrade (${formatLp(nextBag.price)})`)
-                    .setEmoji('🎒')
-                    .setStyle(ButtonStyle.Success),
-                separatorAfter: true
-            });
+            blocks.push(
+                `🎒 **Upgrade Kapasitas Tas:** ${curBag.name} (${curBag.slots} slot) ➡️ **${nextBag.emoji} ${nextBag.name} (${nextBag.slots} slot)** — **${formatLp(nextBag.price)}**`
+            );
+            extraNavBtns.push(
+                btn('shop', 'upgrade_bag', ownerId, {
+                    label: `Upgrade Tas (${formatLp(nextBag.price)})`,
+                    emoji: '🎒',
+                    style: ButtonStyle.Success
+                }, now)
+            );
         } else {
-            blocks.push({
-                text: `🎒 **Kapasitas Tas Maksimal:** Kamu sudah memiliki **${curBag.emoji} ${curBag.name} (${curBag.slots} slot)**!`,
-                separatorAfter: true
-            });
+            blocks.push(
+                `🎒 **Kapasitas Tas Maksimal:** Kamu sudah memiliki **${curBag.emoji} ${curBag.name} (${curBag.slots} slot)**!`
+            );
         }
     }
 
-    for (const item of pageItems) {
+    const itemLines = pageItems.map(item => {
         const price = getEffectiveItemPrice(item, liveCfg);
+        const isSel = item.id === activeItemId;
+        const pointer = isSel ? '▶️ ' : '• ';
         const slotNote = item.stackSize === 0
-            ? 'Tidak makan slot'
+            ? '0 slot'
             : item.maxDurability
-                ? `1 slot/unit · Durabilitas ${item.maxDurability}`
-                : `Maks ${item.stackSize}/slot`;
+                ? `1 slot/unit · Dur ${item.maxDurability}`
+                : `${item.stackSize}/slot`;
+        return `${pointer}${item.emoji} **${item.name}** — **${formatLp(price)}** *(${slotNote})*\n  -# ${item.description}`;
+    });
 
-        blocks.push({
-            text: `${item.emoji} **${item.name}** (\`${item.id}\`) — **${formatLp(price)}**\n${item.description}\n-# 📦 ${slotNote}`,
-            button: new ButtonBuilder()
-                .setCustomId(`shop_pick_${item.id}`)
-                .setLabel('Beli')
-                .setEmoji('🛒')
-                .setStyle(ButtonStyle.Primary)
-        });
-    }
+    blocks.push(itemLines.join('\n'));
 
-    // Select Menu Toko
-    const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('shop_select_store')
-        .setPlaceholder('🏪 Pilih Toko...')
-        .addOptions(
-            SHOPS.map(s => ({
+    // Row 1: Pilih Toko
+    const rows = [
+        select('shop', 'store', ownerId, {
+            placeholder: '🏪 Pilih Toko...',
+            options: SHOPS.map(s => ({
                 label: s.name,
                 value: s.id,
                 emoji: s.emoji,
                 description: s.description.slice(0, 95),
                 default: s.id === shop.id
             }))
-        );
+        }, now)
+    ];
 
-    const actionRows = [new ActionRowBuilder().addComponents(selectMenu)];
-
-    if (totalPages > 1) {
-        const navRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId(`shop_page_${shop.id}_${safePage - 1}`)
-                .setLabel('Sebelumnya')
-                .setEmoji('◀️')
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(safePage <= 0),
-            new ButtonBuilder()
-                .setCustomId(`shop_page_${shop.id}_${safePage + 1}`)
-                .setLabel(`Halaman ${safePage + 1}/${totalPages}`)
-                .setEmoji('▶️')
-                .setStyle(ButtonStyle.Secondary)
-                .setDisabled(safePage >= totalPages - 1)
+    // Row 2: Pilih Barang di Toko Ini
+    if (allItems.length > 0) {
+        rows.push(
+            select('shop', 'item', ownerId, {
+                placeholder: '🛒 Pilih barang yang ingin dibeli...',
+                options: allItems.map(it => {
+                    const price = getEffectiveItemPrice(it, liveCfg);
+                    return {
+                        label: `${it.name} — ${formatLp(price)}`,
+                        value: `${shop.id}:${safePage}:${it.id}`,
+                        emoji: it.emoji,
+                        description: it.description.slice(0, 95),
+                        default: it.id === activeItemId
+                    };
+                })
+            }, now)
         );
-        actionRows.push(navRow);
     }
 
-    return buildV2Card({
+    // Row 3: Tombol Kuantitas Cepat untuk Barang Terpilih
+    if (activeItem) {
+        const isSingleOnly = activeItem.stackSize === 0 || Boolean(activeItem.maxDurability);
+        rows.push(
+            quantityRow('shop', 'buy', ownerId, {
+                presets: [1, 5, 10],
+                maxLabel: '×20',
+                argPrefix: `${shop.id}:${safePage}:${activeItem.id}`,
+                customAction: 'buy_modal',
+                disableMulti: isSingleOnly
+            }, now)
+        );
+    }
+
+    // Row 4: Navigasi Halaman + Tombol Upgrade Tas (jika ada)
+    if (totalPages > 1 || extraNavBtns.length > 0) {
+        rows.push(
+            pageRow('shop', 'page', ownerId, {
+                page: safePage,
+                totalPages,
+                argPrefix: shop.id,
+                extraButtons: extraNavBtns
+            }, now)
+        );
+    }
+
+    return buildPanel({
+        mod: 'shop',
+        ownerId,
         accentColor: COLORS.ECONOMY,
         title: `${shop.emoji} ${shop.name}`,
+        player: p,
+        banner,
         blocks,
-        actionRows,
-        footer: `Halaman ${safePage + 1} dari ${totalPages} · Tips: Gunakan /buy item:<nama> untuk beli cepat.`,
-        ephemeral
+        rows,
+        footer: `Halaman ${safePage}/${totalPages} · Pembayaran otomatis mendebit Cash lalu Bank bila kurang.`,
+        now
     });
 }
 
-function buildItemQuantityPickerPayload(item, unitPrice) {
-    const qtyRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`shop_execbuy_${item.id}_1`)
-            .setLabel(`Beli ×1 (${formatLp(unitPrice)})`)
-            .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-            .setCustomId(`shop_execbuy_${item.id}_5`)
-            .setLabel(`Beli ×5 (${formatLp(unitPrice * 5)})`)
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(item.stackSize === 0 || item.maxDurability > 0),
-        new ButtonBuilder()
-            .setCustomId(`shop_execbuy_${item.id}_10`)
-            .setLabel(`Beli ×10 (${formatLp(unitPrice * 10)})`)
-            .setStyle(ButtonStyle.Primary)
-            .setDisabled(item.stackSize === 0 || item.maxDurability > 0),
-        new ButtonBuilder()
-            .setCustomId(`shop_modalbuy_${item.id}`)
-            .setLabel('Jumlah Lain...')
-            .setEmoji('🔢')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(item.stackSize === 0)
-    );
-
-    return buildV2Card({
-        accentColor: COLORS.ECONOMY,
-        title: `🛒 Beli ${item.emoji} ${item.name}`,
-        blocks: [
-            `${item.description}\n• 💰 **Harga Satuan:** **${formatLp(unitPrice)}**`,
-            'Pilih jumlah yang ingin kamu beli di bawah ini:'
-        ],
-        actionRows: [qtyRow],
-        ephemeral: true
+async function buildShopViewPayload(discordId, shopId = 'warung', page = 0, _ephemeral = false, now = Date.now()) {
+    const state = await fetchShopState(discordId, now);
+    return buildShopPanel({
+        state,
+        shopId,
+        page: Number(page || 0) + 1,
+        now
     });
-}
-
-function buildCustomBuyModal(item) {
-    const modal = new ModalBuilder()
-        .setCustomId(`shop_modalsubmit_${item.id}`)
-        .setTitle(`Beli ${item.name}`.slice(0, 45));
-
-    const input = new TextInputBuilder()
-        .setCustomId('buy_amount_input')
-        .setLabel('Jumlah yang ingin dibeli (1 - 100)')
-        .setPlaceholder('Contoh: 15')
-        .setMinLength(1)
-        .setMaxLength(3)
-        .setRequired(true)
-        .setStyle(TextInputStyle.Short);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    return modal;
 }
 
 /**
@@ -203,7 +199,7 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
     return await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, true);
         const p = synced.player;
-        const invRows = await getPlayerInventory(conn, discordId, true);
+        const invRows = await getPlayerInventory(conn, discordId, true, 'bag', now);
         const liveCfg = await getLiveEconomyConfig(conn);
 
         const unitPrice = getEffectiveItemPrice(item, liveCfg);
@@ -213,7 +209,7 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
         if (item.stackSize === 0 && item.id !== 'izin_melaut') {
             const alreadyHas = invRows.some(r => r.item_id === item.id && Number(r.quantity) > 0);
             if (alreadyHas) {
-                return { error: 'ALREADY_OWNED_UNIQUE', item };
+                return { error: 'ALREADY_OWNED_UNIQUE', item, player: p };
             }
         }
 
@@ -223,13 +219,14 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
                 error: 'BAG_FULL',
                 slotsBefore: fitCheck.slotsBefore,
                 slotsAfter: fitCheck.slotsAfter,
-                maxSlots: fitCheck.maxSlots
+                maxSlots: fitCheck.maxSlots,
+                player: p
             };
         }
 
         const totalBalance = Number(p.cash) + Number(p.bank);
         if (totalBalance < totalCost) {
-            return { error: 'INSUFFICIENT_FUNDS', totalCost, totalBalance };
+            return { error: 'INSUFFICIENT_FUNDS', totalCost, totalBalance, player: p };
         }
 
         const payment = await debitPlayerFunds(conn, p, totalCost, `buy_${item.id}`, {
@@ -249,8 +246,8 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
             );
         }
 
-        // Khusus gelar prestise: langsung pasang ke profil jika belum punya gelar
-        if (item.tags.includes('prestise') && item.titleLabel) {
+        // Khusus gelar prestise: langsung pasang ke profil
+        if (item.tags && item.tags.includes('prestise') && item.titleLabel) {
             await conn.execute(
                 `UPDATE players SET equipped_title = ? WHERE discord_id = ?`,
                 [item.titleLabel, discordId]
@@ -258,9 +255,10 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
             p.equipped_title = item.titleLabel;
         }
 
-        await addItem(conn, discordId, item.id, qty, now);
+        await addItem(conn, discordId, item.id, qty, now, 'bag');
 
         return {
+            ok: true,
             item,
             qty,
             unitPrice,
@@ -280,12 +278,12 @@ async function executeBackpackUpgrade(discordId, now = Date.now()) {
         const nextBag = getNextBackpackTier(p.backpack_tier);
 
         if (!nextBag) {
-            return { error: 'MAX_TIER', currentBag: getBackpackByTier(p.backpack_tier) };
+            return { error: 'MAX_TIER', currentBag: getBackpackByTier(p.backpack_tier), player: p };
         }
 
         const totalBalance = Number(p.cash) + Number(p.bank);
         if (totalBalance < nextBag.price) {
-            return { error: 'INSUFFICIENT_FUNDS', nextBag, totalBalance };
+            return { error: 'INSUFFICIENT_FUNDS', nextBag, totalBalance, player: p };
         }
 
         const payment = await debitPlayerFunds(conn, p, nextBag.price, `upgrade_bag_${nextBag.id}`, {
@@ -302,6 +300,7 @@ async function executeBackpackUpgrade(discordId, now = Date.now()) {
         );
 
         return {
+            ok: true,
             nextBag,
             payment,
             player: p
@@ -309,72 +308,41 @@ async function executeBackpackUpgrade(discordId, now = Date.now()) {
     });
 }
 
-function buildPurchaseResultPayload(res, ephemeral = false) {
+function formatPurchaseBanner(res) {
     if (res.error === 'ITEM_NOT_BUYABLE') {
-        return buildV2Card({
-            accentColor: COLORS.DANGER,
-            title: '❌ Barang Tidak Tersedia',
-            blocks: ['Item tersebut tidak dijual di toko.'],
-            ephemeral: true
-        });
+        return { type: 'danger', text: 'Barang tersebut tidak tersedia di toko.' };
     }
     if (res.error === 'ALREADY_OWNED_UNIQUE') {
-        return buildV2Card({
-            accentColor: COLORS.WARNING,
-            title: 'ℹ️ Sudah Dimiliki',
-            blocks: [`Kamu sudah memiliki **${res.item.emoji} ${res.item.name}** secara permanen!`],
-            ephemeral: true
-        });
+        return { type: 'warning', text: `Kamu sudah memiliki **${res.item.emoji} ${res.item.name}** secara permanen!` };
     }
     if (res.error === 'BAG_FULL') {
-        return buildV2Card({
-            accentColor: COLORS.WARNING,
-            title: `🎒 Kapasitas Tas Tidak Cukup (${res.slotsBefore}/${res.maxSlots} Slot)`,
-            blocks: [
-                `Pembelian ini membutuhkan **${res.slotsAfter} slot**, melebihi kapasitas tasmu (**${res.maxSlots} slot**).`,
-                'Jual sebagian barang di `/sell` atau upgrade tasmu di Toko Perkakas (`/shop`).'
-            ],
-            ephemeral: true
-        });
+        return {
+            type: 'warning',
+            text: `Kapasitas tas tidak cukup! Butuh **${res.slotsAfter}/${res.maxSlots} slot**. Jual sebagian barang di \`/sell\` atau upgrade tasmu.`
+        };
     }
     if (res.error === 'INSUFFICIENT_FUNDS') {
-        return buildV2Card({
-            accentColor: COLORS.DANGER,
-            title: '💸 Saldo Tidak Cukup',
-            blocks: [
-                `Total harga pembelian adalah **${formatLp(res.totalCost)}**, sedangkan total Cash + Bank kamu hanya **${formatLp(res.totalBalance)}**.`
-            ],
-            ephemeral: true
-        });
+        return {
+            type: 'danger',
+            text: `Saldo tidak cukup! Harga **${formatLp(res.totalCost)}**, sedangkan Cash + Bank kamu **${formatLp(res.totalBalance)}**.`
+        };
     }
 
-    const payBreakdown = [];
-    if (res.payment.fromCash > 0) payBreakdown.push(`Cash: ${formatLp(res.payment.fromCash)}`);
-    if (res.payment.fromBank > 0) payBreakdown.push(`Auto-Debit Bank: ${formatLp(res.payment.fromBank)}`);
-
-    return buildV2Card({
-        accentColor: COLORS.SUCCESS,
-        title: `🛍️ Pembelian Berhasil: ${res.qty}× ${res.item.emoji} ${res.item.name}`,
-        blocks: [
-            [
-                `• 💳 **Total Dibayar:** **${formatLp(res.totalCost)}** *(${payBreakdown.join(' + ')})*`,
-                `• 💵 **Sisa Cash:** ${formatLp(res.player.cash)} · 🏦 **Sisa Bank:** ${formatLp(res.player.bank)}`,
-                `• 🎒 **Slot Tas Terpakai:** \`${res.slotsAfter} / ${res.maxSlots} slot\``
-            ].join('\n'),
-            res.item.id === 'izin_melaut'
-                ? '⚓ **Surat Izin Melaut 24 Jam** juga telah langsung diaktifkan untukmu!'
-                : null
-        ],
-        ephemeral
-    });
+    const extra = res.item.id === 'izin_melaut' ? ' *(⚓ Izin Melaut 24j aktif)*' : '';
+    return {
+        type: 'success',
+        text: `Berhasil membeli **${res.qty}× ${res.item.emoji} ${res.item.name}** seharga **${formatLp(res.totalCost)}**!${extra}`
+    };
 }
 
 module.exports = {
+    ITEMS_PER_PAGE,
+    EXPENSIVE_PURCHASE_THRESHOLD,
     getEffectiveItemPrice,
+    fetchShopState,
+    buildShopPanel,
     buildShopViewPayload,
-    buildItemQuantityPickerPayload,
-    buildCustomBuyModal,
     executeItemPurchase,
     executeBackpackUpgrade,
-    buildPurchaseResultPayload
+    formatPurchaseBanner
 };

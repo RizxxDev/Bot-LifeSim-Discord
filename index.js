@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { initDatabase } = require('./database/mariadb');
 const { initRedis } = require('./database/redis');
+const { registerPanel } = require('./services/panelRouter');
 
 const client = new Client({
     intents: [
@@ -30,6 +31,14 @@ function loadCommands(dir) {
             const command = require(fullPath);
             if (command.name && command.slash && command.data) {
                 client.commands.set(command.name, command);
+                if (command.panel) {
+                    registerPanel(
+                        command.name,
+                        command.panel,
+                        command.lockTtl || 15,
+                        Boolean(command.skipRegistrationCheck)
+                    );
+                }
                 if (command.isAdminCommand) {
                     client.adminCommandData.push(command.data.toJSON());
                 } else {

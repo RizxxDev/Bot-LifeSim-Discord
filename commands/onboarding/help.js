@@ -1,14 +1,18 @@
 const {
     SlashCommandBuilder,
     ActionRowBuilder,
-    StringSelectMenuBuilder,
     ButtonBuilder,
     ButtonStyle
 } = require('discord.js');
-const { COLORS, formatLp, formatVitalsCompact, buildV2Card } = require('../../utils/uiBuilder');
+const { COLORS } = require('../../utils/uiBuilder');
 const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
 const { getJob } = require('../../data/jobs');
+const {
+    buildPanel,
+    btn,
+    select
+} = require('../../utils/panelBuilder');
 
 const COMMAND_DETAILS = {
     start: {
@@ -20,87 +24,66 @@ const COMMAND_DETAILS = {
     },
     profile: {
         title: '/profile — Kartu Identitas Karakter',
-        usage: '`/profile [user]`',
+        usage: '`/profile` (pilih warga lewat dropdown di dalam panel)',
         cost: 'Tidak ada',
         cooldown: 'Tidak ada',
-        tips: 'Menampilkan stat vital (Energy, Hunger, Thirst, Health), pendidikan, karir, level memancing/tambang, dan koleksi.'
+        tips: 'Menampilkan stat vital, pendidikan, karir, level 4 skill (Fishing, Mining, Farming, Cooking), hunian, kendaraan, & koleksi.'
     },
-    eat: {
-        title: '/eat — Makan untuk Mengisi Hunger',
-        usage: '`/eat item:<makanan> [amount:1]`',
-        cost: 'Item makanan di inventory',
+    consume: {
+        title: '/consume — Meja Konsumsi (Makan, Minum, Obat & Dokumen)',
+        usage: '`/consume`',
+        cost: 'Item konsumsi di tas',
         cooldown: 'Tidak ada',
-        tips: 'Konsumsi otomatis berhenti saat Hunger mencapai 100 sehingga makanan berlebih tidak terbuang.'
-    },
-    drink: {
-        title: '/drink — Minum untuk Mengisi Thirst',
-        usage: '`/drink item:<minuman> [amount:1]`',
-        cost: 'Item minuman di inventory',
-        cooldown: 'Tidak ada',
-        tips: 'Kopi dan Energy Drink juga menambah Energy, namun efeknya berkurang setelah konsumsi ke-2 di hari yang sama.'
-    },
-    use: {
-        title: '/use — Gunakan Obat, Vitamin, atau Dokumen',
-        usage: '`/use item:<nama_item> [amount:1]`',
-        cost: 'Item di inventory',
-        cooldown: 'Tidak ada',
-        tips: 'Gunakan untuk obat pemulih Health, Vitamin C (regen 2x), Surat Izin Melaut, atau Akta Ganti Nama.'
+        tips: 'Menggabungkan makan, minum, vitamin, dan pemakaian dokumen. Tersedia tombol 🍴 Makan & Minum Otomatis!'
     },
     sleep: {
         title: '/sleep — Tidur & Istirahat',
         usage: '`/sleep`',
-        cost: 'Waktu istirahat 45–60 menit',
+        cost: 'Waktu istirahat 30–60 menit',
         cooldown: 'Hanya bisa saat Energy < 80',
         tips: 'Tidur memulihkan +50 Energy (atau +60 s/d +100 Energy jika kamu menyewa/membeli properti di /property).'
     },
     property: {
         title: '/property — Sewa Kos, Kontrakan & Beli Rumah',
-        usage: '`/property list` · `/property info` · `/property rent` · `/property buy` · `/property status`',
+        usage: '`/property`',
         cost: 'Sewa mulai Lp 70.000/minggu atau beli tunai',
         cooldown: 'Tidak ada',
         tips: 'Properti membuka fasilitas Kulkas, Freezer, Tungku Dapur, Gudang, serta menambah bonus pemulihan /sleep!'
     },
     storage: {
         title: '/storage — Kulkas, Freezer, Gudang & Cooler Box',
-        usage: '`/storage view` · `/storage put` · `/storage take`',
+        usage: '`/storage`',
         cost: 'Membutuhkan fasilitas properti atau Cooler Box',
         cooldown: 'Tidak ada',
         tips: 'Simpan ikan & makanan segar di Kulkas (basi 3x lebih lambat) atau Freezer (tidak basi) agar tidak berubah menjadi Bahan Basi.'
     },
     vehicle: {
         title: '/vehicle — Garasi Kendaraan, Bensin SPBU & Servis',
-        usage: '`/vehicle list` · `/vehicle status` · `/vehicle buy` · `/vehicle equip` · `/vehicle refuel` · `/vehicle service`',
+        usage: '`/vehicle`',
         cost: 'Sepeda mulai Lp 1,5 juta · BBM Lp 10.000/liter',
         cooldown: 'Tidak ada',
         tips: 'Kendaraan memberi bonus gaji Kurir/Ojol, membuka profesi Taksi Online/Sopir Pribadi (Mobil + SIM A), dan hemat Energy ke lokasi jauh!'
     },
     credit: {
         title: '/credit — Pembiayaan Kredit Kendaraan & Properti',
-        usage: '`/credit status` · `/credit apply` · `/credit pay` · `/credit payoff`',
+        usage: '`/credit`',
         cost: 'DP 20% + Bunga Flat 5%–15% (Tenor 4, 8, 12, atau 24 minggu)',
         cooldown: 'Penagihan otomatis setiap minggu (Bank dulu, lalu Cash)',
-        tips: 'Syarat: umur akun >= 14 hari, punya pekerjaan tetap, dan cicilan <= 50% penghasilan 7 hari terakhir. Lunasi dipercepat untuk hemat 50% sisa bunga!'
+        tips: 'Syarat: umur akun >= 14 hari, punya pekerjaan tetap, dan cicilan <= 50% penghasilan 7 hari terakhir. Lunasi cepat untuk hemat 50% sisa bunga!'
     },
     achievements: {
-        title: '/achievements — Pencapaian Warga & Hadiah',
-        usage: '`/achievements view [kategori]` · `/achievements claim`',
+        title: '/achievements — Pencapaian Warga & Gelar Kehormatan (Title)',
+        usage: '`/achievements`',
         cost: 'Tidak ada',
         cooldown: 'Tidak ada',
-        tips: 'Selesaikan 24 tantangan di 6 kategori untuk membuka Gelar Kehormatan (Title) dan paket hadiah item!'
-    },
-    title: {
-        title: '/title — Pasang Gelar Kehormatan (Title)',
-        usage: '`/title list` · `/title equip gelar:<nama>` · `/title unequip`',
-        cost: 'Tidak ada',
-        cooldown: 'Tidak ada',
-        tips: 'Pasang gelar dari Achievement, Event Musiman, atau Butik Prestise agar tampil keren di /profile.'
+        tips: 'Selesaikan 24 tantangan di 6 kategori, klaim hadiah item, dan pasang Gelar Kehormatan (Title) langsung dari panel ini!'
     },
     event: {
-        title: '/event — Cuaca 2 Mingguan & Event Musiman',
-        usage: '`/event info` · `/event shop` · `/event buy` · `/event goal` · `/event claim`',
+        title: '/event — Cuaca 2 Mingguan & Bazar Event Musiman',
+        usage: '`/event`',
         cost: 'Token Event dari aktivitas harian',
         cooldown: 'Cuaca berganti otomatis tiap 14 hari',
-        tips: 'Cek cuaca (Musim Hujan vs Kemarau), kumpulkan token saat event berlangsung, dan nikmati THR Lebaran x1,5 gaji dasar selama 3 hari pertama Lebaran!'
+        tips: 'Cek cuaca (Musim Hujan vs Kemarau), tukar token di bazar event, dan nikmati THR Lebaran ×1,5 gaji dasar selama 3 hari pertama Lebaran!'
     },
     cooldowns: {
         title: '/cooldowns — Cek Jadwal & Cooldown Aktif',
@@ -111,97 +94,90 @@ const COMMAND_DETAILS = {
     },
     job: {
         title: '/job — Pusat Karir & Lowongan Kerja',
-        usage: '`/job list` · `/job info` · `/job apply` · `/job resign`',
+        usage: '`/job`',
         cost: 'Syarat pendidikan/item sesuai profesi',
         cooldown: 'Resign memiliki masa tunggu 24 jam sebelum melamar lagi',
         tips: 'Riwayat jumlah shift di setiap pekerjaan tetap tersimpan meskipun kamu pindah profesi.'
     },
     work: {
-        title: '/work — Bekerja 1 Shift',
+        title: '/work — Panel Kerja & Shift Harian',
         usage: '`/work`',
         cost: '⚡ 20–25 Energy · 🍔 8 Hunger · 💧 10 Thirst',
         cooldown: '60 menit',
         tips: 'Selesaikan mini-game singkat dengan benar untuk mendapat 100% gaji + bonus 10%! Naik jabatan otomatis di 30, 100, dan 250 shift.'
     },
     study: {
-        title: '/study — Belajar & Kuliah',
-        usage: '`/study [jenjang]`',
+        title: '/study — Kampus, Akademi & Kuliah',
+        usage: '`/study`',
         cost: '⚡ 15 Energy · 🍔 5 Hunger · 💧 6 Thirst + Biaya per sesi',
         cooldown: '120 menit',
         tips: 'Tingkatkan ijazah (SD → SMP → SMA → D3/S1 → S2) untuk membuka profesi bergaji tinggi. Bisa dilakukan sambil bekerja!'
     },
     fishing: {
-        title: '/fishing — Memancing Ikan',
-        usage: '`/fishing [lokasi] [umpan]`',
-        cost: '⚡ 8 Energy · 🍔 3 Hunger · 💧 4 Thirst · 1 Umpan · -1 Durability Pancingan',
+        title: '/fishing — Dermaga & Spot Memancing',
+        usage: '`/fishing`',
+        cost: '⚡ 8 Energy (hemat dengan kendaraan) · 🍔 3 Hunger · 💧 4 Thirst · 1 Umpan',
         cooldown: '3 menit',
-        tips: 'Tunggu tombol "🎣 Tarik!" muncul lalu klik dalam 6 detik. Ikan Common & Uncommon bisa dijual di /sell atau dimakan lewat /eat.'
+        tips: 'Pilih spot & umpan dari dropdown lalu lempar kail. Tersedia tombol 🍴 Makan Cepat dan 💰 Jual Ikan langsung di panel!'
     },
     mining: {
-        title: '/mining — Menambang Mineral & Permata',
-        usage: '`/mining [lokasi]`',
-        cost: '⚡ 12 Energy · 🍔 5 Hunger · 💧 6 Thirst · -1 Durability Beliung',
+        title: '/mining — Ekspedisi Pertambangan',
+        usage: '`/mining`',
+        cost: '⚡ 12 Energy (hemat dengan kendaraan) · 🍔 5 Hunger · 💧 6 Thirst',
         cooldown: '5 menit',
         tips: 'Gunakan Helm Keselamatan untuk mengurangi risiko kecelakaan tambang sebesar 70% dan mengakses Tambang Emas/Berlian.'
     },
     farm: {
         title: '/farm — Perkebunan & Lahan Tani',
-        usage: '`/farm view` · `/farm rent` · `/farm buy` · `/farm plant` · `/farm water` · `/farm fertilize` · `/farm harvest` · `/farm kompos`',
+        usage: '`/farm`',
         cost: 'Sewa mulai Lp 15.000/mgg atau beli permanen mulai Lp 400.000 + Bibit Toko Tani',
         cooldown: 'Tumbuh 2 fase sesuai durasi tanaman (1–12 jam)',
-        tips: 'Siram tanaman di Fase 1 (Tunas) dan Fase 2 (Berbunga). Panen sebelum 24 jam sejak matang agar tidak layu menjadi Bahan Basi!'
+        tips: 'Tanam, siram semua petak, beri pupuk, daur ulang kompos, dan panen sekaligus dalam 1 panel interaktif!'
     },
     cook: {
-        title: '/cook — Memasak Hidangan Rumahan di Dapur Properti',
-        usage: '`/cook recipes` · `/cook start` · `/cook status` · `/cook collect`',
+        title: '/cook — Dapur Properti & Memasak Hidangan',
+        usage: '`/cook`',
         cost: '⚡ 3 Energy/batch + 1× Muatan LPG atau Batu Bara + Bahan di Tas',
         cooldown: 'Durasi masak 20–120 detik per porsi',
         tips: 'Masak hingga 5 porsi sekaligus hanya dengan 1 bahan bakar! Hidangan rumahan memulihkan stat vital besar dan memberi buff.'
     },
     shop: {
-        title: '/shop — Katalog Toko Kota',
-        usage: '`/shop [toko]`',
-        cost: 'Lp sesuai harga barang',
-        cooldown: 'Tidak ada',
-        tips: 'Jelajahi Warung, Restoran, Apotek, Perkakas (termasuk Upgrade Tas), Elektronik, Kantor Layanan, dan Butik Prestise.'
-    },
-    buy: {
-        title: '/buy — Beli Cepat via Autocomplete',
-        usage: '`/buy item:<nama_item> [amount:1]`',
+        title: '/shop — Pusat Perbelanjaan & Katalog Toko Kota',
+        usage: '`/shop`',
         cost: 'Lp sesuai harga barang (otomatis potong Bank jika Cash kurang)',
         cooldown: 'Tidak ada',
-        tips: 'Cara tercepat membeli makanan, umpan, atau obat tanpa perlu membuka katalog /shop.'
+        tips: 'Jelajahi 8 toko kota, pilih barang dari dropdown, dan beli 1×, 5×, 10×, atau jumlah kustom lewat modal langsung di panel!'
     },
     sell: {
-        title: '/sell — Pasar Ikan, Pengepul Tambang & Bank Sampah',
-        usage: '`/sell [item] [amount]`',
-        cost: 'Item hasil pancing/tambang',
+        title: '/sell — Papan Harga Pasar & Pengepul Komoditas',
+        usage: '`/sell`',
+        cost: 'Komoditas di tas (ikan, mineral, hasil tani, masakan)',
         cooldown: 'Tidak ada',
-        tips: 'Ketik `/sell` tanpa argumen untuk melihat papan harga pasar dinamis saat ini!'
+        tips: 'Lihat harga pasar 24 jam secara live dan gunakan tombol cepat Jual Ikan, Jual Tambang, Jual Tani, Jual Masakan, atau Jual Semua!'
     },
     inventory: {
-        title: '/inventory — Cek Isi Tas & Perbaiki Alat',
-        usage: '`/inventory [kategori]`',
+        title: '/inventory — Tas, Reparasi Alat & Upgrade Ransel',
+        usage: '`/inventory`',
         cost: 'Tidak ada',
         cooldown: 'Tidak ada',
-        tips: 'Pantau kapasitas slot tasmu, perbaiki pancingan/beliung yang rusak, atau upgrade ukuran tas.'
+        tips: 'Pantau kapasitas slot tasmu, perbaiki pancingan/beliung yang rusak, atau upgrade ukuran tas hingga 130 slot.'
     },
-    balance: {
-        title: '/balance, /deposit, /withdraw — Dompet & Bank',
-        usage: '`/balance` · `/deposit amount:<jumlah>` · `/withdraw amount:<jumlah>`',
+    bank: {
+        title: '/bank — Brankas & Layanan Perbankan Kota',
+        usage: '`/bank`',
         cost: 'Biaya admin bank Lp 10.000/bulan (gratis jika saldo < Lp 500.000)',
         cooldown: 'Tidak ada',
-        tips: 'Simpan uangmu di Bank agar aman dari pemotongan biaya Rumah Sakit saat pingsan.'
+        tips: 'Setor (Deposit) dan Tarik (Withdraw) dengan tombol cepat 25%, 50%, Semua, atau Nominal Lain. Uang di Bank aman dari denda RS!'
     },
     pay: {
-        title: '/pay — Transfer Uang Antar Warga',
-        usage: '`/pay user:@target amount:<jumlah>`',
+        title: '/pay — Layanan Transfer Uang Antar Warga',
+        usage: '`/pay`',
         cost: 'Pajak transfer 5% ditanggung pengirim',
         cooldown: 'Batas kirim Lp 1.000.000/hari',
-        tips: 'Syarat: akun minimal berumur 7 hari dan memiliki ≥20 shift kerja atau total level skill ≥10.'
+        tips: 'Pilih warga tujuan lewat User Select Menu dan konfirmasi nominal sebelum dikirim.'
     },
     daily: {
-        title: '/daily — Klaim Hadiah Harian',
+        title: '/daily — Klaim Hadiah Harian Beruntun',
         usage: '`/daily`',
         cost: 'Tidak ada',
         cooldown: 'Setiap hari (reset 00:00 WIB, streak putus jika >36 jam)',
@@ -209,89 +185,98 @@ const COMMAND_DETAILS = {
     },
     leaderboard: {
         title: '/leaderboard — Papan Peringkat Global',
-        usage: '`/leaderboard [kategori]`',
+        usage: '`/leaderboard`',
         cost: 'Tidak ada',
         cooldown: 'Cache diperbarui tiap 5 menit',
-        tips: 'Bandingkan total kekayaan, pengalaman kerja, level memancing, dan level menambang di seluruh server.'
+        tips: 'Bandingkan Kekayaan, Total Shift, Fishing, Mining, Farming, dan Cooking dengan tombol kategori interaktif.'
     }
 };
-
-function buildHelpCategorySelect(activeCategory = 'home') {
-    const select = new StringSelectMenuBuilder()
-        .setCustomId('help_select_category')
-        .setPlaceholder('📂 Pilih kategori panduan...')
-        .addOptions([
-            {
-                label: 'Beranda & Cara Mulai',
-                value: 'home',
-                emoji: '🏠',
-                description: 'Ringkasan 4 langkah awal dan rekomendasi langkah berikutnya',
-                default: activeCategory === 'home'
-            },
-            {
-                label: 'Kehidupan & Stat Vital',
-                value: 'life',
-                emoji: '🧍',
-                description: '/profile, /eat, /drink, /use, /sleep, /cooldowns',
-                default: activeCategory === 'life'
-            },
-            {
-                label: 'Karir & Pendidikan',
-                value: 'career',
-                emoji: '💼',
-                description: '/job, /work, /study',
-                default: activeCategory === 'career'
-            },
-            {
-                label: 'Memancing, Tambang, Tani & Masak',
-                value: 'activities',
-                emoji: '🎣',
-                description: '/fishing, /mining, /farm, /cook, alat & resep',
-                default: activeCategory === 'activities'
-            },
-            {
-                label: 'Ekonomi, Toko & Tas',
-                value: 'economy',
-                emoji: '💰',
-                description: '/shop, /buy, /sell, /inventory, /balance, /pay, /daily',
-                default: activeCategory === 'economy'
-            }
-        ]);
-
-    return new ActionRowBuilder().addComponents(select);
-}
 
 function getDynamicRecommendation(player) {
     if (!player) {
         return '👉 **Rekomendasi Saat Ini:** Kamu belum memiliki karakter! Klik tombol **🌱 Mulai Hidup Baru** atau ketik `/start`.';
     }
     if (player.hunger < 35 || player.thirst < 35) {
-        return '👉 **Rekomendasi Saat Ini:** Perutmu mulai lapar/haus! Gunakan `/eat` dan `/drink` dari bekal di tasmu agar hasil kerjamu tidak berkurang.';
+        return '👉 **Rekomendasi Saat Ini:** Perutmu mulai lapar/haus! Buka `/consume` lalu klik **🍴 Makan & Minum Otomatis** agar hasil kerjamu tetap maksimal.';
     }
     if (player.energy < 20) {
-        return '👉 **Rekomendasi Saat Ini:** ⚡ Energy kamu rendah! Gunakan `/sleep` untuk istirahat atau minum kopi/energy drink.';
+        return '👉 **Rekomendasi Saat Ini:** ⚡ Energy kamu rendah! Buka `/sleep` untuk istirahat atau minum kopi di `/consume`.';
     }
     if (!player.current_job) {
-        return '👉 **Rekomendasi Saat Ini:** Kamu belum punya pekerjaan tetap! Ketik `/job list` lalu lamar profesi awal dengan `/job apply`.';
+        return '👉 **Rekomendasi Saat Ini:** Kamu belum punya pekerjaan tetap! Buka `/job` untuk memilih dan melamar profesi awalmu.';
     }
     const job = getJob(player.current_job);
-    return `👉 **Rekomendasi Saat Ini:** Jalani shift sebagai **${job ? job.name : player.current_job}** dengan \`/work\`, tingkatkan ijazah lewat \`/study\`, atau cari penghasilan tambahan di \`/fishing\` & \`/mining\`!`;
+    return `👉 **Rekomendasi Saat Ini:** Jalani shift sebagai **${job ? job.name : player.current_job}** di \`/work\`, tingkatkan ijazah di \`/study\`, atau cari penghasilan tambahan di \`/fishing\`, \`/mining\`, & \`/farm\`!`;
 }
 
-async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral = true) {
-    let player = null;
+async function fetchHelpPlayer(discordId, now = Date.now()) {
     try {
-        const synced = await withTransaction(conn => syncPlayerVitals(conn, discordId));
-        if (synced) player = synced.player;
+        const synced = await withTransaction(conn => syncPlayerVitals(conn, discordId, now, false));
+        return synced ? synced.player : null;
     } catch {
-        // ignore if DB not ready
+        return null;
     }
+}
 
-    const selectRow = buildHelpCategorySelect(category);
-    const actionRows = [selectRow];
+async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral = false, selectedCmd = null, now = Date.now()) {
+    const player = await fetchHelpPlayer(discordId, now);
+
+    const catRow = select('help', 'cat', discordId, {
+        placeholder: '📂 Pilih Kategori Panduan...',
+        options: [
+            {
+                label: 'Beranda & Cara Mulai',
+                value: 'home',
+                emoji: '🏠',
+                description: 'Ringkasan 4 langkah awal dan rekomendasi langkah berikutnya',
+                default: category === 'home' && !selectedCmd
+            },
+            {
+                label: 'Kehidupan, Properti & Kendaraan',
+                value: 'life',
+                emoji: '🧍',
+                description: '/profile, /consume, /sleep, /property, /storage, /vehicle, /achievements, /event',
+                default: category === 'life' && !selectedCmd
+            },
+            {
+                label: 'Karir & Pendidikan',
+                value: 'career',
+                emoji: '💼',
+                description: '/job, /work, /study',
+                default: category === 'career' && !selectedCmd
+            },
+            {
+                label: 'Memancing, Tambang, Tani & Masak',
+                value: 'activities',
+                emoji: '🎣',
+                description: '/fishing, /mining, /farm, /cook',
+                default: category === 'activities' && !selectedCmd
+            },
+            {
+                label: 'Ekonomi, Bank, Toko & Kredit',
+                value: 'economy',
+                emoji: '💰',
+                description: '/bank, /shop, /sell, /inventory, /credit, /pay, /daily, /leaderboard',
+                default: category === 'economy' && !selectedCmd
+            }
+        ]
+    }, now);
+
+    const cmdRow = select('help', 'cmd', discordId, {
+        placeholder: '📘 Pilih Command untuk Melihat Detail & Tips...',
+        options: Object.entries(COMMAND_DETAILS).slice(0, 25).map(([cmd, info]) => ({
+            label: info.title.slice(0, 100),
+            value: cmd,
+            emoji: '🔹',
+            description: `Cooldown: ${info.cooldown}`.slice(0, 100),
+            default: selectedCmd === cmd
+        }))
+    }, now);
+
+    const rows = [catRow, cmdRow];
 
     if (!player) {
-        actionRows.push(
+        rows.push(
             new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('reg_open_modal')
@@ -302,123 +287,148 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
         );
     }
 
+    if (selectedCmd && COMMAND_DETAILS[selectedCmd]) {
+        const info = COMMAND_DETAILS[selectedCmd];
+        return buildPanel({
+            mod: 'help',
+            ownerId: discordId,
+            accentColor: COLORS.PRIMARY,
+            title: `📘 Detail Command: ${info.title}`,
+            player,
+            blocks: [
+                `• **Cara Pakai:** ${info.usage}\n• **Biaya / Syarat:** ${info.cost}\n• **Cooldown:** ${info.cooldown}`,
+                `💡 **Tips:** ${info.tips}`
+            ],
+            rows,
+            footer: 'Seluruh command kini berupa 1 panel interaktif utuh tanpa perlu mengetik subcommand.',
+            ephemeral,
+            now
+        });
+    }
+
     if (category === 'life') {
-        return buildV2Card({
+        return buildPanel({
+            mod: 'help',
+            ownerId: discordId,
             accentColor: COLORS.LIFE,
-            title: '🧍 Panduan: Kehidupan & Stat Vital',
+            title: '🧍 Panduan: Kehidupan, Properti & Kendaraan',
+            player,
             blocks: [
                 'Karaktermu memiliki 4 stat vital (0–100): **⚡ Energy**, **🍔 Hunger**, **💧 Thirst**, dan **❤️ Health**.',
                 [
-                    '• `/profile [user]` — Lihat kartu identitas, pekerjaan, hunian, skill, dan kondisimu.',
-                    '• `/eat item [amount]` — Makan item dari tas untuk memulihkan 🍔 Hunger (FIFO).',
-                    '• `/drink item [amount]` — Minum item dari tas untuk memulihkan 💧 Thirst.',
-                    '• `/use item [amount]` — Pakai obat, vitamin, surat izin, atau akta ganti nama.',
+                    '• `/profile` — Lihat kartu identitas, pekerjaan, hunian, skill, dan intip profil warga lain.',
+                    '• `/consume` — Makan, minum, pakai obat/vitamin, atau klik **🍴 Makan & Minum Otomatis**.',
                     '• `/sleep` — Tidur di hunianmu untuk memulihkan +50 s/d +100 ⚡ Energy.',
                     '• `/property` — Sewa Kos/Kontrakan atau beli Rumah untuk membuka Kulkas, Freezer, & Dapur.',
                     '• `/storage` — Simpan makanan/ikan ke Kulkas, Freezer, Gudang, atau Cooler Box.',
                     '• `/vehicle` — Kelola kendaraan, isi bensin di SPBU, dan servis berkala di bengkel.',
-                    '• `/achievements` & `/title` — Klaim hadiah pencapaian dan pasang Gelar Kehormatan.',
-                    '• `/event` — Cek cuaca 2 mingguan, toko token event musiman, dan target komunitas.',
-                    '• `/cooldowns` — Lihat semua jadwal tunggu aktivitasmu.'
-                ].join('\n'),
-                '💡 **Tips Penting:** Saat kamu *offline*, Hunger dan Thirst berhenti berkurang di angka **20** (kamu tidak akan pingsan karena libur bermain). Namun jangan beraktivitas saat Hunger/Thirst = 0 agar Health tidak habis dan masuk Rumah Sakit!'
+                    '• `/achievements` — Klaim hadiah pencapaian dan pasang Gelar Kehormatan (Title).',
+                    '• `/event` — Cek cuaca 2 mingguan, bazar token event musiman, dan target komunitas.',
+                    '• `/cooldowns` — Lihat semua jadwal tunggu dan kuota harian aktivitasmu.'
+                ].join('\n')
             ],
-            actionRows,
-            footer: 'Ketik /help command:<nama> untuk rincian mendalam tiap command.',
-            ephemeral
+            rows,
+            footer: 'Saat offline, Hunger & Thirst berhenti turun di angka 20 sehingga karaktermu aman saat istirahat bermain.',
+            ephemeral,
+            now
         });
     }
 
     if (category === 'career') {
-        return buildV2Card({
+        return buildPanel({
+            mod: 'help',
+            ownerId: discordId,
             accentColor: COLORS.CAREER,
             title: '💼 Panduan: Karir & Pendidikan',
+            player,
             blocks: [
                 'Bangun karirmu dari pekerjaan dasar hingga profesi spesialis bergaji ratusan ribu Lp per shift.',
                 [
-                    '• `/job list` — Lihat daftar lowongan kerja (Tier 0 s/d Tier 4) beserta syaratnya.',
-                    '• `/job apply pekerjaan:<nama>` — Lamar pekerjaan yang syaratnya sudah kamu penuhi.',
+                    '• `/job` — Lihat katalog lowongan kerja (Tier 0 s/d Tier 4), lamar profesi baru, atau resign.',
                     '• `/work` — Bekerja 1 shift (cooldown 60 mnt). Selesaikan mini-game untuk bonus +10% gaji!',
-                    '• `/study [jenjang]` — Ikuti sesi belajar/kuliah (SD → SMP → SMA → D3/S1 → S2, cooldown 120 mnt).',
-                    '• `/job resign` — Mengundurkan diri dari pekerjaan saat ini (jeda 24 jam sebelum melamar lagi).'
+                    '• `/study` — Ikuti sesi belajar/kuliah (SD → SMP → SMA → D3/S1 → S2, cooldown 120 mnt).'
                 ].join('\n'),
                 '💡 **Promosi Otomatis:** Setiap profesi memiliki jenjang **Junior (0 shift)** → **Staff (30 shift, gaji ×1,15)** → **Senior (100 shift, ×1,30)** → **Kepala (250 shift, ×1,50)**.'
             ],
-            actionRows,
+            rows,
             footer: 'Kuliah dan bekerja memiliki cooldown terpisah, namun berbagi pool Energy yang sama.',
-            ephemeral
+            ephemeral,
+            now
         });
     }
 
     if (category === 'activities') {
-        return buildV2Card({
+        return buildPanel({
+            mod: 'help',
+            ownerId: discordId,
             accentColor: COLORS.ACT,
             title: '🎣 Panduan: Memancing, Menambang, Bertani & Memasak',
+            player,
             blocks: [
                 'Cari penghasilan tambahan, kelola perkebunan, dan olah hasil panen/tangkapan menjadi masakan bernilai tinggi.',
                 [
-                    '• `/fishing [lokasi] [umpan]` — Memancing ikan (cooldown 3 mnt, butuh Pancingan & Umpan).',
-                    '• `/mining [lokasi]` — Menambang bijih & permata (cooldown 5 mnt, butuh Beliung).',
-                    '• `/farm` — Sewa/beli petak kebun, tanam bibit Toko Tani, siram 2 fase, pupuk, dan panen.',
-                    '• `/cook` — Masak ikan & hasil tani di tungku dapur propertimu menjadi hidangan ber-buff.',
-                    '• `/sell` — Jual tangkapan, hasil tani, atau masakan ke Pasar Dinamis.',
-                    '• `/inventory` — Cek durability alat, perbaiki alat yang rusak, atau upgrade kapasitas tas.'
+                    '• `/fishing` — Pilih lokasi & umpan, lempar kail (cooldown 3 mnt), dan jual ikan langsung dari panel.',
+                    '• `/mining` — Pilih lokasi tambang, ayunkan beliung (cooldown 5 mnt), dan jual mineral.',
+                    '• `/farm` — Sewa/beli petak kebun, tanam bibit, siram semua petak, pupuk, kompos, & panen.',
+                    '• `/cook` — Masak ikan & hasil tani di tungku dapur propertimu menjadi hidangan ber-buff.'
                 ].join('\n'),
-                '💡 **Tips Produksi:** Simpan hasil panen dan masakan di **Kulkas/Freezer** (`/storage`) agar awet, atau olah **5× Bahan Basi** menjadi **Pupuk Kompos** lewat `/farm kompos`!'
+                '💡 **Tips Produksi:** Simpan hasil panen dan masakan di **Kulkas/Freezer** (`/storage`) agar awet, atau olah **5× Bahan Basi** menjadi **Pupuk Kompos** di `/farm`!'
             ],
-            actionRows,
+            rows,
             footer: 'Setiap tangkapan baru otomatis tercatat di Fishpedia & Buku Mineral profilmu.',
-            ephemeral
+            ephemeral,
+            now
         });
     }
 
     if (category === 'economy') {
-        return buildV2Card({
+        return buildPanel({
+            mod: 'help',
+            ownerId: discordId,
             accentColor: COLORS.ECONOMY,
-            title: '💰 Panduan: Ekonomi, Toko & Tas',
+            title: '💰 Panduan: Ekonomi, Bank, Toko & Kredit',
+            player,
             blocks: [
                 'Kelola keuanganmu, belanja kebutuhan, dan pantau harga pasar dinamis.',
                 [
-                    '• `/shop` — Buka katalog interaktif per toko (Warung, Restoran, Apotek, Perkakas, dll).',
-                    '• `/buy item [amount]` — Beli barang secara cepat dengan fitur autocomplete.',
-                    '• `/sell [item] [amount]` — Jual hasil pancing/tambang atau cek papan harga pasar 24 jam.',
-                    '• `/inventory` — Lihat isi tas (mulai 20 slot, bisa di-upgrade hingga 130 slot).',
-                    '• `/balance` · `/deposit` · `/withdraw` — Kelola uang tunai (Cash) dan tabungan Bank.',
+                    '• `/bank` — Setor (Deposit) & Tarik (Withdraw) uang dengan tombol persentase cepat atau modal.',
+                    '• `/shop` — Jelajahi 8 toko kota dan beli barang dengan tombol kuantitas interaktif.',
+                    '• `/sell` — Cek papan harga pasar 24 jam dan jual hasil pancing, tambang, tani, & masakan.',
+                    '• `/inventory` — Lihat isi tas, perbaiki alat yang rusak, atau upgrade ukuran tas (hingga 130 slot).',
                     '• `/credit` — Cicil Motor Baru, Mobil, Rumah, atau Rumah Mewah dengan DP 20%.',
-                    '• `/pay user amount` — Transfer uang ke warga lain (pajak 5%, akun ≥7 hari).',
+                    '• `/pay` — Pilih warga lewat User Select Menu dan transfer uang (pajak 5%).',
                     '• `/daily` — Ambil hadiah harian beruntun (streak 7 hari).',
-                    '• `/leaderboard` — Lihat peringkat warga terkaya & terajin.'
+                    '• `/leaderboard` — Lihat peringkat warga terkaya, pekerja terajin, & master 4 skill.'
                 ].join('\n')
             ],
-            actionRows,
+            rows,
             footer: 'Harga kebutuhan pokok di Warung dijamin tetap dan tidak pernah mengalami inflasi.',
-            ephemeral
+            ephemeral,
+            now
         });
     }
 
-    // Default: HOME
-    const statusLine = player
-        ? `👤 **${player.username}** · 💵 ${formatLp(player.cash)} · 🏦 ${formatLp(player.bank)}\n${formatVitalsCompact(player)}`
-        : '👤 **Status:** Belum Terdaftar — Ketik `/start` atau klik tombol di bawah untuk memulai!';
-
-    return buildV2Card({
+    return buildPanel({
+        mod: 'help',
+        ownerId: discordId,
         accentColor: COLORS.PRIMARY,
-        title: '📖 Pusat Panduan Life Simulation',
+        title: '📖 Pusat Panduan Interaktif Life Simulation',
+        player,
         blocks: [
-            'Simulasi kehidupan ekonomi nyata di Discord: bekerja, kuliah, jaga kondisi tubuh, memancing, menambang, dan kelola keuangannya.',
-            statusLine,
+            'Simulasi kehidupan ekonomi nyata di Discord: seluruh fitur dikemas dalam **1 Command = 1 Panel Interaktif** tanpa perlu mengetik subcommand!',
             [
                 '**🚀 Cara Mulai dalam 4 Langkah:**',
-                '1️⃣ **Lamar Kerja:** Ketik `/job list` lalu pilih pekerjaan awalmu dengan `/job apply`.',
-                '2️⃣ **Cari Penghasilan:** Jalankan `/work` setiap jam, serta sambi dengan `/fishing` atau `/mining`.',
-                '3️⃣ **Jaga Kondisi Tubuh:** Makan (`/eat`) dan minum (`/drink`) saat lapar/haus, atau `/sleep` saat lelah.',
-                '4️⃣ **Kembangkan Diri:** Tingkatkan pendidikan lewat `/study`, upgrade alat & tas di `/shop`, dan jual hasil alam di `/sell`.'
+                '1️⃣ **Lamar Kerja:** Buka `/job` lalu pilih pekerjaan awalmu dari menu dropdown.',
+                '2️⃣ **Cari Penghasilan:** Buka `/work` setiap jam, serta sambi dengan `/fishing`, `/mining`, atau `/farm`.',
+                '3️⃣ **Jaga Kondisi Tubuh:** Buka `/consume` saat lapar/haus, atau `/sleep` saat lelah.',
+                '4️⃣ **Kembangkan Diri:** Tingkatkan ijazah di `/study`, belanja di `/shop`, tabung uang di `/bank`, dan jual hasil alam di `/sell`.'
             ].join('\n'),
             getDynamicRecommendation(player)
         ],
-        actionRows,
-        footer: 'Gunakan menu di atas untuk melihat daftar command per kategori, atau /help command:<nama>.',
-        ephemeral
+        rows,
+        footer: 'Pilih kategori atau nama command pada menu dropdown di atas untuk melihat panduan lengkap.',
+        ephemeral,
+        now
     });
 }
 
@@ -428,47 +438,29 @@ module.exports = {
     skipRegistrationCheck: true,
     data: new SlashCommandBuilder()
         .setName('help')
-        .setDescription('Panduan bermain ringkas, cara memulai, dan daftar command Life Simulation.')
-        .addStringOption(opt =>
-            opt
-                .setName('command')
-                .setDescription('Nama command yang ingin dilihat rinciannya')
-                .setAutocomplete(true)
-                .setRequired(false)
-        ),
-
-    async autocomplete(interaction) {
-        const focused = (interaction.options.getFocused() || '').toLowerCase();
-        const choices = Object.keys(COMMAND_DETAILS)
-            .filter(cmd => cmd.includes(focused))
-            .slice(0, 25)
-            .map(cmd => ({
-                name: `/${cmd} — ${COMMAND_DETAILS[cmd].title.split('—')[1]?.trim() || ''}`,
-                value: cmd
-            }));
-        await interaction.respond(choices);
-    },
+        .setDescription('Buka pusat panduan interaktif, cara memulai, dan rincian seluruh command Life Simulation.'),
 
     async executeSlash(interaction) {
-        const cmdName = interaction.options.getString('command')?.toLowerCase().replace(/^\//, '');
-        if (cmdName && COMMAND_DETAILS[cmdName]) {
-            const info = COMMAND_DETAILS[cmdName];
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.PRIMARY,
-                    title: `📘 Detail Command: ${info.title}`,
-                    blocks: [
-                        `• **Cara Pakai:** ${info.usage}\n• **Biaya / Syarat:** ${info.cost}\n• **Cooldown:** ${info.cooldown}`,
-                        `💡 **Tips:** ${info.tips}`
-                    ],
-                    actionRows: [buildHelpCategorySelect('home')],
-                    ephemeral: true
-                })
-            );
-        }
-
-        const payload = await buildHelpCategoryPayload(interaction.user.id, 'home', true);
+        const now = Date.now();
+        const payload = await buildHelpCategoryPayload(interaction.user.id, 'home', false, null, now);
         return await interaction.reply(payload);
+    },
+
+    panel: {
+        selects: {
+            async cat(interaction) {
+                const now = Date.now();
+                const cat = interaction.values[0] || 'home';
+                const payload = await buildHelpCategoryPayload(interaction.user.id, cat, false, null, now);
+                return await interaction.update(payload);
+            },
+            async cmd(interaction) {
+                const now = Date.now();
+                const cmd = interaction.values[0] || '';
+                const payload = await buildHelpCategoryPayload(interaction.user.id, 'home', false, cmd, now);
+                return await interaction.update(payload);
+            }
+        }
     },
 
     buildHelpCategoryPayload

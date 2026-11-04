@@ -1,5 +1,5 @@
-const { SlashCommandBuilder } = require('discord.js');
-const { withTransaction, query } = require('../../database/mariadb');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
+const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
 const { getPlayerPropertyStatus } = require('../../services/propertyService');
 const {
@@ -11,7 +11,15 @@ const {
 } = require('../../services/inventoryService');
 const { isItemPerishable, formatFreshnessBadge } = require('../../services/spoilageService');
 const { getItem } = require('../../data/items');
-const { COLORS, renderBar, buildV2Card } = require('../../utils/uiBuilder');
+const { COLORS, renderBar } = require('../../utils/uiBuilder');
+const {
+    buildPanel,
+    btn,
+    select,
+    quantityRow,
+    numberModal,
+    parseModalNumber
+} = require('../../utils/panelBuilder');
 
 const STORAGE_META = {
     kulkas: {
@@ -44,374 +52,396 @@ const STORAGE_META = {
     }
 };
 
-const STORAGE_CHOICES = [
-    { name: '❄️ Kulkas Rumah (Basi 3x lebih lambat)', value: 'kulkas' },
-    { name: '🧊 Freezer Rumah (Tidak basi / Beku)', value: 'freezer' },
-    { name: '📦 Gudang Rumah (Barang tidak basi)', value: 'gudang' },
-    { name: '🧊 Cooler Box Portabel (Basi 2x lebih lambat)', value: 'coolerbox' }
-];
+async function fetchStorageState(discordId, now = Date.now()) {
+    return await withTransaction(async (conn) => {
+        const synced = await syncPlayerVitals(conn, discordId, now, false);
+        const propStatus = await getPlayerPropertyStatus(conn, discordId, synced.player.max_slots, now, false);
+        const allRows = await getPlayerInventory(conn, discordId, false, 'all', now);
+        return { player: synced.player, propStatus, allRows };
+    });
+}
+
+function groupRowsByItem(rows = [], locKey = 'bag') {
+    const map = new Map();
+    for (const r of rows) {
+        const qty = Number(r.quantity || 0);
+        if (qty <= 0) continue;
+        const it = getItem(r.item_id);
+        if (!it || it.stackSize === 0) continue;
+
+        const existing = map.get(it.id);
+        const remMs = r.freshness_remaining_ms !== null && r.freshness_remaining_ms !== undefined
+            ? Number(r.freshness_remaining_ms)
+            : null;
+        if (!existing) {
+            map.set(it.id, { item: it, totalQty: qty, minFreshnessMs: remMs });
+        } else {
+            existing.totalQty += qty;
+            if (remMs !== null) {
+                existing.minFreshnessMs = existing.minFreshnessMs === null ? remMs : Math.min(existing.minFreshnessMs, remMs);
+            }
+        }
+    }
+
+    return Array.from(map.values()).map(e => ({
+        ...e,
+        freshnessBadge: e.minFreshnessMs !== null ? formatFreshnessBadge(e.minFreshnessMs, locKey) : ''
+    }));
+}
+
+function buildStoragePanel({
+    state,
+    place = 'kulkas',
+    direction = 'put', // 'put' (Tas -> Storage) | 'take' (Storage -> Tas)
+    selectedItemId = null,
+    banner = null,
+    now = Date.now()
+}) {
+    const { player: p, propStatus, allRows } = state;
+    const ownerId = p.discord_id;
+    const meta = STORAGE_META[place] || STORAGE_META.kulkas;
+
+    const bagRows = allRows.filter(r => !r.storage_location || r.storage_location === 'bag');
+    const placeRows = allRows.filter(r => r.storage_location === meta.id);
+
+    const bagSlotsUsed = calculateSlotsUsed(bagRows);
+    const placeSlotsUsed = calculateSlotsUsed(placeRows);
+    const maxCap = propStatus.capacities[meta.id] || 0;
+    const isLocked = maxCap <= 0;
+
+    // Row 1: Pilih Tempat Penyimpanan + Toggle Mode Simpan/Ambil
+    const tabRow = new ActionRowBuilder().addComponents(
+        btn('storage', 'tab', ownerId, {
+            label: 'Kulkas',
+            emoji: '❄️',
+            style: meta.id === 'kulkas' ? ButtonStyle.Primary : ButtonStyle.Secondary,
+            arg: `kulkas:${direction}`
+        }, now),
+        btn('storage', 'tab', ownerId, {
+            label: 'Freezer',
+            emoji: '🧊',
+            style: meta.id === 'freezer' ? ButtonStyle.Primary : ButtonStyle.Secondary,
+            arg: `freezer:${direction}`
+        }, now),
+        btn('storage', 'tab', ownerId, {
+            label: 'Gudang',
+            emoji: '📦',
+            style: meta.id === 'gudang' ? ButtonStyle.Primary : ButtonStyle.Secondary,
+            arg: `gudang:${direction}`
+        }, now),
+        btn('storage', 'tab', ownerId, {
+            label: 'Cooler Box',
+            emoji: '🧊',
+            style: meta.id === 'coolerbox' ? ButtonStyle.Primary : ButtonStyle.Secondary,
+            arg: `coolerbox:${direction}`
+        }, now),
+        btn('storage', 'tab', ownerId, {
+            label: direction === 'put' ? 'Mode: Simpan 📥' : 'Mode: Ambil 📤',
+            style: ButtonStyle.Success,
+            arg: `${meta.id}:${direction === 'put' ? 'take' : 'put'}`
+        }, now)
+    );
+
+    const placeGrouped = groupRowsByItem(placeRows, meta.id);
+    const placeItemLines = placeGrouped.map(e => {
+        const fresh = e.freshnessBadge ? ` · *(${e.freshnessBadge})*` : '';
+        return `• ${e.item.emoji} **${e.item.name}** \`×${e.totalQty}\`${fresh}`;
+    });
+
+    const blocks = [
+        [
+            `🏠 **Hunian Aktif:** ${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}** · 🎒 **Tas:** \`${bagSlotsUsed}/${p.max_slots} slot\``,
+            `${meta.emoji} **${meta.name}:** \`${renderBar(placeSlotsUsed, Math.max(1, maxCap), 8)}\` (**${placeSlotsUsed}/${maxCap} slot**) — *${meta.rateText}*`
+        ].join('\n')
+    ];
+
+    if (isLocked) {
+        blocks.push(
+            meta.id === 'coolerbox'
+                ? `🔒 **Cooler Box Belum Dimiliki:** Beli **🧊 Cooler Box Portabel** di Toko Perkakas (\`/shop\`) untuk menambah 10 slot pendingin portabel.`
+                : `🔒 **Fasilitas Belum Terbuka / Terkunci:** Sewa atau beli hunian yang memiliki **${meta.name}** lewat \`/property\`.`
+        );
+    }
+
+    blocks.push(
+        `**📦 Isi ${meta.emoji} ${meta.name} Saat Ini:**\n${placeItemLines.length > 0 ? placeItemLines.slice(0, 12).join('\n') : '*Kosong*'}`
+    );
+
+    const rows = [tabRow];
+
+    if (!isLocked) {
+        // Daftar kandidat barang sesuai arah (put = dari Tas yang sesuai jenisnya, take = dari Storage)
+        const rawSource = direction === 'put'
+            ? groupRowsByItem(bagRows, 'bag').filter(e => {
+                const per = isItemPerishable(e.item);
+                return meta.perishableOnly ? per : !per;
+            })
+            : placeGrouped;
+
+        const activeEntry = rawSource.find(e => e.item.id === selectedItemId) || rawSource[0] || null;
+
+        if (rawSource.length > 0) {
+            rows.push(
+                select('storage', 'pick', ownerId, {
+                    placeholder: direction === 'put'
+                        ? `📥 Pilih barang dari Tas untuk disimpan ke ${meta.name}...`
+                        : `📤 Pilih barang dari ${meta.name} untuk diambil ke Tas...`,
+                    options: rawSource.map(e => ({
+                        label: `${e.item.name} (×${e.totalQty})`,
+                        value: `${meta.id}:${direction}:${e.item.id}`,
+                        emoji: e.item.emoji,
+                        description: e.freshnessBadge || (meta.perishableOnly ? 'Barang segar' : 'Barang tidak basi'),
+                        default: activeEntry && e.item.id === activeEntry.item.id
+                    }))
+                }, now)
+            );
+
+            if (activeEntry) {
+                rows.push(
+                    quantityRow('storage', 'move', ownerId, {
+                        presets: [1, 5, 10],
+                        maxLabel: 'Semua',
+                        argPrefix: `${meta.id}:${direction}:${activeEntry.item.id}`,
+                        customAction: 'move_modal',
+                        disableMulti: activeEntry.totalQty <= 1
+                    }, now)
+                );
+            }
+        } else {
+            blocks.push(
+                direction === 'put'
+                    ? `ℹ️ *Tidak ada barang yang cocok di Tasmu untuk disimpan ke **${meta.name}**.*`
+                    : `ℹ️ *Tidak ada barang di **${meta.name}** untuk diambil.*`
+            );
+        }
+    }
+
+    return buildPanel({
+        mod: 'storage',
+        ownerId,
+        accentColor: COLORS.LIFE,
+        title: `🧊 Penyimpanan Rumah & Cooler Box`,
+        player: p,
+        banner,
+        blocks,
+        rows,
+        footer: 'Klik tombol Mode di kanan atas untuk berganti antara Simpan dari Tas (📥) dan Ambil ke Tas (📤).',
+        now
+    });
+}
+
+async function executeStorageMove(discordId, place, direction, itemId, reqAmount, now = Date.now()) {
+    const meta = STORAGE_META[place] || STORAGE_META.kulkas;
+    const item = getItem(itemId);
+    if (!item || item.stackSize === 0) return { error: 'INVALID_ITEM' };
+
+    return await withTransaction(async (conn) => {
+        const synced = await syncPlayerVitals(conn, discordId, now, true);
+        const p = synced.player;
+        const propStatus = await getPlayerPropertyStatus(conn, discordId, p.max_slots, now, true);
+
+        const maxTargetCap = propStatus.capacities[meta.id] || 0;
+        if (maxTargetCap <= 0) {
+            return { error: 'FACILITY_LOCKED' };
+        }
+
+        const sourceLoc = direction === 'put' ? 'bag' : meta.id;
+        const destLoc = direction === 'put' ? meta.id : 'bag';
+        const destMaxSlots = direction === 'put' ? maxTargetCap : Number(p.max_slots || 20);
+
+        const sourceRows = await getPlayerInventory(conn, discordId, true, sourceLoc, now);
+        const destRows = await getPlayerInventory(conn, discordId, true, destLoc, now);
+
+        const ownedInSource = sourceRows
+            .filter(r => r.item_id === item.id)
+            .reduce((acc, r) => acc + Number(r.quantity), 0);
+
+        if (ownedInSource <= 0) {
+            return { error: 'NOT_IN_SOURCE' };
+        }
+
+        const moveQty = reqAmount === 'max'
+            ? ownedInSource
+            : Math.min(ownedInSource, Math.max(1, Number(reqAmount) || 1));
+
+        let remSim = moveQty;
+        const batchesToMove = [];
+        for (const r of sourceRows) {
+            if (r.item_id !== item.id || remSim <= 0) continue;
+            const take = Math.min(Number(r.quantity), remSim);
+            batchesToMove.push({
+                itemId: item.id,
+                qty: take,
+                freshnessMs: r.freshness_remaining_ms !== null ? Number(r.freshness_remaining_ms) : null
+            });
+            remSim -= take;
+        }
+
+        const fitCheck = canFitItems(destRows, destMaxSlots, batchesToMove);
+        if (!fitCheck.fits) {
+            return {
+                error: 'DEST_FULL',
+                slotsAfter: fitCheck.slotsAfter,
+                maxSlots: fitCheck.maxSlots
+            };
+        }
+
+        const removedBatches = await removeItem(conn, discordId, item.id, moveQty, sourceLoc);
+        for (const b of removedBatches) {
+            await addItem(conn, discordId, item.id, b.qty, now, destLoc, b.freshnessMs);
+        }
+
+        return {
+            ok: true,
+            item,
+            meta,
+            moveQty
+        };
+    });
+}
 
 module.exports = {
     name: 'storage',
     slash: true,
     data: new SlashCommandBuilder()
         .setName('storage')
-        .setDescription('Kelola penyimpanan Kulkas, Freezer, Gudang Rumah, dan Cooler Box portabel.')
-        .addSubcommand(sub =>
-            sub
-                .setName('view')
-                .setDescription('Lihat isi Kulkas, Freezer, Gudang, atau Cooler Box beserta sisa kesegarannya.')
-                .addStringOption(opt =>
-                    opt
-                        .setName('tempat')
-                        .setDescription('Filter lokasi penyimpanan (kosongkan untuk melihat semua)')
-                        .setRequired(false)
-                        .addChoices(...STORAGE_CHOICES)
-                )
-        )
-        .addSubcommand(sub =>
-            sub
-                .setName('put')
-                .setDescription('Simpan barang dari Tas ke Kulkas, Freezer, Gudang, atau Cooler Box.')
-                .addStringOption(opt =>
-                    opt
-                        .setName('tempat')
-                        .setDescription('Tujuan penyimpanan')
-                        .setRequired(true)
-                        .addChoices(...STORAGE_CHOICES)
-                )
-                .addStringOption(opt =>
-                    opt
-                        .setName('item')
-                        .setDescription('Barang dari Tas yang ingin disimpan')
-                        .setAutocomplete(true)
-                        .setRequired(true)
-                )
-                .addIntegerOption(opt =>
-                    opt
-                        .setName('amount')
-                        .setDescription('Jumlah barang yang ingin disimpan (default 1)')
-                        .setMinValue(1)
-                        .setMaxValue(500)
-                        .setRequired(false)
-                )
-        )
-        .addSubcommand(sub =>
-            sub
-                .setName('take')
-                .setDescription('Ambil barang dari Kulkas, Freezer, Gudang, atau Cooler Box ke Tas.')
-                .addStringOption(opt =>
-                    opt
-                        .setName('tempat')
-                        .setDescription('Lokasi asal barang')
-                        .setRequired(true)
-                        .addChoices(...STORAGE_CHOICES)
-                )
-                .addStringOption(opt =>
-                    opt
-                        .setName('item')
-                        .setDescription('Barang yang ingin diambil kembali ke Tas')
-                        .setAutocomplete(true)
-                        .setRequired(true)
-                )
-                .addIntegerOption(opt =>
-                    opt
-                        .setName('amount')
-                        .setDescription('Jumlah barang yang ingin diambil (default 1)')
-                        .setMinValue(1)
-                        .setMaxValue(500)
-                        .setRequired(false)
-                )
-        ),
+        .setDescription('Kelola penyimpanan Kulkas, Freezer, Gudang Rumah, dan Cooler Box portabel secara interaktif.'),
 
-    async autocomplete(interaction) {
-        const sub = interaction.options.getSubcommand();
-        const focused = (interaction.options.getFocused() || '').toLowerCase();
-        const targetPlace = interaction.options.getString('tempat') || 'kulkas';
-        const sourceLoc = sub === 'put' ? 'bag' : targetPlace;
+    async executeSlash(interaction) {
+        const now = Date.now();
+        const state = await fetchStorageState(interaction.user.id, now);
+        return await interaction.reply(
+            buildStoragePanel({
+                state,
+                place: 'kulkas',
+                direction: 'put',
+                now
+            })
+        );
+    },
 
-        try {
-            const rows = await query(
-                `SELECT item_id, SUM(quantity) AS total_qty
-                 FROM player_inventory
-                 WHERE discord_id = ? AND storage_location = ? AND quantity > 0
-                 GROUP BY item_id`,
-                [interaction.user.id, sourceLoc]
-            );
+    panel: {
+        buttons: {
+            async tab(interaction, parsed) {
+                const now = Date.now();
+                const [place = 'kulkas', direction = 'put'] = (parsed.arg || '').split(':');
+                const state = await fetchStorageState(interaction.user.id, now);
+                return await interaction.update(
+                    buildStoragePanel({
+                        state,
+                        place,
+                        direction,
+                        now
+                    })
+                );
+            },
+            async move(interaction, parsed) {
+                const now = Date.now();
+                const [place = 'kulkas', direction = 'put', itemId = '', rawQty = '1'] = (parsed.arg || '').split(':');
+                const reqAmount = rawQty === 'max' ? 'max' : Number(rawQty) || 1;
+                const res = await executeStorageMove(interaction.user.id, place, direction, itemId, reqAmount, now);
+                const state = await fetchStorageState(interaction.user.id, now);
 
-            const choices = [];
-            for (const r of rows) {
-                const it = getItem(r.item_id);
-                if (!it || it.stackSize === 0) continue;
-
-                if (sub === 'put') {
-                    const meta = STORAGE_META[targetPlace];
-                    const perishable = isItemPerishable(it);
-                    if (meta?.perishableOnly && !perishable) continue;
-                    if (!meta?.perishableOnly && perishable) continue;
+                let banner = null;
+                if (!res.ok) {
+                    banner = {
+                        type: 'warning',
+                        text: res.error === 'DEST_FULL'
+                            ? `Kapasitas penyimpanan tujuan penuh! Butuh **${res.slotsAfter}/${res.maxSlots} slot**.`
+                            : 'Gagal memindahkan barang: pastikan barang masih tersedia dan ruang cukup.'
+                    };
+                } else {
+                    banner = {
+                        type: 'success',
+                        text: direction === 'put'
+                            ? `📥 Menyimpan **${res.moveQty}× ${res.item.emoji} ${res.item.name}** ke **${res.meta.emoji} ${res.meta.name}**!`
+                            : `📤 Mengambil **${res.moveQty}× ${res.item.emoji} ${res.item.name}** dari **${res.meta.emoji} ${res.meta.name}** ke Tas!`
+                    };
                 }
 
-                const searchStr = `${it.id} ${it.name}`.toLowerCase();
-                if (!focused || searchStr.includes(focused)) {
-                    choices.push({
-                        name: `${it.name} ×${r.total_qty}`.slice(0, 100),
-                        value: it.id
-                    });
-                }
-                if (choices.length >= 25) break;
+                return await interaction.update(
+                    buildStoragePanel({
+                        state,
+                        place,
+                        direction,
+                        selectedItemId: itemId,
+                        banner,
+                        now
+                    })
+                );
+            },
+            async move_modal(interaction, parsed) {
+                const now = Date.now();
+                const [place = 'kulkas', direction = 'put', itemId = ''] = (parsed.arg || '').split(':');
+                const item = getItem(itemId);
+                return await interaction.showModal(
+                    numberModal('storage', 'move_submit', interaction.user.id, {
+                        title: `${direction === 'put' ? 'Simpan' : 'Ambil'} ${item ? item.name : 'Barang'}`,
+                        label: 'Jumlah barang (1 - 500)',
+                        placeholder: 'Contoh: 10',
+                        arg: `${place}:${direction}:${itemId}`
+                    }, now)
+                );
             }
+        },
+        selects: {
+            async pick(interaction) {
+                const now = Date.now();
+                const [place = 'kulkas', direction = 'put', itemId = ''] = (interaction.values[0] || '').split(':');
+                const state = await fetchStorageState(interaction.user.id, now);
+                return await interaction.update(
+                    buildStoragePanel({
+                        state,
+                        place,
+                        direction,
+                        selectedItemId: itemId,
+                        now
+                    })
+                );
+            }
+        },
+        modals: {
+            async move_submit(interaction, parsed) {
+                const now = Date.now();
+                const [place = 'kulkas', direction = 'put', itemId = ''] = (parsed.arg || '').split(':');
+                const parsedNum = parseModalNumber(interaction, { min: 1, max: 500 });
 
-            await interaction.respond(choices);
-        } catch {
-            await interaction.respond([]);
+                if (!parsedNum.ok) {
+                    const state = await fetchStorageState(interaction.user.id, now);
+                    const payload = buildStoragePanel({
+                        state,
+                        place,
+                        direction,
+                        selectedItemId: itemId,
+                        banner: { type: 'warning', text: parsedNum.error },
+                        now
+                    });
+                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                }
+
+                const res = await executeStorageMove(interaction.user.id, place, direction, itemId, parsedNum.value, now);
+                const state = await fetchStorageState(interaction.user.id, now);
+                const banner = res.ok
+                    ? {
+                        type: 'success',
+                        text: direction === 'put'
+                            ? `📥 Menyimpan **${res.moveQty}× ${res.item.emoji} ${res.item.name}** ke **${res.meta.emoji} ${res.meta.name}**!`
+                            : `📤 Mengambil **${res.moveQty}× ${res.item.emoji} ${res.item.name}** dari **${res.meta.emoji} ${res.meta.name}** ke Tas!`
+                    }
+                    : { type: 'warning', text: 'Kapasitas penyimpanan tujuan tidak mencukupi atau jumlah melebihi stok.' };
+
+                const payload = buildStoragePanel({
+                    state,
+                    place,
+                    direction,
+                    selectedItemId: itemId,
+                    banner,
+                    now
+                });
+                return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+            }
         }
     },
 
-    async executeSlash(interaction) {
-        const sub = interaction.options.getSubcommand();
-        const discordId = interaction.user.id;
-        const now = Date.now();
-
-        if (sub === 'view') {
-            const filterPlace = interaction.options.getString('tempat');
-            const data = await withTransaction(async (conn) => {
-                const synced = await syncPlayerVitals(conn, discordId, now, false);
-                const propStatus = await getPlayerPropertyStatus(conn, discordId, synced.player.max_slots, now, false);
-                const allRows = await getPlayerInventory(conn, discordId, false, 'all', now);
-                return { player: synced.player, propStatus, allRows };
-            });
-
-            const { propStatus, allRows } = data;
-            const placesToShow = filterPlace ? [filterPlace] : ['coolerbox', 'kulkas', 'freezer', 'gudang'];
-            const blocks = [
-                `🏠 **Hunian Aktif:** ${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}**${propStatus.isEvicted ? ' *(🔒 Kontrak berakhir/diusir — penyimpanan rumah terkunci)*' : ''}`
-            ];
-
-            for (const locKey of placesToShow) {
-                const meta = STORAGE_META[locKey];
-                const rowsInLoc = allRows.filter(r => r.storage_location === locKey);
-                const maxCap = propStatus.capacities[locKey] || 0;
-                const usedSlots = calculateSlotsUsed(rowsInLoc);
-
-                if (maxCap <= 0 && rowsInLoc.length === 0) {
-                    if (filterPlace === locKey) {
-                        blocks.push(
-                            `${meta.emoji} **${meta.name}** — 🔒 *Belum Terbuka*\n${locKey === 'coolerbox' ? 'Beli **🧊 Cooler Box Portabel** di Toko Perkakas (`/shop`).' : 'Sewa atau beli properti yang memiliki fasilitas ini lewat `/property list`.'}`
-                        );
-                    }
-                    continue;
-                }
-
-                const lockNotice = (maxCap <= 0 && rowsInLoc.length > 0)
-                    ? ' · 🔒 **TERKUNCI (Sewa/Beli Properti untuk Mengakses)**'
-                    : '';
-
-                const itemLines = rowsInLoc.map(r => {
-                    const it = getItem(r.item_id);
-                    if (!it) return null;
-                    const freshBadge = r.freshness_remaining_ms !== null
-                        ? ` · *${formatFreshnessBadge(r.freshness_remaining_ms, locKey)}*`
-                        : '';
-                    return `• ${it.emoji} **${it.name}** ×**${r.quantity}**${freshBadge}`;
-                }).filter(Boolean);
-
-                blocks.push(
-                    [
-                        `${meta.emoji} **${meta.name}** — \`${renderBar(usedSlots, Math.max(1, maxCap), 8)}\` (**${usedSlots}/${maxCap} slot**)${lockNotice}`,
-                        `*${meta.rateText}*`,
-                        itemLines.length > 0 ? itemLines.slice(0, 15).join('\n') : '*Kosong*'
-                    ].join('\n')
-                );
-            }
-
-            if (blocks.length === 1) {
-                blocks.push('Kamu belum memiliki fasilitas penyimpanan aktif. Beli **🧊 Cooler Box** di Toko Perkakas (`/shop`) atau sewa hunian lewat `/property list`!');
-            }
-
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.LIFE,
-                    title: '🧊 Penyimpanan Rumah & Cooler Box',
-                    blocks,
-                    footer: 'Gunakan /storage put untuk menyimpan barang dari Tas, atau /storage take untuk mengambil ke Tas.',
-                    ephemeral: true
-                })
-            );
-        }
-
-        const targetPlace = interaction.options.getString('tempat', true);
-        const itemId = interaction.options.getString('item', true).toLowerCase();
-        const reqAmount = interaction.options.getInteger('amount') || 1;
-        const meta = STORAGE_META[targetPlace];
-        const item = getItem(itemId);
-
-        if (!item || item.stackSize === 0) {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.DANGER,
-                    title: '❌ Barang Tidak Valid',
-                    blocks: ['Pilih barang yang valid dari daftar autocomplete. Dokumen/lisensi 0 slot tidak perlu dipindahkan.'],
-                    ephemeral: true
-                })
-            );
-        }
-
-        if (sub === 'put') {
-            const perishable = isItemPerishable(item);
-            if (meta.perishableOnly && !perishable) {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: `⚠️ ${meta.name} Khusus Barang yang Bisa Basi`,
-                        blocks: [
-                            `**${item.emoji} ${item.name}** tidak bisa basi! Gunakan **📦 Gudang Rumah** (\`/storage put tempat:gudang\`) untuk menyimpan barang yang tidak bisa basi.`
-                        ],
-                        ephemeral: true
-                    })
-                );
-            }
-            if (!meta.perishableOnly && perishable) {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '⚠️ Gudang Hanya untuk Barang Tidak Basi',
-                        blocks: [
-                            `**${item.emoji} ${item.name}** dapat membusuk! Simpan di **❄️ Kulkas**, **🧊 Freezer**, atau **🧊 Cooler Box** agar kesegarannya terjaga.`
-                        ],
-                        ephemeral: true
-                    })
-                );
-            }
-        }
-
-        const res = await withTransaction(async (conn) => {
-            const synced = await syncPlayerVitals(conn, discordId, now, true);
-            const p = synced.player;
-            const propStatus = await getPlayerPropertyStatus(conn, discordId, p.max_slots, now, true);
-
-            const maxTargetCap = propStatus.capacities[targetPlace] || 0;
-            if (maxTargetCap <= 0) {
-                return {
-                    error: 'FACILITY_LOCKED',
-                    propStatus
-                };
-            }
-
-            const sourceLoc = sub === 'put' ? 'bag' : targetPlace;
-            const destLoc = sub === 'put' ? targetPlace : 'bag';
-            const destMaxSlots = sub === 'put' ? maxTargetCap : Number(p.max_slots || 20);
-
-            const sourceRows = await getPlayerInventory(conn, discordId, true, sourceLoc, now);
-            const destRows = await getPlayerInventory(conn, discordId, true, destLoc, now);
-
-            const ownedInSource = sourceRows
-                .filter(r => r.item_id === item.id)
-                .reduce((acc, r) => acc + Number(r.quantity), 0);
-
-            if (ownedInSource <= 0) {
-                return { error: 'NOT_IN_SOURCE', sourceLoc };
-            }
-
-            const moveQty = Math.min(ownedInSource, reqAmount);
-
-            // Simulasikan batch FIFO yang akan dipindahkan untuk mengecek kecukupan slot tujuan
-            let remSim = moveQty;
-            const batchesToMove = [];
-            for (const r of sourceRows) {
-                if (r.item_id !== item.id || remSim <= 0) continue;
-                const take = Math.min(Number(r.quantity), remSim);
-                batchesToMove.push({
-                    itemId: item.id,
-                    qty: take,
-                    freshnessMs: r.freshness_remaining_ms !== null ? Number(r.freshness_remaining_ms) : null
-                });
-                remSim -= take;
-            }
-
-            const fitCheck = canFitItems(destRows, destMaxSlots, batchesToMove);
-            if (!fitCheck.fits) {
-                return {
-                    error: 'DEST_FULL',
-                    destLoc,
-                    slotsBefore: fitCheck.slotsBefore,
-                    slotsAfter: fitCheck.slotsAfter,
-                    maxSlots: fitCheck.maxSlots
-                };
-            }
-
-            const removedBatches = await removeItem(conn, discordId, item.id, moveQty, sourceLoc);
-            for (const b of removedBatches) {
-                await addItem(conn, discordId, item.id, b.qty, now, destLoc, b.freshnessMs);
-            }
-
-            const updatedDestRows = await getPlayerInventory(conn, discordId, false, destLoc, now);
-            return {
-                ok: true,
-                moveQty,
-                destSlotsUsed: calculateSlotsUsed(updatedDestRows),
-                destMaxSlots
-            };
-        });
-
-        if (res.error === 'FACILITY_LOCKED') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.WARNING,
-                    title: `🔒 ${meta.emoji} ${meta.name} Belum Terbuka / Terkunci`,
-                    blocks: [
-                        targetPlace === 'coolerbox'
-                            ? 'Kamu belum memiliki **🧊 Cooler Box Portabel**. Beli terlebih dahulu di **Toko Perkakas** (`/shop` atau `/buy item:cooler_box`).'
-                            : res.propStatus.isEvicted
-                                ? 'Penyimpanan rumahmu sedang **terkunci** karena masa sewa berakhir. Sewa atau beli properti kembali lewat `/property` untuk membuka akses!'
-                                : `Hunianmu saat ini (**${res.propStatus.effectiveTier.name}**) tidak memiliki fasilitas **${meta.name}**. Upgrade hunianmu lewat \`/property list\`.`
-                    ],
-                    ephemeral: true
-                })
-            );
-        }
-
-        if (res.error === 'NOT_IN_SOURCE') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.WARNING,
-                    title: '📦 Barang Tidak Ditemukan',
-                    blocks: [
-                        sub === 'put'
-                            ? `Kamu tidak memiliki **${item.emoji} ${item.name}** di dalam Tasmu.`
-                            : `Tidak ada **${item.emoji} ${item.name}** di dalam **${meta.name}**.`
-                    ],
-                    ephemeral: true
-                })
-            );
-        }
-
-        if (res.error === 'DEST_FULL') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.DANGER,
-                    title: '📦 Kapasitas Penyimpanan Tujuan Penuh!',
-                    blocks: [
-                        sub === 'put'
-                            ? `**${meta.emoji} ${meta.name}** tidak cukup ruang! Butuh **${res.slotsAfter} slot**, sedangkan kapasitas maksimalnya **${res.maxSlots} slot**.`
-                            : `**🎒 Tasmu** penuh! Butuh **${res.slotsAfter} slot**, sedangkan kapasitas tasmu **${res.maxSlots} slot**.`
-                    ],
-                    ephemeral: true
-                })
-            );
-        }
-
-        return await interaction.reply(
-            buildV2Card({
-                accentColor: COLORS.SUCCESS,
-                title: sub === 'put'
-                    ? `${meta.emoji} Barang Disimpan ke ${meta.name}`
-                    : `🎒 Barang Diambil dari ${meta.name}`,
-                blocks: [
-                    sub === 'put'
-                        ? `Berhasil memindahkan **${res.moveQty}× ${item.emoji} ${item.name}** dari Tas ke **${meta.emoji} ${meta.name}** *(Kapasitas: ${res.destSlotsUsed}/${res.destMaxSlots} slot)*.`
-                        : `Berhasil mengambil **${res.moveQty}× ${item.emoji} ${item.name}** dari **${meta.emoji} ${meta.name}** ke **🎒 Tas** *(Kapasitas Tas: ${res.destSlotsUsed}/${res.destMaxSlots} slot)*.`
-                ]
-            })
-        );
-    }
+    buildStoragePanel
 };

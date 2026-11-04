@@ -1,273 +1,303 @@
-const { SlashCommandBuilder } = require('discord.js');
-const { withTransaction, query } = require('../../database/mariadb');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
+const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
-const { getPlayerInventory, removeItem } = require('../../services/inventoryService');
-const { creditPlayerCash, getLiveEconomyConfig } = require('../../services/economyService');
-const { getItemDynamicSellInfo, recordItemsSold } = require('../../services/marketService');
-const { getItem, getSellableItems } = require('../../data/items');
-const { COLORS, formatLp, buildV2Card } = require('../../utils/uiBuilder');
+const { getPlayerInventory } = require('../../services/inventoryService');
+const { getLiveEconomyConfig } = require('../../services/economyService');
+const { getItemDynamicSellInfo, executeSellItems } = require('../../services/marketService');
+const { getItem } = require('../../data/items');
+const { COLORS, formatLp } = require('../../utils/uiBuilder');
+const {
+    buildPanel,
+    btn,
+    select,
+    quantityRow,
+    numberModal,
+    parseModalNumber
+} = require('../../utils/panelBuilder');
+
+const SAMPLE_MARKET_IDS = [
+    'ikan_mujair',
+    'ikan_gurame',
+    'ikan_arwana',
+    'batubara',
+    'bijih_perak',
+    'bijih_emas',
+    'berlian_biru'
+];
+
+async function fetchSellState(discordId, now = Date.now()) {
+    const data = await withTransaction(async (conn) => {
+        const synced = await syncPlayerVitals(conn, discordId, now, false);
+        const invRows = await getPlayerInventory(conn, discordId, false, 'bag', now);
+        const liveCfg = await getLiveEconomyConfig(conn);
+        return { player: synced.player, invRows, liveCfg };
+    });
+
+    const sellMultiplier = Number(data.liveCfg.sell_multiplier || 1.0);
+    const groupedInBag = new Map();
+
+    for (const row of data.invRows) {
+        const it = getItem(row.item_id);
+        if (it && it.sellPrice > 0 && Number(row.quantity) > 0) {
+            const prev = groupedInBag.get(it.id) || { item: it, qty: 0 };
+            prev.qty += Number(row.quantity);
+            groupedInBag.set(it.id, prev);
+        }
+    }
+
+    const bagEntries = [];
+    let estimatedBagTotal = 0;
+    for (const entry of groupedInBag.values()) {
+        const info = await getItemDynamicSellInfo(entry.item.id, sellMultiplier, now);
+        const subTotal = info.unitPrice * entry.qty;
+        estimatedBagTotal += subTotal;
+        bagEntries.push({
+            ...entry,
+            info,
+            subTotal
+        });
+    }
+
+    const marketBoard = [];
+    for (const id of SAMPLE_MARKET_IDS) {
+        const info = await getItemDynamicSellInfo(id, sellMultiplier, now);
+        if (info) marketBoard.push(info);
+    }
+
+    return {
+        player: data.player,
+        bagEntries,
+        estimatedBagTotal,
+        marketBoard
+    };
+}
+
+function buildSellPanel({
+    state,
+    selectedItemId = null,
+    banner = null,
+    now = Date.now()
+}) {
+    const { player: p, bagEntries, estimatedBagTotal, marketBoard } = state;
+    const ownerId = p.discord_id;
+
+    const selectedEntry = selectedItemId
+        ? bagEntries.find(e => e.item.id === selectedItemId) || null
+        : null;
+
+    const bagLines = bagEntries.map(e =>
+        `• ${e.item.emoji} **${e.item.name}** ×${e.qty} → **${formatLp(e.info.unitPrice)}/pcs** *(${e.info.percentOfBase}% · ${e.info.trend})* = **${formatLp(e.subTotal)}**`
+    );
+
+    const marketLines = marketBoard.map(info =>
+        `• ${info.item.emoji} **${info.item.name}**: **${formatLp(info.unitPrice)}** *(Dasar ${formatLp(info.basePrice)} · ${info.percentOfBase}% · Suplai 24j: ${info.sold24h}/${info.threshold} · ${info.trend})*`
+    );
+
+    const blocks = [
+        bagLines.length > 0
+            ? `**🎒 Komoditas di Tasmu (Estimasi Total: ${formatLp(estimatedBagTotal)}):**\n${bagLines.slice(0, 12).join('\n')}${bagLines.length > 12 ? `\n*...dan ${bagLines.length - 12} jenis lainnya.*` : ''}`
+            : '🎒 *Tasmu saat ini belum berisi komoditas (ikan, mineral, panen tani, atau masakan) yang dapat dijual.*',
+        `**📈 Indeks Harga Pasar Dinamis (24 Jam):**\n${marketLines.join('\n')}`
+    ];
+
+    const rows = [];
+
+    if (bagEntries.length > 0) {
+        rows.push(
+            select('sell', 'pick', ownerId, {
+                placeholder: '📦 Pilih komoditas di tas untuk dijual sebagian...',
+                options: bagEntries.slice(0, 25).map(e => ({
+                    label: `${e.item.name} (×${e.qty})`.slice(0, 100),
+                    value: e.item.id,
+                    emoji: e.item.emoji,
+                    description: `Harga Pasar: ${formatLp(e.info.unitPrice)}/pcs (${e.info.percentOfBase}%) — Total: ${formatLp(e.subTotal)}`.slice(0, 100),
+                    default: selectedEntry ? selectedEntry.item.id === e.item.id : false
+                }))
+            }, now)
+        );
+    }
+
+    if (selectedEntry) {
+        rows.push(
+            quantityRow('sell', 'qty', ownerId, selectedEntry.qty, now, selectedEntry.item.id)
+        );
+    }
+
+    const hasFish = bagEntries.some(e => e.item.tags?.includes('fish') || e.item.tags?.includes('trash'));
+    const hasMineral = bagEntries.some(e => e.item.tags?.includes('mineral'));
+    const hasCrop = bagEntries.some(e => e.item.tags?.includes('crop'));
+    const hasCooked = bagEntries.some(e => e.item.tags?.includes('cooked'));
+
+    rows.push(
+        new ActionRowBuilder().addComponents(
+            btn('sell', 'bulk', ownerId, {
+                label: 'Jual Ikan',
+                emoji: '🐟',
+                style: ButtonStyle.Primary,
+                disabled: !hasFish,
+                arg: 'semua_ikan'
+            }, now),
+            btn('sell', 'bulk', ownerId, {
+                label: 'Jual Tambang',
+                emoji: '⛏️',
+                style: ButtonStyle.Primary,
+                disabled: !hasMineral,
+                arg: 'semua_tambang'
+            }, now),
+            btn('sell', 'bulk', ownerId, {
+                label: 'Jual Tani',
+                emoji: '🌾',
+                style: ButtonStyle.Primary,
+                disabled: !hasCrop,
+                arg: 'semua_tani'
+            }, now),
+            btn('sell', 'bulk', ownerId, {
+                label: 'Jual Masakan',
+                emoji: '🍛',
+                style: ButtonStyle.Primary,
+                disabled: !hasCooked,
+                arg: 'semua_masakan'
+            }, now),
+            btn('sell', 'bulk', ownerId, {
+                label: 'Jual Semua Hasil',
+                emoji: '💰',
+                style: ButtonStyle.Success,
+                disabled: bagEntries.length === 0,
+                arg: 'semua_hasil'
+            }, now)
+        )
+    );
+
+    return buildPanel({
+        mod: 'sell',
+        ownerId,
+        accentColor: COLORS.ECONOMY,
+        title: '📊 Papan Harga Pasar & Pengepul Komoditas (/sell)',
+        player: p,
+        banner,
+        blocks,
+        rows,
+        footer: 'Harga bergerak dinamis berdasarkan suplai global 24 jam (turun hingga maks 50% bila banjir suplai, pulih tiap jam).',
+        now
+    });
+}
+
+function formatSaleBanner(res) {
+    if (!res.ok) {
+        return { type: 'warning', text: 'Tidak ada komoditas yang sesuai di tasmu untuk dijual.' };
+    }
+    const preview = res.soldDetails
+        .slice(0, 3)
+        .map(d => `${d.qty}× ${d.item.emoji} ${d.item.name}`)
+        .join(', ');
+    const more = res.soldDetails.length > 3 ? ` (+${res.soldDetails.length - 3} lainnya)` : '';
+    return {
+        type: 'success',
+        text: `💰 Terjual **${preview}${more}** dengan total pendapatan **+${formatLp(res.grandTotal)}**!`
+    };
+}
 
 module.exports = {
     name: 'sell',
     slash: true,
     data: new SlashCommandBuilder()
         .setName('sell')
-        .setDescription('Jual ikan, tambang, panen tani, atau masakan ke pasar dinamis (kosongkan item untuk papan harga).')
-        .addStringOption(opt =>
-            opt
-                .setName('item')
-                .setDescription('Pilih item atau opsi cepat (semua_ikan, semua_tambang, semua_tani, semua_masakan, semua_hasil)')
-                .setAutocomplete(true)
-                .setRequired(false)
-        )
-        .addIntegerOption(opt =>
-            opt
-                .setName('amount')
-                .setDescription('Jumlah yang ingin dijual (kosongkan untuk menjual semua dari item tersebut)')
-                .setMinValue(1)
-                .setMaxValue(1000)
-                .setRequired(false)
-        ),
-
-    async autocomplete(interaction) {
-        const focused = (interaction.options.getFocused() || '').toLowerCase();
-        const bulkOptions = [
-            { name: '🐟 Jual Semua Ikan di Tas (semua_ikan)', value: 'semua_ikan' },
-            { name: '⛏️ Jual Semua Hasil Tambang di Tas (semua_tambang)', value: 'semua_tambang' },
-            { name: '🌾 Jual Semua Hasil Tani Mentah di Tas (semua_tani)', value: 'semua_tani' },
-            { name: '🍛 Jual Semua Masakan Rumahan di Tas (semua_masakan)', value: 'semua_masakan' },
-            { name: '♻️ Jual Semua Sampah di Tas (semua_sampah)', value: 'semua_sampah' },
-            { name: '💰 Jual Seluruh Ikan, Tambang, Tani & Sampah (semua_hasil)', value: 'semua_hasil' }
-        ];
-
-        const choices = bulkOptions.filter(o => o.name.toLowerCase().includes(focused) || o.value.includes(focused));
-
-        try {
-            const rows = await query(
-                `SELECT item_id, SUM(quantity) AS total_qty
-                 FROM player_inventory
-                 WHERE discord_id = ? AND storage_location = 'bag' AND quantity > 0
-                 GROUP BY item_id`,
-                [interaction.user.id]
-            );
-
-            for (const row of rows) {
-                const it = getItem(row.item_id);
-                if (!it || !it.sellPrice) continue;
-                const target = `${it.id} ${it.name}`.toLowerCase();
-                if (!focused || target.includes(focused)) {
-                    choices.push({
-                        name: `${it.name} ×${row.total_qty} (Harga Dasar ${formatLp(it.sellPrice)})`.slice(0, 100),
-                        value: it.id
-                    });
-                }
-                if (choices.length >= 25) break;
-            }
-        } catch {
-            // ignore
-        }
-
-        await interaction.respond(choices.slice(0, 25));
-    },
+        .setDescription('Buka panel pasar dinamis: cek harga 24 jam dan jual ikan, tambang, tani, & masakan.'),
 
     async executeSlash(interaction) {
-        const discordId = interaction.user.id;
-        const itemArg = interaction.options.getString('item')?.toLowerCase();
-        const amountArg = interaction.options.getInteger('amount');
         const now = Date.now();
+        const state = await fetchSellState(interaction.user.id, now);
+        return await interaction.reply(buildSellPanel({ state, now }));
+    },
 
-        // Tanpa argumen: tampilkan Papan Harga Pasar Dinamis
-        if (!itemArg) {
-            const data = await withTransaction(async (conn) => {
-                const synced = await syncPlayerVitals(conn, discordId, now, false);
-                const invRows = await getPlayerInventory(conn, discordId, false);
-                const liveCfg = await getLiveEconomyConfig(conn);
-                return { player: synced.player, invRows, liveCfg };
-            });
+    panel: {
+        buttons: {
+            async bulk(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const bulkKey = parsed.arg || 'semua_hasil';
+                const res = await executeSellItems(userId, bulkKey, null, now);
+                const state = await fetchSellState(userId, now);
+                return await interaction.update(
+                    buildSellPanel({
+                        state,
+                        banner: formatSaleBanner(res),
+                        now
+                    })
+                );
+            },
+            async qty(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const rawArg = String(parsed.arg || '');
+                const sepIdx = rawArg.indexOf('_');
+                const qtySpec = sepIdx >= 0 ? rawArg.slice(0, sepIdx) : rawArg;
+                const itemId = sepIdx >= 0 ? rawArg.slice(sepIdx + 1) : '';
 
-            const sellMultiplier = Number(data.liveCfg.sell_multiplier || 1.0);
-            const groupedInBag = new Map();
-
-            for (const row of data.invRows) {
-                const it = getItem(row.item_id);
-                if (it && it.sellPrice > 0) {
-                    const prev = groupedInBag.get(it.id) || { item: it, qty: 0 };
-                    prev.qty += Number(row.quantity);
-                    groupedInBag.set(it.id, prev);
+                if (qtySpec === 'custom') {
+                    const it = getItem(itemId);
+                    const modal = numberModal('sell', 'qty_modal', userId, {
+                        title: `💰 Jual ${it ? it.name : itemId}`,
+                        label: 'Jumlah yang ingin dijual (angka bulat)',
+                        placeholder: 'Contoh: 15',
+                        arg: itemId
+                    }, now);
+                    return await interaction.showModal(modal);
                 }
-            }
 
-            const sellableInBag = Array.from(groupedInBag.values());
-
-            const bagPriceLines = [];
-            let estimatedBagTotal = 0;
-
-            for (const entry of sellableInBag) {
-                const info = await getItemDynamicSellInfo(entry.item.id, sellMultiplier, now);
-                const subTotal = info.unitPrice * entry.qty;
-                estimatedBagTotal += subTotal;
-                bagPriceLines.push(
-                    `• ${entry.item.emoji} **${entry.item.name}** ×${entry.qty} → **${formatLp(info.unitPrice)}/pcs** (${info.percentOfBase}% · ${info.trend}) = **${formatLp(subTotal)}**`
+                const amount = qtySpec === 'max' ? 'max' : (Number(qtySpec) || 1);
+                const res = await executeSellItems(userId, itemId, amount, now);
+                const state = await fetchSellState(userId, now);
+                return await interaction.update(
+                    buildSellPanel({
+                        state,
+                        selectedItemId: itemId,
+                        banner: formatSaleBanner(res),
+                        now
+                    })
                 );
             }
+        },
+        selects: {
+            async pick(interaction) {
+                const now = Date.now();
+                const itemId = interaction.values[0] || '';
+                const state = await fetchSellState(interaction.user.id, now);
+                return await interaction.update(buildSellPanel({ state, selectedItemId: itemId, now }));
+            }
+        },
+        modals: {
+            async qty_modal(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const itemId = parsed.arg || '';
+                const parsedNum = parseModalNumber(interaction, 'amount', { min: 1, max: 9999 });
 
-            // Contoh komoditas utama pasar
-            const sampleIds = ['ikan_mujair', 'ikan_gurame', 'ikan_arwana', 'batubara', 'bijih_perak', 'bijih_emas', 'berlian_biru'];
-            const marketLines = [];
-            for (const id of sampleIds) {
-                const info = await getItemDynamicSellInfo(id, sellMultiplier, now);
-                if (info) {
-                    marketLines.push(
-                        `• ${info.item.emoji} **${info.item.name}**: **${formatLp(info.unitPrice)}** *(Dasar ${formatLp(info.basePrice)} · ${info.percentOfBase}% · Suplai 24j: ${info.sold24h}/${info.threshold} · ${info.trend})*`
+                if (!parsedNum.ok) {
+                    const state = await fetchSellState(userId, now);
+                    return await interaction.update(
+                        buildSellPanel({
+                            state,
+                            selectedItemId: itemId,
+                            banner: { type: 'warning', text: parsedNum.error },
+                            now
+                        })
                     );
                 }
-            }
 
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.ECONOMY,
-                    title: '📊 Papan Harga Pasar Ikan & Pengepul Tambang (24 Jam)',
-                    blocks: [
-                        'Harga beli NPC bergerak dinamis berdasarkan jumlah suplai global dalam 24 jam terakhir (turun hingga maks 50% bila banjir suplai, dan pulih otomatis setiap jam).',
-                        bagPriceLines.length > 0
-                            ? `**🎒 Komoditas di Tasmu (Estimasi Total: ${formatLp(estimatedBagTotal)}):**\n${bagPriceLines.slice(0, 12).join('\n')}`
-                            : '🎒 *Tasmu saat ini belum berisi ikan, mineral, atau sampah yang bisa dijual.*',
-                        `**📈 Indeks Komoditas Utama Kota:**\n${marketLines.join('\n')}`
-                    ],
-                    footer: 'Gunakan /sell item:semua_hasil untuk menjual semua sekaligus, atau pilih item tertentu.'
-                })
-            );
+                const res = await executeSellItems(userId, itemId, parsedNum.value, now);
+                const state = await fetchSellState(userId, now);
+                return await interaction.update(
+                    buildSellPanel({
+                        state,
+                        selectedItemId: itemId,
+                        banner: formatSaleBanner(res),
+                        now
+                    })
+                );
+            }
         }
+    },
 
-        // Proses penjualan
-        const res = await withTransaction(async (conn) => {
-            const synced = await syncPlayerVitals(conn, discordId, now, true);
-            const p = synced.player;
-            const invRows = await getPlayerInventory(conn, discordId, true);
-            const liveCfg = await getLiveEconomyConfig(conn);
-            const sellMultiplier = Number(liveCfg.sell_multiplier || 1.0);
-
-            const toSell = [];
-
-            if (['semua_ikan', 'semua_tambang', 'semua_tani', 'semua_masakan', 'semua_sampah', 'semua_hasil'].includes(itemArg)) {
-                const groupedSell = new Map();
-                for (const row of invRows) {
-                    const it = getItem(row.item_id);
-                    if (!it || !it.sellPrice || Number(row.quantity) <= 0) continue;
-
-                    const isFish = it.tags.includes('fish');
-                    const isMineral = it.tags.includes('mineral');
-                    const isCrop = it.tags.includes('crop');
-                    const isCooked = it.tags.includes('cooked');
-                    const isTrash = it.tags.includes('trash');
-
-                    if (
-                        (itemArg === 'semua_ikan' && isFish) ||
-                        (itemArg === 'semua_tambang' && isMineral) ||
-                        (itemArg === 'semua_tani' && isCrop) ||
-                        (itemArg === 'semua_masakan' && isCooked) ||
-                        (itemArg === 'semua_sampah' && isTrash) ||
-                        (itemArg === 'semua_hasil' && (isFish || isMineral || isCrop || isTrash))
-                    ) {
-                        const prev = groupedSell.get(it.id) || { item: it, qty: 0 };
-                        prev.qty += Number(row.quantity);
-                        groupedSell.set(it.id, prev);
-                    }
-                }
-                toSell.push(...groupedSell.values());
-            } else {
-                const it = getItem(itemArg);
-                if (!it || !it.sellPrice) {
-                    return { error: 'NOT_SELLABLE' };
-                }
-                const owned = invRows
-                    .filter(r => r.item_id === it.id)
-                    .reduce((acc, r) => acc + Number(r.quantity), 0);
-
-                if (owned <= 0) {
-                    return { error: 'NOT_OWNED', item: it };
-                }
-
-                const sellQty = amountArg ? Math.min(owned, amountArg) : owned;
-                toSell.push({ item: it, qty: sellQty });
-            }
-
-            if (toSell.length === 0) {
-                return { error: 'EMPTY_MATCH' };
-            }
-
-            let grandTotal = 0;
-            const soldDetails = [];
-
-            for (const entry of toSell) {
-                const dynInfo = await getItemDynamicSellInfo(entry.item.id, sellMultiplier, now);
-                const revenue = dynInfo.unitPrice * entry.qty;
-                grandTotal += revenue;
-
-                await removeItem(conn, discordId, entry.item.id, entry.qty);
-
-                soldDetails.push({
-                    itemId: entry.item.id,
-                    item: entry.item,
-                    qty: entry.qty,
-                    unitPrice: dynInfo.unitPrice,
-                    percentOfBase: dynInfo.percentOfBase,
-                    revenue
-                });
-            }
-
-            await creditPlayerCash(conn, p, grandTotal, `sell_${itemArg}`, {
-                itemsCount: soldDetails.length
-            }, now);
-
-            return {
-                player: p,
-                grandTotal,
-                soldDetails
-            };
-        });
-
-        if (res.error === 'NOT_SELLABLE') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.DANGER,
-                    title: '❌ Barang Tidak Dapat Dijual',
-                    blocks: ['Hanya hasil pancingan (ikan/sampah) dan hasil tambang yang dapat dijual ke pengepul.'],
-                    ephemeral: true
-                })
-            );
-        }
-
-        if (res.error === 'NOT_OWNED' || res.error === 'EMPTY_MATCH') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.WARNING,
-                    title: '🎒 Tidak Ada Komoditas yang Dijual',
-                    blocks: ['Kamu tidak memiliki item tersebut di dalam tasmu saat ini.'],
-                    ephemeral: true
-                })
-            );
-        }
-
-        // Catat penambahan suplai ke Redis 24 jam bergulir
-        await recordItemsSold(
-            res.soldDetails.map(d => ({ itemId: d.itemId, qty: d.qty })),
-            now
-        );
-
-        const summaryLines = res.soldDetails.map(d =>
-            `• **${d.qty}× ${d.item.emoji} ${d.item.name}** @ ${formatLp(d.unitPrice)} *(${d.percentOfBase}%)* = **${formatLp(d.revenue)}**`
-        );
-
-        return await interaction.reply(
-            buildV2Card({
-                accentColor: COLORS.SUCCESS,
-                title: '💰 Transaksi Penjualan Berhasil!',
-                blocks: [
-                    summaryLines.slice(0, 15).join('\n') + (summaryLines.length > 15 ? `\n*...dan ${summaryLines.length - 15} jenis lainnya.*` : ''),
-                    `💵 **Total Diterima:** **+${formatLp(res.grandTotal)}**\n💼 **Saldo Cash Sekarang:** **${formatLp(res.player.cash)}**`
-                ]
-            })
-        );
-    }
+    buildSellPanel
 };

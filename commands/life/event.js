@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonStyle } = require('discord.js');
 const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
 const {
@@ -10,7 +10,12 @@ const {
     claimCommunityGoalReward
 } = require('../../services/eventService');
 const { getItem } = require('../../data/items');
-const { COLORS, renderBar, buildV2Card } = require('../../utils/uiBuilder');
+const { COLORS, renderBar } = require('../../utils/uiBuilder');
+const {
+    buildPanel,
+    btn,
+    select
+} = require('../../utils/panelBuilder');
 
 function formatBonusesSummary(config, lebaranThr) {
     const parts = [];
@@ -28,382 +33,256 @@ function formatBonusesSummary(config, lebaranThr) {
     return parts.join(' · ') || 'Standar';
 }
 
+async function fetchEventState(discordId, now = Date.now()) {
+    return await withTransaction(async (conn) => {
+        const synced = await syncPlayerVitals(conn, discordId, now, false);
+        const weather = await getCurrentWeather(conn, now);
+        const active = await getActiveSeasonalEvent(conn, now);
+        let progress = null;
+        if (active) {
+            progress = await getPlayerEventProgress(conn, discordId, active.stateRow.event_key, false);
+        }
+        return {
+            player: synced.player,
+            weather,
+            active,
+            progress
+        };
+    });
+}
+
+function buildEventPanel({
+    state,
+    selectedShopItemId = null,
+    banner = null,
+    now = Date.now()
+}) {
+    const { player: p, weather, active, progress } = state;
+    const ownerId = p.discord_id;
+
+    const weatherBlock = [
+        `### ${weather.emoji} Cuaca Kota: ${weather.name}`,
+        `${weather.description}`,
+        `• 🔄 **Pergantian Musim Berikutnya:** <t:${Math.floor(weather.nextChangeAt / 1000)}:R> *(Siklus 2 Minggu)*`
+    ].join('\n');
+
+    const blocks = [weatherBlock];
+    const rows = [];
+
+    if (!active) {
+        const calendarLines = SEASONAL_EVENTS.map(ev => {
+            const sched = ev.scheduleType === 'fixed'
+                ? `Tanggal Tetap (${ev.fixedRange.startDay}/${ev.fixedRange.startMonth} – ${ev.fixedRange.endDay}/${ev.fixedRange.endMonth})`
+                : `Kalender Lunar/Hijriah (Diaktifkan saat perayaan)`;
+            return `• ${ev.emoji} **${ev.name}** — *${sched}*`;
+        });
+
+        blocks.push(
+            [
+                '### 📅 Status Event Musiman: Tidak Ada Event Aktif',
+                'Saat ini kota sedang berada di hari biasa. Berikut jadwal perayaan musiman tahunan:',
+                calendarLines.join('\n')
+            ].join('\n')
+        );
+
+        rows.push(
+            new ActionRowBuilder().addComponents(
+                btn('event', 'home', ownerId, {
+                    label: 'Segarkan Cuaca & Event',
+                    emoji: '🔄',
+                    style: ButtonStyle.Secondary
+                }, now)
+            )
+        );
+    } else {
+        const { config, stateRow, lebaranThr } = active;
+        const goal = config.communityGoal;
+        const goalTarget = goal.target;
+        const goalCurr = Number(stateRow.community_progress || 0);
+        const goalRewardText = (goal.rewardItems || []).map(rw => {
+            const it = getItem(rw.itemId);
+            return `${it ? it.emoji : '📦'} **${it ? it.name : rw.itemId}** ×${rw.qty}`;
+        }).join(' · ');
+
+        const shopItems = config.shopItems || [];
+        const activeShopItem = selectedShopItemId
+            ? shopItems.find(it => it.id === selectedShopItemId) || shopItems[0]
+            : shopItems[0];
+
+        const shopLines = shopItems.map(it =>
+            `• **${it.name}** — **${it.tokenCost} ${config.tokenEmoji} ${config.tokenName}** *( ${it.description} )*`
+        );
+
+        blocks.push(
+            [
+                `### ${config.emoji} Event Aktif: ${config.name}`,
+                `${config.description}`,
+                `• ⏳ **Berakhir:** <t:${Math.floor(Number(stateRow.ends_at) / 1000)}:R>`,
+                `• ✨ **Efek Aktif:** ${formatBonusesSummary(config, lebaranThr)}`,
+                `• ${config.tokenEmoji} **Saldo Token Kamu:** **${progress.token_balance} ${config.tokenName}**`,
+                `• 🌐 **Target Komunitas:** \`${renderBar(goalCurr, goalTarget, 10)}\` *(Kontribusimu: **${progress.community_contribution}x** · Hadiah: ${goalRewardText})*`
+            ].join('\n'),
+            `**🎪 Bazar Token Event:**\n${shopLines.join('\n')}`
+        );
+
+        if (shopItems.length > 0) {
+            rows.push(
+                select('event', 'pick_item', ownerId, {
+                    placeholder: `🎪 Pilih hadiah Bazar ${config.name} untuk ditukar...`,
+                    options: shopItems.slice(0, 25).map(it => ({
+                        label: `${it.name} (${it.tokenCost} ${config.tokenName})`.slice(0, 100),
+                        value: it.id,
+                        emoji: config.tokenEmoji,
+                        description: it.description.slice(0, 100),
+                        default: activeShopItem ? activeShopItem.id === it.id : false
+                    }))
+                }, now)
+            );
+        }
+
+        const actionBtns = [];
+        if (activeShopItem) {
+            const canAfford = Number(progress.token_balance || 0) >= activeShopItem.tokenCost;
+            actionBtns.push(
+                btn('event', 'buy', ownerId, {
+                    label: `Tukar: ${activeShopItem.name} (${activeShopItem.tokenCost})`.slice(0, 80),
+                    emoji: '🛍️',
+                    style: ButtonStyle.Primary,
+                    disabled: !canAfford,
+                    arg: activeShopItem.id
+                }, now)
+            );
+        }
+
+        const canClaimGoal = goalCurr >= goalTarget && progress.community_contribution >= 1 && !progress.goal_claimed;
+        actionBtns.push(
+            btn('event', 'claim_goal', ownerId, {
+                label: progress.goal_claimed
+                    ? 'Hadiah Komunitas Diklaim'
+                    : (goalCurr >= goalTarget ? 'Klaim Hadiah Komunitas!' : `Target Komunitas (${goalCurr}/${goalTarget})`),
+                emoji: progress.goal_claimed ? '✅' : '🎁',
+                style: ButtonStyle.Success,
+                disabled: !canClaimGoal
+            }, now),
+            btn('event', 'home', ownerId, {
+                label: 'Segarkan',
+                emoji: '🔄',
+                style: ButtonStyle.Secondary
+            }, now)
+        );
+
+        rows.push(new ActionRowBuilder().addComponents(actionBtns));
+    }
+
+    return buildPanel({
+        mod: 'event',
+        ownerId,
+        accentColor: active ? COLORS.SUCCESS : COLORS.PRIMARY,
+        title: active ? `${active.config.emoji} Pusat Cuaca & Bazar Event: ${active.config.name}` : '🌤️ Pusat Cuaca & Kalender Event Kota',
+        player: p,
+        banner,
+        blocks,
+        rows,
+        footer: 'Cuaca berganti otomatis tiap 2 minggu. Kumpulkan token dari aktivitas harian saat event berlangsung.',
+        now
+    });
+}
+
 module.exports = {
     name: 'event',
     slash: true,
     data: new SlashCommandBuilder()
         .setName('event')
-        .setDescription('Cek siklus cuaca 2 mingguan, event musiman aktif, toko token, dan target komunitas.')
-        .addSubcommand(sub =>
-            sub
-                .setName('info')
-                .setDescription('Lihat kondisi cuaca saat ini, jadwal event musiman, dan saldo token event.')
-        )
-        .addSubcommand(sub =>
-            sub
-                .setName('shop')
-                .setDescription('Buka Toko Event Musiman untuk menukarkan token dengan item & gelar eksklusif.')
-        )
-        .addSubcommand(sub =>
-            sub
-                .setName('buy')
-                .setDescription('Tukarkan token event dengan hadiah di Toko Event Musiman.')
-                .addStringOption(opt =>
-                    opt
-                        .setName('item')
-                        .setDescription('Pilih hadiah dari Toko Event yang sedang berlangsung')
-                        .setRequired(true)
-                        .setAutocomplete(true)
-                )
-        )
-        .addSubcommand(sub =>
-            sub
-                .setName('goal')
-                .setDescription('Lihat progres Target Komunitas Global selama event berlangsung.')
-        )
-        .addSubcommand(sub =>
-            sub
-                .setName('claim')
-                .setDescription('Klaim hadiah Target Komunitas Global bila target server telah tercapai.')
-        ),
+        .setDescription('Buka panel cuaca 2 mingguan, event musiman aktif, bazar penukaran token, dan target komunitas.'),
 
-    async autocomplete(interaction) {
-        const focused = (interaction.options.getFocused() || '').toLowerCase();
-        try {
-            const active = await withTransaction(conn => getActiveSeasonalEvent(conn, Date.now()));
-            if (!active || !active.config.shopItems) {
-                return await interaction.respond([]);
+    async executeSlash(interaction) {
+        const now = Date.now();
+        const state = await fetchEventState(interaction.user.id, now);
+        return await interaction.reply(buildEventPanel({ state, now }));
+    },
+
+    panel: {
+        buttons: {
+            async home(interaction) {
+                const now = Date.now();
+                const state = await fetchEventState(interaction.user.id, now);
+                return await interaction.update(buildEventPanel({ state, now }));
+            },
+            async buy(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const shopItemId = parsed.arg || '';
+
+                const res = await withTransaction(async (conn) => {
+                    const synced = await syncPlayerVitals(conn, userId, now, true);
+                    return await buyEventShopItem(conn, synced.player, shopItemId, now);
+                });
+
+                const state = await fetchEventState(userId, now);
+                let banner = null;
+                if (res.error === 'NO_ACTIVE_EVENT') {
+                    banner = { type: 'warning', text: 'Saat ini tidak ada event musiman yang aktif.' };
+                } else if (res.error === 'INSUFFICIENT_TOKENS') {
+                    banner = {
+                        type: 'danger',
+                        text: `Token tidak cukup! Butuh **${res.required} ${res.active.config.tokenName}**, saldomu **${res.balance}**.`
+                    };
+                } else if (res.error === 'TITLE_ALREADY_OWNED') {
+                    banner = { type: 'warning', text: `Kamu sudah memiliki gelar **${res.shopItem.name}**! Pasang lewat \`/achievements\`.` };
+                } else if (res.error === 'BAG_FULL') {
+                    banner = { type: 'danger', text: '🎒 Tasmu penuh! Kosongkan slot tas terlebih dahulu.' };
+                } else if (res.shopItem) {
+                    banner = {
+                        type: 'success',
+                        text: `🎉 Berhasil menukar **${res.shopItem.tokenCost} ${res.active.config.tokenEmoji}** dengan **${res.shopItem.name}**!`
+                    };
+                } else {
+                    banner = { type: 'warning', text: 'Gagal menukar hadiah event.' };
+                }
+
+                return await interaction.update(buildEventPanel({ state, selectedShopItemId: shopItemId, banner, now }));
+            },
+            async claim_goal(interaction) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const res = await withTransaction(async (conn) => {
+                    const synced = await syncPlayerVitals(conn, userId, now, true);
+                    return await claimCommunityGoalReward(conn, synced.player, now);
+                });
+
+                const state = await fetchEventState(userId, now);
+                let banner = null;
+                if (res.error === 'GOAL_NOT_REACHED') {
+                    banner = { type: 'warning', text: `Target komunitas belum tercapai (${res.currentGlobal}/${res.target}).` };
+                } else if (res.error === 'NO_CONTRIBUTION') {
+                    banner = { type: 'warning', text: 'Kamu harus berkontribusi minimal 1 aktivitas selama event untuk mengklaim hadiah komunitas!' };
+                } else if (res.error === 'ALREADY_CLAIMED') {
+                    banner = { type: 'info', text: 'Kamu sudah mengklaim hadiah Target Komunitas untuk event ini.' };
+                } else if (res.error === 'BAG_FULL') {
+                    banner = { type: 'danger', text: '🎒 Tasmu penuh! Kosongkan slot tas terlebih dahulu.' };
+                } else if (res.rewardItems) {
+                    const rewardSummary = res.rewardItems.map(rw => {
+                        const it = getItem(rw.itemId);
+                        return `${it ? it.emoji : '📦'} ${it ? it.name : rw.itemId} ×${rw.qty}`;
+                    }).join(', ');
+                    banner = {
+                        type: 'success',
+                        text: `🎊 Hadiah Target Komunitas berhasil diklaim: **${rewardSummary}**!`
+                    };
+                }
+
+                return await interaction.update(buildEventPanel({ state, banner, now }));
             }
-            const items = active.config.shopItems.filter(
-                it => !focused || `${it.id} ${it.name}`.toLowerCase().includes(focused)
-            );
-            await interaction.respond(
-                items.slice(0, 25).map(it => ({
-                    name: `${it.name} (${it.tokenCost} ${active.config.tokenName})`.slice(0, 100),
-                    value: it.id
-                }))
-            );
-        } catch {
-            await interaction.respond([]);
+        },
+        selects: {
+            async pick_item(interaction) {
+                const now = Date.now();
+                const shopItemId = interaction.values[0] || '';
+                const state = await fetchEventState(interaction.user.id, now);
+                return await interaction.update(buildEventPanel({ state, selectedShopItemId: shopItemId, now }));
+            }
         }
     },
 
-    async executeSlash(interaction) {
-        const sub = interaction.options.getSubcommand();
-        const discordId = interaction.user.id;
-        const now = Date.now();
-
-        if (sub === 'info') {
-            const data = await withTransaction(async (conn) => {
-                const weather = await getCurrentWeather(conn, now);
-                const active = await getActiveSeasonalEvent(conn, now);
-                let progress = null;
-                if (active) {
-                    progress = await getPlayerEventProgress(conn, discordId, active.stateRow.event_key, false);
-                }
-                return { weather, active, progress };
-            });
-
-            const weatherBlock = [
-                `### ${data.weather.emoji} Cuaca Kota: ${data.weather.name}`,
-                `${data.weather.description}`,
-                `• 🔄 **Pergantian Musim Berikutnya:** <t:${Math.floor(data.weather.nextChangeAt / 1000)}:R> *(Siklus 2 Minggu)*`
-            ].join('\n');
-
-            if (!data.active) {
-                const calendarLines = SEASONAL_EVENTS.map(ev => {
-                    const sched = ev.scheduleType === 'fixed'
-                        ? `Tanggal Tetap (${ev.fixedRange.startDay}/${ev.fixedRange.startMonth} – ${ev.fixedRange.endDay}/${ev.fixedRange.endMonth})`
-                        : `Kalender Lunar/Hijriah (Diaktifkan saat perayaan)`;
-                    return `• ${ev.emoji} **${ev.name}** — *${sched}*`;
-                });
-
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.PRIMARY,
-                        title: '🌤️ Laporan Cuaca & Kalender Event Kota',
-                        blocks: [
-                            weatherBlock,
-                            [
-                                '### 📅 Status Event Musiman: Tidak Ada Event Aktif',
-                                'Saat ini kota sedang berada di hari biasa. Berikut jadwal perayaan musiman tahunan:',
-                                calendarLines.join('\n')
-                            ].join('\n')
-                        ],
-                        footer: 'Cuaca berganti otomatis setiap 2 minggu sekali.'
-                    })
-                );
-            }
-
-            const { config, stateRow, lebaranThr } = data.active;
-            const prog = data.progress;
-            const goalTarget = config.communityGoal.target;
-            const goalCurr = Number(stateRow.community_progress || 0);
-
-            const eventBlock = [
-                `### ${config.emoji} Event Aktif: ${config.name}`,
-                `${config.description}`,
-                `• ⏳ **Berakhir:** <t:${Math.floor(Number(stateRow.ends_at) / 1000)}:R>`,
-                `• ✨ **Efek Aktif:** ${formatBonusesSummary(config, lebaranThr)}`,
-                `• ${config.tokenEmoji} **Saldo Token Kamu:** **${prog.token_balance} ${config.tokenName}**`,
-                `• 🤝 **Kontribusi Komunitasmu:** **${prog.community_contribution} aktivitas**`,
-                `• 🌐 **Target Komunitas Server:** \`${renderBar(goalCurr, goalTarget, 10)}\``
-            ].join('\n');
-
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.SUCCESS,
-                    title: `${config.emoji} Pusat Informasi Cuaca & Event`,
-                    blocks: [weatherBlock, eventBlock],
-                    footer: 'Gunakan /event shop untuk menukar token dan /event goal untuk info hadiah komunitas.'
-                })
-            );
-        }
-
-        if (sub === 'shop') {
-            const data = await withTransaction(async (conn) => {
-                const active = await getActiveSeasonalEvent(conn, now);
-                if (!active) return { active: null };
-                const progress = await getPlayerEventProgress(conn, discordId, active.stateRow.event_key, false);
-                return { active, progress };
-            });
-
-            if (!data.active) {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '🎪 Toko Event Sedang Tutup',
-                        blocks: [
-                            'Saat ini tidak ada Event Musiman yang sedang berlangsung.',
-                            'Gunakan `/event info` untuk melihat jadwal perayaan musiman dan kondisi cuaca saat ini.'
-                        ],
-                        ephemeral: true
-                    })
-                );
-            }
-
-            const { config, stateRow } = data.active;
-            const itemLines = config.shopItems.map(it => {
-                return `• **${it.name}** (\`${it.id}\`) — **${it.tokenCost} ${config.tokenEmoji} ${config.tokenName}**\n  └ *${it.description}*`;
-            });
-
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.PRIMARY,
-                    title: `${config.emoji} Toko Event: ${config.name}`,
-                    blocks: [
-                        `💰 **Saldo Token Kamu:** **${data.progress.token_balance} ${config.tokenEmoji} ${config.tokenName}** · ⏳ Berakhir <t:${Math.floor(Number(stateRow.ends_at) / 1000)}:R>`,
-                        itemLines.join('\n\n'),
-                        '⚠️ *Catatan: Token event hanya berlaku selama event berlangsung dan tidak dapat diuangkan menjadi Lp.*'
-                    ],
-                    footer: 'Gunakan /event buy item:<id> untuk menukarkan tokenmu.'
-                })
-            );
-        }
-
-        if (sub === 'buy') {
-            const shopItemId = interaction.options.getString('item', true);
-            const res = await withTransaction(async (conn) => {
-                const synced = await syncPlayerVitals(conn, discordId, now, true);
-                return await buyEventShopItem(conn, synced.player, shopItemId, now);
-            });
-
-            if (res.error === 'NO_ACTIVE_EVENT') {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '🎪 Tidak Ada Event Aktif',
-                        blocks: ['Toko Event hanya dibuka saat ada perayaan musiman yang berlangsung.'],
-                        ephemeral: true
-                    })
-                );
-            }
-
-            if (res.error === 'INVALID_SHOP_ITEM') {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '❓ Hadiah Tidak Ditemukan',
-                        blocks: ['Item tersebut tidak tersedia di Toko Event saat ini. Cek daftarnya lewat `/event shop`.'],
-                        ephemeral: true
-                    })
-                );
-            }
-
-            if (res.error === 'INSUFFICIENT_TOKENS') {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.DANGER,
-                        title: `${res.active.config.tokenEmoji} Token Event Tidak Cukup`,
-                        blocks: [
-                            `Untuk menukar **${res.shopItem.name}**, kamu membutuhkan **${res.required} ${res.active.config.tokenName}**, sedangkan saldomu saat ini **${res.balance} ${res.active.config.tokenName}**.`,
-                            'Kumpulkan lebih banyak token dari `/work`, `/fishing`, `/mining`, `/farm harvest`, atau `/cook collect`!'
-                        ],
-                        ephemeral: true
-                    })
-                );
-            }
-
-            if (res.error === 'TITLE_ALREADY_OWNED') {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '🏷️ Gelar Sudah Dimiliki',
-                        blocks: [`Kamu sudah membuka **${res.shopItem.name}**! Gunakan \`/title equip\` untuk memasangnya.`],
-                        ephemeral: true
-                    })
-                );
-            }
-
-            if (res.error === 'BAG_FULL') {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.DANGER,
-                        title: '🎒 Tas Penuh!',
-                        blocks: ['Kosongkan slot tasmu terlebih dahulu sebelum menukar item dari Toko Event.'],
-                        ephemeral: true
-                    })
-                );
-            }
-
-            const { config } = res.active;
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.SUCCESS,
-                    title: `${config.emoji} Penukaran Token Berhasil!`,
-                    blocks: [
-                        `Kamu berhasil menukarkan **${res.shopItem.tokenCost} ${config.tokenEmoji} ${config.tokenName}** dengan **${res.shopItem.name}**!`,
-                        res.shopItem.type === 'title'
-                            ? `🏷️ Gelar **${res.shopItem.titleValue}** kini telah terbuka di \`/title list\`!`
-                            : `🎒 Item telah dimasukkan ke dalam tasmu.`,
-                        `• ${config.tokenEmoji} **Sisa Token Kamu:** **${res.newBalance} ${config.tokenName}**`
-                    ]
-                })
-            );
-        }
-
-        if (sub === 'goal') {
-            const data = await withTransaction(async (conn) => {
-                const active = await getActiveSeasonalEvent(conn, now);
-                if (!active) return { active: null };
-                const progress = await getPlayerEventProgress(conn, discordId, active.stateRow.event_key, false);
-                return { active, progress };
-            });
-
-            if (!data.active) {
-                return await interaction.reply(
-                    buildV2Card({
-                        accentColor: COLORS.WARNING,
-                        title: '🌐 Tidak Ada Target Komunitas Aktif',
-                        blocks: ['Saat ini tidak ada Event Musiman yang sedang berjalan.'],
-                        ephemeral: true
-                    })
-                );
-            }
-
-            const { config, stateRow } = data.active;
-            const goal = config.communityGoal;
-            const curr = Number(stateRow.community_progress || 0);
-            const rewardText = (goal.rewardItems || []).map(rw => {
-                const it = getItem(rw.itemId);
-                return `${it ? it.emoji : '📦'} **${it ? it.name : rw.itemId}** ×${rw.qty}`;
-            }).join(' · ');
-
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: curr >= goal.target ? COLORS.SUCCESS : COLORS.PRIMARY,
-                    title: `🌐 Target Komunitas: ${config.name}`,
-                    blocks: [
-                        `${goal.description}`,
-                        `• 📊 **Progres Warga Server:** \`${renderBar(curr, goal.target, 12)}\``,
-                        `• 🤝 **Kontribusi Kamu:** **${data.progress.community_contribution} aktivitas** *(Syarat klaim: min. 1 aktivitas)*`,
-                        `• 🎁 **Hadiah Komunitas:** ${rewardText}`,
-                        `• 📌 **Status Klaim Kamu:** ${data.progress.goal_claimed ? '✅ Sudah Diklaim' : (curr >= goal.target ? '🎉 **Siap Diklaim dengan `/event claim`!**' : '⏳ Menunggu Target Tercapai')}`
-                    ]
-                })
-            );
-        }
-
-        // Subcommand: claim
-        const res = await withTransaction(async (conn) => {
-            const synced = await syncPlayerVitals(conn, discordId, now, true);
-            return await claimCommunityGoalReward(conn, synced.player, now);
-        });
-
-        if (res.error === 'NO_ACTIVE_EVENT') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.WARNING,
-                    title: '🌐 Tidak Ada Event Aktif',
-                    blocks: ['Saat ini tidak ada hadiah Target Komunitas yang dapat diklaim.'],
-                    ephemeral: true
-                })
-            );
-        }
-
-        if (res.error === 'GOAL_NOT_REACHED') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.WARNING,
-                    title: '⏳ Target Komunitas Belum Tercapai',
-                    blocks: [
-                        `Progres server saat ini masih **${res.currentGlobal}/${res.target}** aktivitas.`,
-                        'Ayo bantu selesaikan aktivitas bersama warga lainnya!'
-                    ],
-                    ephemeral: true
-                })
-            );
-        }
-
-        if (res.error === 'NO_CONTRIBUTION') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.WARNING,
-                    title: '🤝 Belum Ada Kontribusi',
-                    blocks: [
-                        'Kamu harus berkontribusi minimal **1 aktivitas** (`/work`, `/fishing`, `/mining`, `/farm`, atau `/cook`) selama event berlangsung untuk mengklaim hadiah komunitas!'
-                    ],
-                    ephemeral: true
-                })
-            );
-        }
-
-        if (res.error === 'ALREADY_CLAIMED') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.PRIMARY,
-                    title: '✅ Hadiah Sudah Diklaim',
-                    blocks: ['Kamu sudah mengklaim hadiah Target Komunitas untuk event ini.'],
-                    ephemeral: true
-                })
-            );
-        }
-
-        if (res.error === 'BAG_FULL') {
-            return await interaction.reply(
-                buildV2Card({
-                    accentColor: COLORS.DANGER,
-                    title: '🎒 Tas Penuh!',
-                    blocks: ['Kosongkan slot tasmu terlebih dahulu sebelum mengklaim hadiah komunitas.'],
-                    ephemeral: true
-                })
-            );
-        }
-
-        const rewardLines = res.rewardItems.map(rw => {
-            const it = getItem(rw.itemId);
-            return `• ${it ? it.emoji : '📦'} **${it ? it.name : rw.itemId}** ×${rw.qty}`;
-        });
-
-        return await interaction.reply(
-            buildV2Card({
-                accentColor: COLORS.SUCCESS,
-                title: `🎊 Hadiah Target Komunitas Diklaim!`,
-                blocks: [
-                    `Terima kasih atas kontribusimu dalam **${res.active.config.emoji} ${res.active.config.name}**!`,
-                    `📦 **Hadiah Diterima:**\n${rewardLines.join('\n')}`
-                ]
-            })
-        );
-    }
+    buildEventPanel
 };
