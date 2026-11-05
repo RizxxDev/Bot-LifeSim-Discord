@@ -18,7 +18,8 @@ const {
     select,
     quantityRow,
     numberModal,
-    parseModalNumber
+    parseModalNumber,
+    respondOrUpdate
 } = require('../../utils/panelBuilder');
 
 const STORAGE_META = {
@@ -416,7 +417,7 @@ module.exports = {
                         banner: { type: 'warning', text: parsedNum.error },
                         now
                     });
-                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                    return await respondOrUpdate(interaction, payload);
                 }
 
                 const res = await executeStorageMove(interaction.user.id, place, direction, itemId, parsedNum.value, now);
@@ -438,7 +439,7 @@ module.exports = {
                     banner,
                     now
                 });
-                return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                return await respondOrUpdate(interaction, payload);
             }
         }
     },

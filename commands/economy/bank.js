@@ -8,7 +8,8 @@ const {
     btn,
     percentRow,
     numberModal,
-    parseModalNumber
+    parseModalNumber,
+    respondOrUpdate
 } = require('../../utils/panelBuilder');
 
 function buildBankPanel(player, mode = 'home', banner = null, now = Date.now()) {
@@ -239,7 +240,7 @@ module.exports = {
                 if (!parsedNum.ok) {
                     const synced = await withTransaction(conn => syncPlayerVitals(conn, interaction.user.id, now, false));
                     const payload = buildBankPanel(synced.player, 'deposit', { type: 'warning', text: parsedNum.error }, now);
-                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                    return await respondOrUpdate(interaction, payload);
                 }
 
                 const res = await executeBankTransfer(interaction.user.id, 'deposit', parsedNum.value, false, now);
@@ -248,14 +249,14 @@ module.exports = {
                         ? `Uang tunai tidak cukup! Saldo Cash kamu hanya **${formatLp(res.currentCash)}**.`
                         : 'Nominal setoran tidak valid.';
                     const payload = buildBankPanel(res.player, 'deposit', { type: 'danger', text: msg }, now);
-                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                    return await respondOrUpdate(interaction, payload);
                 }
 
                 const payload = buildBankPanel(res.player, 'home', {
                     type: 'success',
                     text: `Berhasil menyetor **${formatLp(res.amount)}** ke rekening Bank.`
                 }, now);
-                return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                return await respondOrUpdate(interaction, payload);
             },
             async wd_submit(interaction) {
                 const now = Date.now();
@@ -263,7 +264,7 @@ module.exports = {
                 if (!parsedNum.ok) {
                     const synced = await withTransaction(conn => syncPlayerVitals(conn, interaction.user.id, now, false));
                     const payload = buildBankPanel(synced.player, 'withdraw', { type: 'warning', text: parsedNum.error }, now);
-                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                    return await respondOrUpdate(interaction, payload);
                 }
 
                 const res = await executeBankTransfer(interaction.user.id, 'withdraw', parsedNum.value, false, now);
@@ -272,14 +273,14 @@ module.exports = {
                         ? `Saldo Bank tidak cukup! Tabunganmu saat ini hanya **${formatLp(res.currentBank)}**.`
                         : 'Nominal penarikan tidak valid.';
                     const payload = buildBankPanel(res.player, 'withdraw', { type: 'danger', text: msg }, now);
-                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                    return await respondOrUpdate(interaction, payload);
                 }
 
                 const payload = buildBankPanel(res.player, 'home', {
                     type: 'success',
                     text: `Berhasil menarik **${formatLp(res.amount)}** dari Bank ke Dompet.`
                 }, now);
-                return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                return await respondOrUpdate(interaction, payload);
             }
         }
     },

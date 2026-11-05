@@ -563,6 +563,22 @@ function buildExpiredPanel(mod = 'panel') {
     });
 }
 
+/**
+ * Mengirim pembaruan panel di tempat (interaction.update) bila berasal dari komponen pesan
+ * atau modal yang dibuka dari komponen pesan, atau fallback ke interaction.reply.
+ */
+async function respondOrUpdate(interaction, payload) {
+    if (typeof interaction.update === 'function') {
+        if (typeof interaction.isFromMessage === 'function') {
+            return interaction.isFromMessage()
+                ? await interaction.update(payload)
+                : await interaction.reply(payload);
+        }
+        return await interaction.update(payload);
+    }
+    return await interaction.reply(payload);
+}
+
 module.exports = {
     MAX_V2_COMPONENTS,
     MAX_ACTION_ROWS,
@@ -582,5 +598,6 @@ module.exports = {
     confirmView,
     numberModal,
     parseModalNumber,
-    buildExpiredPanel
+    buildExpiredPanel,
+    respondOrUpdate
 };

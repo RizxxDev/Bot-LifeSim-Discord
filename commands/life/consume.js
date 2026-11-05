@@ -22,7 +22,8 @@ const {
     select,
     quantityRow,
     numberModal,
-    parseModalNumber
+    parseModalNumber,
+    respondOrUpdate
 } = require('../../utils/panelBuilder');
 
 const TAB_LABELS = {
@@ -331,7 +332,7 @@ module.exports = {
                         banner: { type: 'warning', text: parsedNum.error },
                         now
                     });
-                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                    return await respondOrUpdate(interaction, payload);
                 }
 
                 const res = await executeItemConsumption(interaction.user.id, itemId, parsedNum.value, now);
@@ -344,7 +345,7 @@ module.exports = {
                     banner,
                     now
                 });
-                return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                return await respondOrUpdate(interaction, payload);
             },
             async rename_submit(interaction) {
                 const now = Date.now();
@@ -362,7 +363,7 @@ module.exports = {
                         banner: { type: 'warning', text: val.reason },
                         now
                     });
-                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                    return await respondOrUpdate(interaction, payload);
                 }
 
                 let banner = null;
@@ -406,7 +407,7 @@ module.exports = {
                     banner,
                     now
                 });
-                return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                return await respondOrUpdate(interaction, payload);
             }
         }
     },

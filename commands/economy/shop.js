@@ -4,7 +4,8 @@ const { formatLp } = require('../../utils/uiBuilder');
 const {
     confirmView,
     numberModal,
-    parseModalNumber
+    parseModalNumber,
+    respondOrUpdate
 } = require('../../utils/panelBuilder');
 const {
     EXPENSIVE_PURCHASE_THRESHOLD,
@@ -29,7 +30,7 @@ async function handleBuyFlow(interaction, shopId, page, itemId, qty, now = Date.
             banner: { type: 'danger', text: 'Barang tidak ditemukan.' },
             now
         });
-        return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+        return await respondOrUpdate(interaction, payload);
     }
 
     const finalQty = item.stackSize === 0 ? 1 : qty;
@@ -57,9 +58,7 @@ async function handleBuyFlow(interaction, shopId, page, itemId, qty, now = Date.
             player: state.player,
             now
         });
-        return interaction.isFromMessage()
-            ? await interaction.update(confirmPayload)
-            : await interaction.reply(confirmPayload);
+        return await respondOrUpdate(interaction, confirmPayload);
     }
 
     const res = await executeItemPurchase(userId, item.id, finalQty, now);
@@ -73,7 +72,7 @@ async function handleBuyFlow(interaction, shopId, page, itemId, qty, now = Date.
         now
     });
 
-    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+    return await respondOrUpdate(interaction, payload);
 }
 
 module.exports = {
@@ -239,7 +238,7 @@ module.exports = {
                         banner: { type: 'warning', text: parsedNum.error },
                         now
                     });
-                    return interaction.isFromMessage() ? await interaction.update(payload) : await interaction.reply(payload);
+                    return await respondOrUpdate(interaction, payload);
                 }
 
                 return await handleBuyFlow(interaction, shopId, Number(rawPage) || 1, itemId, parsedNum.value, now);
