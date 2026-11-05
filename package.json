@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "deploy": "node scripts/deployCommands.js",
     "migrate": "node database/migrate.js",
     "test": "node scripts/testCoreLogic.js",
     "simulate": "node scripts/simulateEconomy.js"

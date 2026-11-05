@@ -163,6 +163,53 @@ function buildFishingRows(ownerId, state, now = Date.now()) {
 function buildFishingPrepPanel(state, banner = null, now = Date.now()) {
     const { player: p, weather, bestRod, lvInfo, slotsUsed, location, baitItem, baitCounts, hasSeaAccess, elig, remCd } = state;
     const ownerId = p.discord_id;
+
+    if (!bestRod) {
+        const hasBrokenRod = (state.invRows || []).some(r => {
+            const it = getItem(r.item_id);
+            return it?.tags?.includes('fishing_rod') && Number(r.quantity) > 0 && Number(r.durability) <= 0;
+        });
+
+        const gateBlocks = [
+            hasBrokenRod
+                ? `⚠️ **Pancinganmu di tas sudah rusak (Durability 0)!**\nBuka \`/inventory\` untuk memperbaikinya atau beli pancingan baru di \`/shop\`.`
+                : `🔒 **Kamu belum memiliki Alat Pancing!**\nUntuk menggunakan \`/fishing\`, kamu wajib memiliki minimal **🎋 Pancingan Bambu** dan **🪱 Umpan Cacing** di dalam tasmu.`,
+            [
+                `### 🛠️ Cara Mendapatkan Alat Pancing Pertamamu:`,
+                `1. **Cari Modal dari Nol (\`/bin\`):** Gunakan perintah \`/bin\` (cooldown **5 detik**) untuk mencari barang rongsokan di tempat sampah kota (atau peluang 1% menemukan Pancingan bekas!).`,
+                `2. **Jual Rongsokan:** Klik tombol **💰 Jual Rongsokan** di panel \`/bin\` atau gunakan \`/sell\` hingga tabunganmu mencapai **${formatLp(55000)}**.`,
+                `3. **Beli di Toko Perkakas (\`/shop\`):** Pilih **🔧 Toko Perkakas & Outdoor**, lalu beli **🎋 Pancingan Bambu (${formatLp(50000)})** dan **🪱 Umpan Cacing (${formatLp(1000)}/buah)**.`
+            ].join('\n')
+        ];
+
+        const gateRow = new ActionRowBuilder().addComponents(
+            btn('fishing', 'home', ownerId, {
+                label: 'Cek Ulang Tas',
+                emoji: '🔄',
+                style: ButtonStyle.Primary
+            }, now),
+            btn('fishing', 'sell_fish', ownerId, {
+                label: `Jual Ikan (${state.fishInBagCount || 0})`,
+                emoji: '💰',
+                style: ButtonStyle.Secondary,
+                disabled: (state.fishInBagCount || 0) <= 0
+            }, now)
+        );
+
+        return buildPanel({
+            mod: 'fishing',
+            ownerId,
+            accentColor: COLORS.WARNING,
+            title: `🔒 Alat Pancing Diperlukan (/fishing)`,
+            player: p,
+            banner,
+            blocks: gateBlocks,
+            rows: [gateRow],
+            footer: 'Gunakan /bin untuk mengumpulkan modal awal atau /shop untuk membeli Pancingan Bambu.',
+            now
+        });
+    }
+
     const weatherBonus = Number(weather.fishingRarityBonus?.[location.id] || 0);
 
     const rodText = bestRod
@@ -577,5 +624,7 @@ module.exports = {
                 return await interaction.update(buildFishingPrepPanel(state, null, now));
             }
         }
-    }
+    },
+
+    buildFishingPrepPanel
 };

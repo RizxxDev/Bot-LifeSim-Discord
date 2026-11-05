@@ -23,7 +23,7 @@ const ITEMS = [
         shop: 'warung',
         tags: ['drink'],
         buyPrice: 4000,
-        sellPrice: 0,
+        sellPrice: 1200,
         stackSize: 20,
         lockedPrice: true,
         effects: { thirst: 20 },
@@ -62,7 +62,7 @@ const ITEMS = [
         shop: 'warung',
         tags: ['food'],
         buyPrice: 4000,
-        sellPrice: 0,
+        sellPrice: 1500,
         stackSize: 20,
         lockedPrice: true,
         effects: { hunger: 20 },
@@ -75,7 +75,7 @@ const ITEMS = [
         shop: 'warung',
         tags: ['food'],
         buyPrice: 6000,
-        sellPrice: 0,
+        sellPrice: 2000,
         stackSize: 20,
         lockedPrice: true,
         effects: { hunger: 15 },
@@ -295,7 +295,7 @@ const ITEMS = [
         shop: 'perkakas',
         tags: ['bait'],
         buyPrice: 1000,
-        sellPrice: 0,
+        sellPrice: 400,
         stackSize: 100,
         lockedPrice: true,
         rarityBonus: 0.00,
@@ -540,7 +540,7 @@ const ITEMS = [
     },
 
     // ==========================================
-    // 8. HASIL FISHING — SAMPAH (Bank Sampah)
+    // 8. HASIL FISHING & BIN — SAMPAH / RONGSOKAN (Bank Sampah)
     // ==========================================
     {
         id: 'sampah_sandal',
@@ -549,10 +549,10 @@ const ITEMS = [
         tags: ['trash'],
         rarity: 'trash',
         buyPrice: 0,
-        sellPrice: 500,
+        sellPrice: 750,
         baseSupplyThreshold: 500,
         stackSize: 20,
-        description: 'Sampah sungai yang bisa didaur ulang di Bank Sampah.'
+        description: 'Sandal jepit putus yang bisa didaur ulang di Bank Sampah.'
     },
     {
         id: 'sampah_kaleng',
@@ -561,10 +561,10 @@ const ITEMS = [
         tags: ['trash'],
         rarity: 'trash',
         buyPrice: 0,
-        sellPrice: 500,
+        sellPrice: 900,
         baseSupplyThreshold: 500,
         stackSize: 20,
-        description: 'Kaleng bekas yang tersangkut di kail.'
+        description: 'Kaleng bekas yang bisa dijual ke pengepul rongsokan.'
     },
     {
         id: 'sampah_botol',
@@ -573,10 +573,58 @@ const ITEMS = [
         tags: ['trash'],
         rarity: 'trash',
         buyPrice: 0,
-        sellPrice: 500,
+        sellPrice: 800,
         baseSupplyThreshold: 500,
         stackSize: 20,
         description: 'Botol plastik yang bisa dijual ke Bank Sampah.'
+    },
+    {
+        id: 'sampah_kardus',
+        name: 'Kardus Bekas Lipat',
+        emoji: '📦',
+        tags: ['trash'],
+        rarity: 'trash',
+        buyPrice: 0,
+        sellPrice: 1500,
+        baseSupplyThreshold: 400,
+        stackSize: 20,
+        description: 'Kardus tebal hasil memulung di tempat sampah kota (/bin).'
+    },
+    {
+        id: 'sampah_besi',
+        name: 'Besi Tua Karatan',
+        emoji: '🔩',
+        tags: ['trash'],
+        rarity: 'common',
+        buyPrice: 0,
+        sellPrice: 3000,
+        baseSupplyThreshold: 300,
+        stackSize: 20,
+        description: 'Potongan besi tua bernilai jual lumayan di pengepul rongsokan.'
+    },
+    {
+        id: 'sampah_radio',
+        name: 'Radio Tua Rusak',
+        emoji: '📻',
+        tags: ['trash'],
+        rarity: 'uncommon',
+        buyPrice: 0,
+        sellPrice: 6500,
+        baseSupplyThreshold: 180,
+        stackSize: 10,
+        description: 'Komponen elektronik bekas dari tempat sampah yang dicari tukang servis.'
+    },
+    {
+        id: 'sampah_hp',
+        name: 'Bangkai HP Mati Total',
+        emoji: '📱',
+        tags: ['trash'],
+        rarity: 'rare',
+        buyPrice: 0,
+        sellPrice: 12000,
+        baseSupplyThreshold: 120,
+        stackSize: 10,
+        description: 'Bangkai ponsel rongsokan dengan komponen kanibal bernilai tinggi.'
     },
 
     // ==========================================

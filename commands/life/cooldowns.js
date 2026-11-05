@@ -9,12 +9,14 @@ async function buildCooldownsPanel(discordId, now = Date.now()) {
     const synced = await withTransaction(conn => syncPlayerVitals(conn, discordId, now, true));
     const p = synced.player;
 
-    const [workCd, studyCd, fishCd, mineCd, workCount, fishCount, mineCount] = await Promise.all([
+    const [workCd, studyCd, binCd, fishCd, mineCd, workCount, binCount, fishCount, mineCount] = await Promise.all([
         getCooldownRemaining(discordId, 'work', query),
         getCooldownRemaining(discordId, 'study', query),
+        getCooldownRemaining(discordId, 'bin', query),
         getCooldownRemaining(discordId, 'fishing', query),
         getCooldownRemaining(discordId, 'mining', query),
         getDailyActionCount(discordId, 'work', now),
+        getDailyActionCount(discordId, 'bin', now),
         getDailyActionCount(discordId, 'fishing', now),
         getDailyActionCount(discordId, 'mining', now)
     ]);
@@ -56,6 +58,7 @@ async function buildCooldownsPanel(discordId, now = Date.now()) {
             statusLines.join('\n'),
             [
                 '**⚡ Cooldown & Soft Cap Aktivitas:**',
+                `• 🗑️ \`/bin\`     : ${fmtCd(binCd)} *(Cooldown 5d · Hari ini: ${binCount}x cari)*`,
                 `• 💼 \`/work\`    : ${fmtCd(workCd)} *(Hari ini: ${workCount}/6 shift penuh)*`,
                 `• 🎓 \`/study\`   : ${fmtCd(studyCd)}`,
                 `• 🎣 \`/fishing\` : ${fmtCd(fishCd)} *(Hari ini: ${fishCount}/40 lemparan penuh)*`,

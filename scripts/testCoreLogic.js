@@ -40,9 +40,9 @@ function collectCommandFiles(dir, list = []) {
 async function runTests() {
     console.log('🧪 Menjalankan pengujian unit logika inti (testCoreLogic.js)...\n');
 
-    // 1. Verifikasi seluruh 28 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
+    // 1. Verifikasi seluruh 29 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
     const cmdFiles = collectCommandFiles(path.join(__dirname, '..', 'commands'));
-    assert.strictEqual(cmdFiles.length, 28, `Harusnya tepat 28 command pasca konsolidasi UI, ditemukan: ${cmdFiles.length}`);
+    assert.strictEqual(cmdFiles.length, 29, `Harusnya tepat 29 command pasca penambahan /bin, ditemukan: ${cmdFiles.length}`);
     for (const file of cmdFiles) {
         const rawSrc = fs.readFileSync(file, 'utf8');
         assert(!rawSrc.includes('fetchReply: true'), `Command ${file} masih mengandung opsi deprecated fetchReply: true`);
@@ -60,7 +60,7 @@ async function runTests() {
     }
     const workCmd = require('../commands/career/work');
     assert(workCmd.lockTtl >= 45, 'Command /work harus punya lockTtl >= 45 detik');
-    console.log(`✅ [1/20] 28 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
+    console.log(`✅ [1/20] 29 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
 
     // 2. Validasi Username & Blacklist
     assert.strictEqual(validateUsername('Budi_99').valid, true);
@@ -111,21 +111,23 @@ async function runTests() {
     assert.strictEqual(admBroke.lockSeconds, 3600, 'Jika tidak mampu bayar penuh, opname 60 menit');
     console.log('✅ [4/10] Rumus Rumah Sakit & Proteksi Saldo Anti-Minus terverifikasi.');
 
-    // 5. Perhitungan Kapasitas Slot Tas (Inventory Slots)
+    // 5. Perhitungan Kapasitas Slot Tas (Inventory Slots) & Zero-Start Starter Pack
+    assert.strictEqual(STARTER_PACK.cash, 0, 'Zero-Start: Warga baru harus mulai dengan cash = 0');
+    assert.strictEqual(STARTER_PACK.items.some(it => it.itemId.startsWith('pancing') || it.itemId.startsWith('beliung')), false, 'Zero-Start: Warga baru tidak boleh mendapat alat gratis');
     const starterInv = STARTER_PACK.items.map(it => ({
         item_id: it.itemId,
         quantity: it.qty,
-        durability: it.itemId.startsWith('pancing') || it.itemId.startsWith('beliung') ? 100 : null
+        durability: null
     }));
     const starterSlots = calculateSlotsUsed(starterInv);
-    assert.strictEqual(starterSlots, 6, `Starter pack harus memakan 6 slot, terhitung: ${starterSlots}`);
+    assert.strictEqual(starterSlots, 2, `Starter pack Zero-Start (3 roti + 3 air mineral) harus memakan 2 slot, terhitung: ${starterSlots}`);
 
-    const fitLicense = canFitItems(starterInv, 6, [{ itemId: 'sim_c', qty: 1 }]);
+    const fitLicense = canFitItems(starterInv, 2, [{ itemId: 'sim_c', qty: 1 }]);
     assert.strictEqual(fitLicense.fits, true, 'SIM C harus 0 slot dan muat walau slot pas');
 
-    const fitExtraTool = canFitItems(starterInv, 6, [{ itemId: 'pancing_bambu', qty: 1 }]);
+    const fitExtraTool = canFitItems(starterInv, 2, [{ itemId: 'pancing_bambu', qty: 1 }]);
     assert.strictEqual(fitExtraTool.fits, false, 'Harus menolak jika melebihi max_slots');
-    console.log('✅ [5/10] Sistem Kapasitas Slot Tas & Stackable Rules terverifikasi.');
+    console.log('✅ [5/10] Sistem Kapasitas Slot Tas, Stackable Rules & Zero-Start Starter Pack terverifikasi.');
 
     // 6. Pajak Penghasilan Progresif, Newbie Boost, Pajak Kekayaan & Soft Cap
     const newbiePlayer = { created_at: baseTime };
@@ -526,6 +528,72 @@ async function runTests() {
     const { buildDailyPanel } = require('../commands/economy/daily');
     const { buildFarmPanel } = require('../commands/activities/farm');
     const { buildCookPanel } = require('../commands/activities/cook');
+    const { buildBinPanel, rollBinLoot, BIN_LOOT_TABLE } = require('../commands/activities/bin');
+    const { buildFishingPrepPanel } = require('../commands/activities/fishing');
+    const { buildMiningPrepPanel } = require('../commands/activities/mining');
+
+    // Uji tabel loot /bin
+    assert(BIN_LOOT_TABLE.length >= 12, 'Tabel loot /bin harus punya minimal 12 entri');
+    const rolledBinLow = rollBinLoot(() => 0.0);
+    assert(rolledBinLow && getItem(rolledBinLow.itemId), 'rollBinLoot(0.0) harus menghasilkan item valid');
+    const rolledBinJackpot = rollBinLoot(() => 0.9999);
+    assert(
+        rolledBinJackpot.itemId === 'pancing_bambu' || rolledBinJackpot.itemId === 'beliung_batu',
+        'rollBinLoot(0.9999) harus menghasilkan jackpot alat pancing/beliung'
+    );
+
+    const binPanelInitial = buildBinPanel({
+        state: {
+            player: samplePlayer,
+            invRows: [],
+            slotsUsed: 2,
+            trashUnits: 0,
+            estTrashValue: 0,
+            hasRod: false,
+            hasPickaxe: false,
+            elig: { allowed: true },
+            remCd: 0
+        },
+        foundLoot: null,
+        banner: null,
+        now: nowTs
+    });
+
+    const binPanelFound = buildBinPanel({
+        state: {
+            player: samplePlayer,
+            invRows: [{ item_id: 'sampah_kardus', quantity: 2 }],
+            slotsUsed: 3,
+            trashUnits: 2,
+            estTrashValue: 3000,
+            hasRod: false,
+            hasPickaxe: false,
+            elig: { allowed: true },
+            remCd: 5000
+        },
+        foundLoot: {
+            item: getItem('sampah_kardus'),
+            qty: 2,
+            flavor: 'Kamu menemukan tumpukan kardus kering di belakang minimarket!',
+            unitSellPrice: 1500
+        },
+        banner: null,
+        now: nowTs
+    });
+
+    const fishingGatePanel = buildFishingPrepPanel({
+        player: samplePlayer,
+        invRows: [],
+        bestRod: null,
+        fishInBagCount: 0
+    }, null, nowTs);
+
+    const miningGatePanel = buildMiningPrepPanel({
+        player: samplePlayer,
+        invRows: [],
+        bestPickaxe: null,
+        oreInBagCount: 0
+    }, null, nowTs);
 
     const farmPanelView = buildFarmPanel({
         state: {
@@ -640,6 +708,10 @@ async function runTests() {
     });
 
     for (const [name, pObj] of [
+        ['bin (initial)', binPanelInitial],
+        ['bin (found)', binPanelFound],
+        ['fishing (tool gate)', fishingGatePanel],
+        ['mining (tool gate)', miningGatePanel],
         ['farm (view)', farmPanelView],
         ['cook (kitchen)', cookPanelKitchen],
         ['cook (recipes)', cookPanelRecipes],
@@ -657,7 +729,7 @@ async function runTests() {
         const compCount = countV2Components(pObj);
         assert(compCount <= 40, `Panel /${name} melebihi batas 40 komponen (${compCount})`);
     }
-    console.log('✅ [20/20] Batch 2–4 UI Revamp: Seluruh 28 Command Panel Interaktif & Batas <= 40 Komponen terverifikasi.\n');
+    console.log('✅ [20/20] Batch 2–4 UI Revamp + /bin & Tool Gate: Seluruh 29 Command Panel Interaktif & Batas <= 40 Komponen terverifikasi.\n');
 
     console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (20/20 PASSED)!');
     process.exit(0);

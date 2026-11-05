@@ -128,6 +128,52 @@ function buildMiningPrepPanel(state, banner = null, now = Date.now()) {
     const { player: p, weather, bestPickaxe, helmet, lvInfo, slotsUsed, location, elig, remCd } = state;
     const ownerId = p.discord_id;
 
+    if (!bestPickaxe) {
+        const hasBrokenPickaxe = (state.invRows || []).some(r => {
+            const it = getItem(r.item_id);
+            return it?.tags?.includes('pickaxe') && Number(r.quantity) > 0 && Number(r.durability) <= 0;
+        });
+
+        const gateBlocks = [
+            hasBrokenPickaxe
+                ? `⚠️ **Beliung tambangmu di tas sudah rusak (Durability 0)!**\nBuka \`/inventory\` untuk memperbaikinya atau beli beliung baru di \`/shop\`.`
+                : `🔒 **Kamu belum memiliki Alat Tambang (Beliung)!**\nUntuk menggunakan \`/mining\`, kamu wajib memiliki minimal **🪨 Beliung Batu** di dalam tasmu.`,
+            [
+                `### 🛠️ Cara Mendapatkan Beliung Pertamamu:`,
+                `1. **Cari Modal dari Nol (\`/bin\`):** Gunakan perintah \`/bin\` (cooldown **5 detik**) untuk mencari barang rongsokan di tempat sampah kota (atau peluang 1% menemukan Beliung bekas!).`,
+                `2. **Jual Rongsokan:** Klik tombol **💰 Jual Rongsokan** di panel \`/bin\` atau gunakan \`/sell\` hingga tabunganmu mencapai **${formatLp(60000)}**.`,
+                `3. **Beli di Toko Perkakas (\`/shop\`):** Pilih **🔧 Toko Perkakas & Outdoor**, lalu beli **🪨 Beliung Batu (${formatLp(60000)})**.`
+            ].join('\n')
+        ];
+
+        const gateRow = new ActionRowBuilder().addComponents(
+            btn('mining', 'home', ownerId, {
+                label: 'Cek Ulang Tas',
+                emoji: '🔄',
+                style: ButtonStyle.Primary
+            }, now),
+            btn('mining', 'sell_mineral', ownerId, {
+                label: `Jual Mineral (${state.mineralInBagCount || 0})`,
+                emoji: '💰',
+                style: ButtonStyle.Secondary,
+                disabled: (state.mineralInBagCount || 0) <= 0
+            }, now)
+        );
+
+        return buildPanel({
+            mod: 'mining',
+            ownerId,
+            accentColor: COLORS.WARNING,
+            title: `🔒 Alat Tambang (Beliung) Diperlukan (/mining)`,
+            player: p,
+            banner,
+            blocks: gateBlocks,
+            rows: [gateRow],
+            footer: 'Gunakan /bin untuk mengumpulkan modal awal atau /shop untuk membeli Beliung Batu.',
+            now
+        });
+    }
+
     const pickText = bestPickaxe
         ? `${bestPickaxe.item.emoji} **${bestPickaxe.item.name}** *(Durability: \`${bestPickaxe.row.durability}/${bestPickaxe.item.maxDurability}\`)*`
         : '❌ **Tidak ada beliung siap pakai!** *(Beli di `/shop` atau perbaiki di `/inventory`)*';
@@ -510,5 +556,7 @@ module.exports = {
                 return await interaction.update(buildMiningPrepPanel(state, null, now));
             }
         }
-    }
+    },
+
+    buildMiningPrepPanel
 };

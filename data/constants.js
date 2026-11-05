@@ -6,14 +6,10 @@ module.exports = {
     },
 
     STARTER_PACK: {
-        cash: 150000,
+        cash: 0,
         items: [
-            { itemId: 'pancing_bambu', qty: 1 },
-            { itemId: 'umpan_cacing', qty: 20 },
-            { itemId: 'beliung_batu', qty: 1 },
-            { itemId: 'nasi_bungkus', qty: 3 },
             { itemId: 'roti', qty: 3 },
-            { itemId: 'air_mineral', qty: 6 }
+            { itemId: 'air_mineral', qty: 3 }
         ]
     },
 
@@ -48,7 +44,8 @@ module.exports = {
         work_heavy:  { energy: 25, hunger: 8, thirst: 10, cooldownSec: 3600 },
         study:       { energy: 15, hunger: 5, thirst: 6,  cooldownSec: 7200 },
         fishing:     { energy: 8,  hunger: 3, thirst: 4,  cooldownSec: 180  },
-        mining:      { energy: 12, hunger: 5, thirst: 6,  cooldownSec: 300  }
+        mining:      { energy: 12, hunger: 5, thirst: 6,  cooldownSec: 300  },
+        bin:         { energy: 1,  hunger: 0, thirst: 0,  cooldownSec: 5    }
     },
 
     NEWBIE_BOOST: {

@@ -37,8 +37,8 @@ function buildWelcomeCardPayload(ephemeral = true) {
         accentColor: COLORS.SUCCESS,
         title: `🌆 ${BRANDING.WELCOME_TITLE}`,
         blocks: [
-            'Selamat datang! Di sini kamu akan menjalani kehidupan virtual dari nol: memilih karir, menempuh pendidikan, menjaga kesehatan, hingga mengumpulkan kekayaan dari memancing dan menambang.',
-            `🎁 **Paket Modal Awal Warga Baru:**\n💵 Uang Tunai **${formatLp(STARTER_PACK.cash)}**\n🎒 **Tas Kecil (20 Slot)** berisi: ${starterList}`,
+            'Selamat datang! Di sini kamu akan menjalani kehidupan virtual benar-benar dari nol: mulai dari memulung rongsokan di `/bin`, melamar pekerjaan, menempuh pendidikan, hingga membeli alat pancing & tambang pertamamu.',
+            `🎁 **Bekal Awal Warga Baru:**\n💵 Uang Tunai **${formatLp(STARTER_PACK.cash)}** *(Mulai dari 0!)*\n🎒 **Tas Kecil (20 Slot)** berisi bekal darurat: ${starterList}`,
             'Klik tombol **🌱 Mulai Hidup Baru** di bawah untuk mendaftarkan nama karaktermu!'
         ],
         actionRows: [startRow],
@@ -180,8 +180,8 @@ async function processRegistrationModal(interaction) {
             title: `🎉 Selamat Datang, ${validation.username}!`,
             blocks: [
                 `Identitas barumu telah tercatat di **${BRANDING.WELCOME_TITLE}**.`,
-                `💵 **Saldo Awal:** ${formatLp(STARTER_PACK.cash)}\n⚡ **Stat Vital:** Energy 100 · Hunger 100 · Thirst 100 · Health 100\n🎒 **Paket Starter:** Pancingan Bambu, 20 Umpan Cacing, Beliung Batu, serta bekal makan & minum 3 hari telah dimasukkan ke \`/inventory\`.`,
-                `**Langkah Pertamamu:**\n1. Lamar pekerjaan awal lewat \`/job apply\` (atau klik tombol di bawah).\n2. Jalankan shift pertamamu dengan \`/work\`.\n3. Coba memancing dengan \`/fishing\` atau menambang dengan \`/mining\`!\n4. 🌟 **Bonus Warga Baru (7 Hari):** EXP Kerja & Skill **×1,5** dan **Bebas Pajak Penghasilan**!`
+                `💵 **Saldo Awal:** ${formatLp(STARTER_PACK.cash)} *(Mulai dari 0!)*\n⚡ **Stat Vital:** Energy 100 · Hunger 100 · Thirst 100 · Health 100\n🎒 **Bekal Darurat:** 3× Roti Isi & 3× Air Mineral telah dimasukkan ke \`/inventory\`.`,
+                `**Langkah Pertamamu Merintis dari Nol:**\n1. Gunakan \`/bin\` (cooldown **5 detik**) untuk mencari barang rongsokan/bekal di tempat sampah lalu jual hasilnya!\n2. Lamar pekerjaan awal lewat \`/job\` (atau klik tombol di bawah) dan bekerja dengan \`/work\`.\n3. Kumpulkan uang untuk membeli **🎋 Pancingan Bambu (${formatLp(50000)})** atau **🪨 Beliung Batu (${formatLp(60000)})** di \`/shop\` agar bisa membuka \`/fishing\` dan \`/mining\`!\n4. 🌟 **Bonus Warga Baru (7 Hari):** EXP Kerja & Skill **×1,5** dan **Bebas Pajak Penghasilan**!`
             ],
             actionRows: [actionRow],
             ephemeral: true

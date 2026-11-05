@@ -113,19 +113,26 @@ const COMMAND_DETAILS = {
         cooldown: '120 menit',
         tips: 'Tingkatkan ijazah (SD → SMP → SMA → D3/S1 → S2) untuk membuka profesi bergaji tinggi. Bisa dilakukan sambil bekerja!'
     },
+    bin: {
+        title: '/bin — Memulung & Mengais Tempat Sampah Kota',
+        usage: '`/bin`',
+        cost: '⚡ 1 Energy',
+        cooldown: '5 detik',
+        tips: 'Cara utama warga baru mencari modal dari 0! Klik tombol 🔍 Cari di Tempat Sampah setiap 5 detik untuk menemukan rongsokan, makanan, umpan, atau jackpot alat pancing/beliung.'
+    },
     fishing: {
         title: '/fishing — Dermaga & Spot Memancing',
         usage: '`/fishing`',
-        cost: '⚡ 8 Energy (hemat dengan kendaraan) · 🍔 3 Hunger · 💧 4 Thirst · 1 Umpan',
+        cost: 'Wajib punya Pancingan + Umpan · ⚡ 8 Energy · 🍔 3 Hunger · 💧 4 Thirst',
         cooldown: '3 menit',
-        tips: 'Pilih spot & umpan dari dropdown lalu lempar kail. Tersedia tombol 🍴 Makan Cepat dan 💰 Jual Ikan langsung di panel!'
+        tips: 'Beli Pancingan Bambu (Lp 50.000) & Umpan di /shop terlebih dahulu. Pilih spot & umpan dari dropdown lalu lempar kail!'
     },
     mining: {
         title: '/mining — Ekspedisi Pertambangan',
         usage: '`/mining`',
-        cost: '⚡ 12 Energy (hemat dengan kendaraan) · 🍔 5 Hunger · 💧 6 Thirst',
+        cost: 'Wajib punya Beliung · ⚡ 12 Energy · 🍔 5 Hunger · 💧 6 Thirst',
         cooldown: '5 menit',
-        tips: 'Gunakan Helm Keselamatan untuk mengurangi risiko kecelakaan tambang sebesar 70% dan mengakses Tambang Emas/Berlian.'
+        tips: 'Beli Beliung Batu (Lp 60.000) di /shop terlebih dahulu. Gunakan Helm Keselamatan untuk mengurangi risiko kecelakaan tambang sebesar 70%.'
     },
     farm: {
         title: '/farm — Perkebunan & Lahan Tani',
@@ -246,10 +253,10 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 default: category === 'career' && !selectedCmd
             },
             {
-                label: 'Memancing, Tambang, Tani & Masak',
+                label: 'Memulung, Memancing, Tambang, Tani & Masak',
                 value: 'activities',
                 emoji: '🎣',
-                description: '/fishing, /mining, /farm, /cook',
+                description: '/bin, /fishing, /mining, /farm, /cook',
                 default: category === 'activities' && !selectedCmd
             },
             {
@@ -362,17 +369,18 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
             mod: 'help',
             ownerId: discordId,
             accentColor: COLORS.ACT,
-            title: '🎣 Panduan: Memancing, Menambang, Bertani & Memasak',
+            title: '🎣 Panduan: Memulung, Memancing, Menambang, Bertani & Memasak',
             player,
             blocks: [
-                'Cari penghasilan tambahan, kelola perkebunan, dan olah hasil panen/tangkapan menjadi masakan bernilai tinggi.',
+                'Kumpulkan modal dari nol di `/bin`, beli alat pertamamu di `/shop`, lalu kelola perikanan, tambang, kebun, dan dapur.',
                 [
-                    '• `/fishing` — Pilih lokasi & umpan, lempar kail (cooldown 3 mnt), dan jual ikan langsung dari panel.',
-                    '• `/mining` — Pilih lokasi tambang, ayunkan beliung (cooldown 5 mnt), dan jual mineral.',
+                    '• `/bin` — Aduk tempat sampah kota (cooldown **5 detik**) untuk mencari rongsokan, makanan, umpan, atau alat bekas.',
+                    '• `/fishing` — Wajib punya Pancingan & Umpan. Pilih lokasi, lempar kail (cooldown 3 mnt), dan jual ikan.',
+                    '• `/mining` — Wajib punya Beliung. Pilih lokasi tambang, ayunkan beliung (cooldown 5 mnt), dan jual mineral.',
                     '• `/farm` — Sewa/beli petak kebun, tanam bibit, siram semua petak, pupuk, kompos, & panen.',
                     '• `/cook` — Masak ikan & hasil tani di tungku dapur propertimu menjadi hidangan ber-buff.'
                 ].join('\n'),
-                '💡 **Tips Produksi:** Simpan hasil panen dan masakan di **Kulkas/Freezer** (`/storage`) agar awet, atau olah **5× Bahan Basi** menjadi **Pupuk Kompos** di `/farm`!'
+                '💡 **Tips Pemula:** Karena pemain baru mulai dari **Lp 0 tanpa alat**, gunakan `/bin` untuk mencari dan menjual rongsokan hingga cukup membeli **🎋 Pancingan Bambu (Lp 50.000)** atau **🪨 Beliung Batu (Lp 60.000)** di `/shop`!'
             ],
             rows,
             footer: 'Setiap tangkapan baru otomatis tercatat di Fishpedia & Buku Mineral profilmu.',
@@ -417,11 +425,11 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
         blocks: [
             'Simulasi kehidupan ekonomi nyata di Discord: seluruh fitur dikemas dalam **1 Command = 1 Panel Interaktif** tanpa perlu mengetik subcommand!',
             [
-                '**🚀 Cara Mulai dalam 4 Langkah:**',
-                '1️⃣ **Lamar Kerja:** Buka `/job` lalu pilih pekerjaan awalmu dari menu dropdown.',
-                '2️⃣ **Cari Penghasilan:** Buka `/work` setiap jam, serta sambi dengan `/fishing`, `/mining`, atau `/farm`.',
-                '3️⃣ **Jaga Kondisi Tubuh:** Buka `/consume` saat lapar/haus, atau `/sleep` saat lelah.',
-                '4️⃣ **Kembangkan Diri:** Tingkatkan ijazah di `/study`, belanja di `/shop`, tabung uang di `/bank`, dan jual hasil alam di `/sell`.'
+                '**🚀 Cara Mulai dari Nol dalam 4 Langkah:**',
+                '1️⃣ **Cari Modal Awal (`/bin`):** Buka `/bin` dan klik **🔍 Cari di Tempat Sampah** tiap 5 detik, lalu jual rongsokanmu!',
+                '2️⃣ **Lamar Kerja & Beli Alat:** Lamar kerja di `/job` → `/work`, lalu beli **🎋 Pancingan Bambu** atau **🪨 Beliung Batu** di `/shop`.',
+                '3️⃣ **Buka `/fishing` & `/mining`:** Setelah punya alat di tas, mulai memancing, menambang, atau bertani di `/farm`.',
+                '4️⃣ **Kembangkan Diri:** Jaga stat tubuh di `/consume` & `/sleep`, kuliah di `/study`, dan tabung uang di `/bank`.'
             ].join('\n'),
             getDynamicRecommendation(player)
         ],
