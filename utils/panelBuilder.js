@@ -320,9 +320,22 @@ function assertComponentLimit(payloadMeta) {
         throw new Error(`Total komponen V2 (${total}) melebihi batas maksimal Discord (${MAX_V2_COMPONENTS}).`);
     }
 
-    // Validasi tidak ada custom_id yang duplikat dalam satu payload pesan
+    // Validasi tidak ada custom_id yang duplikat atau teks "undefined" dalam satu payload pesan
+    const checkNoUndefined = (str, ctx) => {
+        if (typeof str === 'string' && /\bundefined\b/.test(str)) {
+            throw new Error(`Teks mengandung "undefined" pada ${ctx}: ${str}`);
+        }
+    };
+    checkNoUndefined(payloadMeta.title, 'title');
+    checkNoUndefined(payloadMeta.footer, 'footer');
+
     const seenCustomIds = new Set();
     for (const b of (payloadMeta.blocks || [])) {
+        if (typeof b === 'string') {
+            checkNoUndefined(b, 'block');
+        } else if (b?.text) {
+            checkNoUndefined(b.text, 'block.text');
+        }
         const cid = b?.button?.data?.custom_id;
         if (cid) {
             if (seenCustomIds.has(cid)) {
@@ -339,6 +352,12 @@ function assertComponentLimit(payloadMeta) {
                     throw new Error(`Duplicate custom_id terdeteksi pada ActionRow: ${cid}`);
                 }
                 seenCustomIds.add(cid);
+            }
+            checkNoUndefined(comp?.data?.label, `button label (${cid})`);
+            checkNoUndefined(comp?.data?.placeholder, `select placeholder (${cid})`);
+            for (const opt of (comp?.options || [])) {
+                checkNoUndefined(opt?.data?.label, `select option label (${cid})`);
+                checkNoUndefined(opt?.data?.description, `select option description (${cid})`);
             }
         }
     }

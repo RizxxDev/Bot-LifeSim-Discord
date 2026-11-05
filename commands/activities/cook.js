@@ -39,7 +39,8 @@ function formatIngredientsList(recipe, portions = 1) {
                 const it = getItem(ing.itemId);
                 return `${totalQty}× ${it ? `${it.emoji} ${it.name}` : ing.itemId}`;
             }
-            return `${totalQty}× ${ing.label}`;
+            const cleanLabel = String(ing.label || '').replace(/^\d+[x×]\s*/i, '');
+            return `${totalQty}× ${cleanLabel}`;
         })
         .join(' + ');
 }
@@ -97,9 +98,9 @@ function buildCookPanel({
 
     if (mode === 'recipes') {
         const tiers = [
-            { title: '🥣 **Resep Pemula (Lv. 1–2)**', list: allRecipes.filter(r => r.minLevel <= 2) },
-            { title: '🍛 **Resep Menengah (Lv. 3–6)**', list: allRecipes.filter(r => r.minLevel >= 3 && r.minLevel <= 6) },
-            { title: '👑 **Resep Chef Ahli (Lv. 7–10)**', list: allRecipes.filter(r => r.minLevel >= 7) }
+            { title: '🥣 **Resep Pemula (Lv. 1–10)**', list: allRecipes.filter(r => r.minLevel <= 10) },
+            { title: '🍛 **Resep Menengah (Lv. 12–25)**', list: allRecipes.filter(r => r.minLevel >= 12 && r.minLevel <= 25) },
+            { title: '👑 **Resep Chef Ahli (Lv. 30–45)**', list: allRecipes.filter(r => r.minLevel >= 30) }
         ];
 
         for (const t of tiers) {
@@ -112,7 +113,7 @@ function buildCookPanel({
                 if (resultItem?.effects?.energy) effParts.push(`⚡+${resultItem.effects.energy}`);
                 if (resultItem?.effects?.health) effParts.push(`❤️+${resultItem.effects.health}`);
                 if (resultItem?.buff) effParts.push(`✨${resultItem.buff.label}`);
-                return `${unlocked} ${r.emoji} **${r.name}** · ⏱️ ${r.cookTimeSec}d · 💰 ${formatLp(resultItem?.sellPrice || 0)}\n   └ Bahan: ${formatIngredientsList(r, 1)} · Efek: ${effParts.join(' ')}`;
+                return `${unlocked} ${r.emoji} **${r.name}** · ⏱️ ${r.cookMinutes}m · 💰 ${formatLp(resultItem?.sellPrice || 0)}\n   └ Bahan: ${formatIngredientsList(r, 1)} · Efek: ${effParts.join(' ')}`;
             });
             blocks.push(`${t.title}\n${lines.join('\n')}`);
         }
@@ -141,7 +142,7 @@ function buildCookPanel({
                     return `✅ **Tungku #${q.slot_number}:** ${q.portions}× ${recLabel} — **MATANG & SIAP DIAMBIL!**`;
                 }
                 const finishUnix = Math.floor(q.finishes_at / 1000);
-                return `🔥 **Tungku #${q.slot_number}:** ${q.portions}× ${recLabel} — Matang <t:${finishUnix}:R> (${formatDuration(Math.ceil(remMs / 1000))})`;
+                return `🔥 **Tungku #${q.slot_number}:** ${q.portions}× ${recLabel} — Matang <t:${finishUnix}:R> (${formatDuration(remMs)})`;
             });
             blocks.push(`**🔥 Antrean Tungku Kompor:**\n${qLines.join('\n')}`);
         }
@@ -177,7 +178,7 @@ function buildCookPanel({
                     const unlocked = cookingInfo.level >= r.minLevel;
                     const ingOk = resolveRecipeIngredientsFromBag(invRows, r, 1).ok;
                     return {
-                        label: `${r.name} (Lv.${r.minLevel}+ · ${r.cookTimeSec}d)`,
+                        label: `${r.name} (Lv.${r.minLevel}+ · ${r.cookMinutes}m)`,
                         value: r.id,
                         emoji: !unlocked ? '🔒' : ingOk ? r.emoji : '🧺',
                         description: `Bahan: ${formatIngredientsList(r, 1)}`.slice(0, 95),

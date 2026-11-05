@@ -161,6 +161,9 @@ const FARM_LIMITS = {
 for (const c of CROPS) {
     c.growTimeMs = c.growthHours * 3600000;
     c.cropItemId = c.id;
+    c.seedItemId = c.seedId;
+    c.baseYieldMin = c.baseYield;
+    c.baseYieldMax = c.baseYield + 2;
     c.xpReward = c.xp;
 }
 

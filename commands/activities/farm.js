@@ -60,14 +60,14 @@ function formatPlotLine(plot, now = Date.now()) {
         const phaseName = plot.phase === 1 ? '🌱 Fase 1 (Tunas)' : '🌼 Fase 2 (Berbunga)';
         const readyUnix = Math.floor((now + (plot.remainingPhaseMs || 0)) / 1000);
         const waterStatus = plot.watered === 1
-            ? `💧 Disiram · Selesai fase <t:${readyUnix}:R> (${formatDuration(Math.ceil((plot.remainingPhaseMs || 0) / 1000))})`
+            ? `💧 Disiram · Selesai fase <t:${readyUnix}:R> (${formatDuration(plot.remainingPhaseMs || 0)})`
             : `🏜️ **Belum Disiram!**`;
         return `🔹 **Petak #${plot.plot_number}** (${typeTag}) — ${cropLabel}${fertBadge}\n   └ ${phaseName} · ${waterStatus}`;
     }
 
     if (plot.phase === 3) {
         const wiltLabel = plot.wiltRemainingMs > 0
-            ? `Layu dalam **${formatDuration(Math.ceil(plot.wiltRemainingMs / 1000))}**`
+            ? `Layu dalam **${formatDuration(plot.wiltRemainingMs)}**`
             : 'Segera panen!';
         return `✅ **Petak #${plot.plot_number}** (${typeTag}) — ${cropLabel}${fertBadge}\n   └ 🌾 **SIAP PANEN!** · *${wiltLabel}*`;
     }
@@ -86,7 +86,7 @@ async function fetchFarmState(discordId, now = Date.now()) {
         const seedCounts = {};
         for (const crop of Object.values(CROPS)) {
             seedCounts[crop.id] = invRows
-                .filter(r => r.item_id === crop.seedItemId)
+                .filter(r => r.item_id === crop.seedId)
                 .reduce((acc, r) => acc + Number(r.quantity), 0);
         }
 
@@ -243,7 +243,7 @@ function buildFarmPanel({
                         label: `${c.name} (Bibit: ×${qty} · Lv.${c.minLevel}+)`,
                         value: c.id,
                         emoji: unlocked ? c.emoji : '🔒',
-                        description: `Waktu tumbuh: ${formatDuration(c.growTimeMs)} · Hasil: ${c.baseYieldMin}-${c.baseYieldMax} buah`,
+                        description: `Waktu tumbuh: ${formatDuration(c.growTimeMs)} · Hasil: ${c.baseYield}–${c.baseYield + 2} buah · Jual: ${formatLp(c.sellPrice)}/buah`,
                         default: c.id === activeCrop.id
                     };
                 })

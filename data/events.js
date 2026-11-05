@@ -109,7 +109,7 @@ const SEASONAL_EVENTS = [
                 name: 'Umpan Lure Pro (x5)',
                 itemId: 'umpan_pro',
                 qty: 5,
-                emoji: 'ルアー',
+                emoji: '🪱',
                 tokenCost: 15,
                 description: 'Paket 5 umpan lure profesional untuk berburu ikan langka.'
             }

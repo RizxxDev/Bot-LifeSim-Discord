@@ -524,6 +524,57 @@ async function runTests() {
     const { buildSellPanel } = require('../commands/economy/sell');
     const { buildLeaderboardPanel } = require('../commands/economy/leaderboard');
     const { buildDailyPanel } = require('../commands/economy/daily');
+    const { buildFarmPanel } = require('../commands/activities/farm');
+    const { buildCookPanel } = require('../commands/activities/cook');
+
+    const farmPanelView = buildFarmPanel({
+        state: {
+            player: samplePlayer,
+            buffs: [],
+            plots: [],
+            invRows: [],
+            weather: WEATHER_SEASONS.hujan,
+            seedCounts: { bayam: 2 },
+            activeCropId: 'bayam',
+            ureaCount: 1,
+            komposCount: 1,
+            basiCount: 5
+        },
+        mode: 'view',
+        now: nowTs
+    });
+    const cookPanelKitchen = buildCookPanel({
+        state: {
+            player: samplePlayer,
+            buffs: [],
+            propStatus: {
+                effectiveTier: getPropertyTier('kos'),
+                capacities: { stove: 1 }
+            },
+            queues: [],
+            invRows: [],
+            gasInBag: 1,
+            coalInBag: 0
+        },
+        mode: 'kitchen',
+        now: nowTs
+    });
+    const cookPanelRecipes = buildCookPanel({
+        state: {
+            player: samplePlayer,
+            buffs: [],
+            propStatus: {
+                effectiveTier: getPropertyTier('kos'),
+                capacities: { stove: 1 }
+            },
+            queues: [],
+            invRows: [],
+            gasInBag: 1,
+            coalInBag: 0
+        },
+        mode: 'recipes',
+        now: nowTs
+    });
 
     const jobPanelAll = buildJobPanel({
         state: { player: samplePlayer, invRows: [], vehIds: [], historyMap: new Map() },
@@ -589,6 +640,9 @@ async function runTests() {
     });
 
     for (const [name, pObj] of [
+        ['farm (view)', farmPanelView],
+        ['cook (kitchen)', cookPanelKitchen],
+        ['cook (recipes)', cookPanelRecipes],
         ['job (all)', jobPanelAll],
         ['job (selected)', jobPanelSelected],
         ['property (selected)', propPanelSelected],
@@ -606,6 +660,7 @@ async function runTests() {
     console.log('✅ [20/20] Batch 2–4 UI Revamp: Seluruh 28 Command Panel Interaktif & Batas <= 40 Komponen terverifikasi.\n');
 
     console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (20/20 PASSED)!');
+    process.exit(0);
 }
 
 runTests().catch(err => {
