@@ -5,6 +5,12 @@ const {
     getPlayerBasic,
     processRegistrationModal
 } = require('../services/onboardingService');
+const {
+    logPlayerActivity,
+    getUnacknowledgedWarnings,
+    acknowledgePlayerWarnings,
+    buildWarningInterceptPayload
+} = require('../services/moderationService');
 const { buildHelpCategoryPayload } = require('../commands/onboarding/help');
 const { fetchJobState, buildJobPanel } = require('../commands/career/job');
 const { COLORS, buildV2Card } = require('../utils/uiBuilder');
@@ -50,7 +56,15 @@ module.exports = {
                             })
                         );
                     }
+
+                    const unackWarnings = await getUnacknowledgedWarnings(userId);
+                    if (unackWarnings.length > 0) {
+                        const warnPayload = await buildWarningInterceptPayload(userId, unackWarnings);
+                        return await interaction.reply(warnPayload);
+                    }
                 }
+
+                await logPlayerActivity(null, userId, 'command', `slash:${interaction.commandName}`, {}, Date.now());
 
                 const lockTtl = Number(command.lockTtl) || 15;
                 const lockToken = await acquireUserLock(userId, lockTtl);
@@ -83,6 +97,31 @@ module.exports = {
 
                 const cid = interaction.customId;
                 const userId = interaction.user.id;
+
+                if (cid.startsWith('warn_ack_btn:')) {
+                    const targetOwner = cid.split(':')[1] || '';
+                    if (targetOwner !== userId) {
+                        return await interaction.reply(
+                            buildV2Card({
+                                accentColor: COLORS.WARNING,
+                                title: '🔒 Bukan Peringatan Milikmu',
+                                blocks: ['Tombol konfirmasi peringatan ini hanya untuk pemilik akun terkait.'],
+                                ephemeral: true
+                            })
+                        );
+                    }
+                    await acknowledgePlayerWarnings(userId);
+                    return await interaction.update(
+                        buildV2Card({
+                            accentColor: COLORS.SUCCESS,
+                            title: '✅ Peringatan Telah Dikonfirmasi',
+                            blocks: [
+                                'Terima kasih telah membaca peringatan resmi Administrator. Silakan jalankan kembali perintah permainanmu dengan tertib!'
+                            ],
+                            ephemeral: true
+                        })
+                    );
+                }
 
                 // Tombol milik collector lokal mini-game di /work, /fishing, /mining diabaikan di sini
                 if (

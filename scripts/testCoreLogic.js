@@ -707,11 +707,114 @@ async function runTests() {
         now: nowTs
     });
 
+    const { computeSusFlagsFromMetrics } = require('../services/moderationService');
+    const {
+        buildAdminPlayerPanelFromData,
+        buildAdminPlayerConfirmPanel,
+        buildAdminPlayerLogsPanelFromData,
+        buildAdminSusRadarPanelFromData
+    } = require('../commands/admin/admin');
+
+    const cleanSus = computeSusFlagsFromMetrics({
+        accountAgeHours: 240,
+        totalWealth: 500000,
+        payIn7d: 20000,
+        payOut7d: 10000,
+        payTxCount7d: 1,
+        faucet24h: 150000,
+        activeWarnings: 0
+    });
+    assert.strictEqual(cleanSus.level, 'low', 'Warga wajar harus berstatus risiko low');
+
+    const tuyulSus = computeSusFlagsFromMetrics({
+        accountAgeHours: 12,
+        totalWealth: 450000,
+        payIn7d: 400000,
+        payOut7d: 0,
+        payTxCount7d: 4,
+        topPartnerId: '888888888',
+        topPartnerAmount: 400000,
+        topPartnerTxCount: 4,
+        faucet24h: 50000,
+        activeWarnings: 1
+    });
+    assert.strictEqual(tuyulSus.level, 'high', 'Indikasi akun tuyul baru + pusaran transfer harus berstatus high');
+    assert(tuyulSus.flags.length >= 3, 'Harus menghasilkan minimal 3 red flags');
+
+    const adminPlayerPanel = buildAdminPlayerPanelFromData({
+        ownerId: '123456789',
+        targetRow: {
+            ...samplePlayer,
+            current_job: 'ojek_online',
+            education_level: 'SMA',
+            is_banned: 0,
+            created_at: nowTs - 12 * 3600000
+        },
+        susAnalysis: {
+            ...tuyulSus,
+            payIn7d: 400000,
+            payOut7d: 0,
+            payTxCount7d: 4,
+            faucet24h: 50000,
+            activeWarnings: 1,
+            warningsList: [{ reason: 'Jangan pakai akun kedua', created_at: nowTs - 3600000 }]
+        },
+        now: nowTs
+    });
+
+    const adminConfirmReset = buildAdminPlayerConfirmPanel({
+        ownerId: '123456789',
+        targetRow: samplePlayer,
+        actionType: 'reset',
+        now: nowTs
+    });
+
+    const adminConfirmDelete = buildAdminPlayerConfirmPanel({
+        ownerId: '123456789',
+        targetRow: samplePlayer,
+        actionType: 'delete',
+        now: nowTs
+    });
+
+    const adminLogsPanel = buildAdminPlayerLogsPanelFromData({
+        ownerId: '123456789',
+        targetId: '123456789',
+        targetRow: samplePlayer,
+        susAnalysis: { ...tuyulSus, payIn7d: 400000, payOut7d: 0 },
+        logData: {
+            page: 1,
+            totalPages: 1,
+            totalItems: 2,
+            formattedLines: [
+                '📥 **[MASUK `/pay`]** Menerima **+Lp 200.000** dari <@888888888> · Saldo: `Lp 650.000`',
+                '⚠️ **[WARNING 1/3]** Oleh <@999999999>: *"Jangan pakai akun kedua"*'
+            ]
+        },
+        filterCat: 'all',
+        now: nowTs
+    });
+
+    const adminSusRadarPanel = buildAdminSusRadarPanelFromData({
+        ownerId: '123456789',
+        radarData: {
+            topPayRows: [{ discord_id: '123456789', username: 'Tester', total_vol: 400000, total_in: 400000, total_out: 0, tx_count: 4 }],
+            topFaucetRows: [{ discord_id: '123456789', username: 'Tester', faucet_24h: 150000, tx_count: 10 }],
+            activeWarnRows: [{ discord_id: '123456789', username: 'Tester', warn_count: 1, is_banned: 0 }],
+            candidates: [{ discordId: '123456789', username: 'Tester', tag: 'Transfer 7h: Lp 400.000 (4x)' }]
+        },
+        now: nowTs
+    });
+
     for (const [name, pObj] of [
         ['bin (initial)', binPanelInitial],
         ['bin (found)', binPanelFound],
         ['fishing (tool gate)', fishingGatePanel],
         ['mining (tool gate)', miningGatePanel],
+        ['admin (player audit)', adminPlayerPanel],
+        ['admin (confirm reset)', adminConfirmReset],
+        ['admin (confirm delete)', adminConfirmDelete],
+        ['admin (player logs)', adminLogsPanel],
+        ['admin (sus radar)', adminSusRadarPanel],
         ['farm (view)', farmPanelView],
         ['cook (kitchen)', cookPanelKitchen],
         ['cook (recipes)', cookPanelRecipes],

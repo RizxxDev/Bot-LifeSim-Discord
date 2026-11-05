@@ -18,6 +18,17 @@ const {
     startSeasonalEvent,
     stopSeasonalEvent
 } = require('../../services/eventService');
+const {
+    MAX_WARNINGS_BEFORE_AUTOBAN,
+    logPlayerActivity,
+    getPlayerSusAnalysis,
+    getRadarSusSummary,
+    getPlayerCombinedLogs,
+    issuePlayerWarning,
+    clearPlayerWarnings,
+    resetPlayerAccount,
+    deletePlayerAccount
+} = require('../../services/moderationService');
 const { getItem } = require('../../data/items');
 const { COLORS, formatLp, buildV2Card } = require('../../utils/uiBuilder');
 const { makeId } = require('../../utils/panelId');
@@ -27,7 +38,8 @@ const {
     select,
     userSelect,
     numberModal,
-    parseModalNumber
+    parseModalNumber,
+    respondOrUpdate
 } = require('../../utils/panelBuilder');
 
 function isOwner(userId) {
@@ -40,8 +52,9 @@ function isOwner(userId) {
 
 function buildAdminTabRow(ownerId, activeTab = 'stats', now = Date.now()) {
     const tabs = [
-        { id: 'stats', label: 'Ekonomi & Pajak', emoji: '📊' },
+        { id: 'stats', label: 'Ekonomi', emoji: '📊' },
         { id: 'player', label: 'Kelola Pemain', emoji: '👤' },
+        { id: 'sus', label: 'Radar Sus', emoji: '🚨' },
         { id: 'event', label: 'Event & Cuaca', emoji: '🎪' },
         { id: 'config', label: 'Multiplier', emoji: '⚙️' }
     ];
@@ -135,37 +148,63 @@ async function buildAdminStatsPanel(ownerId, banner = null, now = Date.now()) {
     });
 }
 
-async function buildAdminPlayerPanel(ownerId, targetId = null, banner = null, now = Date.now()) {
-    let targetRow = null;
-    if (targetId) {
-        const rows = await query(
-            `SELECT discord_id, username, cash, bank, current_job, is_banned FROM players WHERE discord_id = ? LIMIT 1`,
-            [targetId]
-        );
-        targetRow = rows[0] || null;
-    }
-
+function buildAdminPlayerPanelFromData({
+    ownerId,
+    targetRow = null,
+    susAnalysis = null,
+    banner = null,
+    now = Date.now()
+}) {
     const blocks = [];
+
     if (targetRow) {
-        blocks.push(
-            [
-                `👤 **Warga Terpilih:** **${targetRow.username}** (<@${targetRow.discord_id}>)`,
-                `• 💵 Cash: **${formatLp(targetRow.cash)}** · 🏦 Bank: **${formatLp(targetRow.bank)}**`,
-                `• 💼 Profesi: **${targetRow.current_job || 'Pengangguran'}**`,
-                `• 🛡️ Status Akun: ${Number(targetRow.is_banned) === 1 ? '🔴 **BANNED**' : '🟢 **AKTIF**'}`
-            ].join('\n')
-        );
+        const totalWealth = Number(targetRow.cash || 0) + Number(targetRow.bank || 0);
+        const createdUnix = Math.floor(Number(targetRow.created_at || now) / 1000);
+        const activeWarnings = Number(susAnalysis?.activeWarnings || 0);
+        const lastWarn = susAnalysis?.warningsList?.[0] || null;
+
+        const profileLines = [
+            `👤 **Warga Terpilih:** **${targetRow.username}** (<@${targetRow.discord_id}> · ID: \`${targetRow.discord_id}\`)`,
+            `• 💵 Cash: **${formatLp(targetRow.cash)}** · 🏦 Bank: **${formatLp(targetRow.bank)}** *(Total: **${formatLp(totalWealth)}**)*`,
+            `• 💼 Profesi: **${targetRow.current_job || 'Pengangguran'}** · 🎓 Pendidikan: **${targetRow.education_level || 'SD'}** · 📅 Daftar: <t:${createdUnix}:R>`,
+            `• 🛡️ Status Akun: ${Number(targetRow.is_banned) === 1 ? '🔴 **BANNED**' : '🟢 **AKTIF**'} · ⚠️ Warning Aktif: **${activeWarnings}/${MAX_WARNINGS_BEFORE_AUTOBAN} Strike**`
+        ];
+        if (lastWarn) {
+            profileLines.push(`• 📝 Warning Terakhir: *"${lastWarn.reason}"* (<t:${Math.floor(Number(lastWarn.created_at) / 1000)}:R>)`);
+        }
+        blocks.push(profileLines.join('\n'));
+
+        if (susAnalysis) {
+            const susLines = [
+                `### 🕵️ Indikator Audit & Deteksi Sus: ${susAnalysis.badge} *(Skor Risiko: ${susAnalysis.score}/100)*`,
+                `• 💸 Transfer \`/pay\` (7 Hari): Masuk **+${formatLp(susAnalysis.payIn7d)}** | Keluar **-${formatLp(susAnalysis.payOut7d)}** (**${susAnalysis.payTxCount7d}×** tx)`,
+                `• 📈 Pemasukan Faucet (24 Jam): **+${formatLp(susAnalysis.faucet24h)}**`
+            ];
+            if (susAnalysis.flags && susAnalysis.flags.length > 0) {
+                susLines.push('**🚩 Temuan Red Flags:**');
+                for (const fl of susAnalysis.flags) {
+                    susLines.push(`  ${fl}`);
+                }
+            } else {
+                susLines.push('• ✅ Tidak ditemukan pola transaksi mencurigakan dalam 7 hari terakhir.');
+            }
+            blocks.push(susLines.join('\n'));
+        }
     } else {
-        blocks.push('Pilih warga melalui menu User Select di bawah untuk mengelola saldo, memberikan item, atau mem-ban/unban akun.');
+        blocks.push(
+            'Pilih warga melalui menu **User Select** di bawah (atau lewat tab **🚨 Radar Sus**) untuk memeriksa log histori, mendeteksi indikasi kecurangan/tuyul, memberi warning, mereset progres, atau menghapus akun.'
+        );
     }
 
     const rows = [
         buildAdminTabRow(ownerId, 'player', now),
-        userSelect('admin', 'pick_user', ownerId, '👤 Pilih Warga untuk Dikelola...', now)
+        userSelect('admin', 'pick_user', ownerId, '👤 Pilih Warga untuk Dikelola / Diaudit...', now)
     ];
 
     if (targetRow) {
         const isBanned = Number(targetRow.is_banned) === 1;
+        const activeWarnings = Number(susAnalysis?.activeWarnings || 0);
+
         rows.push(
             new ActionRowBuilder().addComponents(
                 btn('admin', 'give_cash_modal', ownerId, {
@@ -186,10 +225,43 @@ async function buildAdminPlayerPanel(ownerId, targetId = null, banner = null, no
                     style: ButtonStyle.Secondary,
                     arg: targetRow.discord_id
                 }, now),
+                btn('admin', 'view_logs', ownerId, {
+                    label: 'Lihat Logs & Histori',
+                    emoji: '📜',
+                    style: ButtonStyle.Primary,
+                    arg: `${targetRow.discord_id}|all|1`
+                }, now)
+            ),
+            new ActionRowBuilder().addComponents(
+                btn('admin', 'warn_modal', ownerId, {
+                    label: `Warning (${activeWarnings}/${MAX_WARNINGS_BEFORE_AUTOBAN})`,
+                    emoji: '⚠️',
+                    style: ButtonStyle.Primary,
+                    arg: targetRow.discord_id
+                }, now),
+                btn('admin', 'clear_warn', ownerId, {
+                    label: 'Cabut Warning',
+                    emoji: '🧹',
+                    style: ButtonStyle.Secondary,
+                    arg: targetRow.discord_id,
+                    disabled: activeWarnings <= 0
+                }, now),
                 btn('admin', 'toggle_ban', ownerId, {
-                    label: isBanned ? 'Unban Warga' : 'Ban Warga',
+                    label: isBanned ? 'Unban' : 'Ban',
                     emoji: isBanned ? '🔓' : '🔨',
                     style: isBanned ? ButtonStyle.Success : ButtonStyle.Danger,
+                    arg: targetRow.discord_id
+                }, now),
+                btn('admin', 'ask_reset', ownerId, {
+                    label: 'Reset ke Nol',
+                    emoji: '🔄',
+                    style: ButtonStyle.Danger,
+                    arg: targetRow.discord_id
+                }, now),
+                btn('admin', 'ask_delete', ownerId, {
+                    label: 'Hapus Akun',
+                    emoji: '🗑️',
+                    style: ButtonStyle.Danger,
                     arg: targetRow.discord_id
                 }, now)
             )
@@ -200,11 +272,272 @@ async function buildAdminPlayerPanel(ownerId, targetId = null, banner = null, no
         mod: 'admin',
         ownerId,
         accentColor: COLORS.ADMIN,
-        title: '🔒 Panel Kendali Owner — Kelola Pemain',
+        title: '🔒 Panel Kendali Owner — Kelola & Audit Pemain',
         banner,
         blocks,
         rows,
         ephemeral: true,
+        now
+    });
+}
+
+async function buildAdminPlayerPanel(ownerId, targetId = null, banner = null, now = Date.now()) {
+    let targetRow = null;
+    let susAnalysis = null;
+    if (targetId) {
+        const rows = await query(
+            `SELECT discord_id, username, cash, bank, current_job, education_level, is_banned, created_at
+             FROM players WHERE discord_id = ? LIMIT 1`,
+            [targetId]
+        );
+        targetRow = rows[0] || null;
+        if (targetRow) {
+            susAnalysis = await getPlayerSusAnalysis(targetId, now);
+        }
+    }
+
+    return buildAdminPlayerPanelFromData({
+        ownerId,
+        targetRow,
+        susAnalysis,
+        banner,
+        now
+    });
+}
+
+function buildAdminPlayerConfirmPanel({
+    ownerId,
+    targetRow,
+    actionType = 'reset',
+    now = Date.now()
+}) {
+    const isDelete = actionType === 'delete';
+    const totalWealth = Number(targetRow.cash || 0) + Number(targetRow.bank || 0);
+
+    const blocks = [
+        [
+            isDelete
+                ? `### 🗑️ Konfirmasi Hapus Akun Permanen (Delete)`
+                : `### 🔄 Konfirmasi Reset Progres Akun ke Titik Nol (Zero-Start)`,
+            `Target Warga: **${targetRow.username}** (<@${targetRow.discord_id}> · ID: \`${targetRow.discord_id}\`)`,
+            `Total Kekayaan Saat Ini: **${formatLp(totalWealth)}** *(Cash: ${formatLp(targetRow.cash)} | Bank: ${formatLp(targetRow.bank)})*`,
+            '',
+            isDelete
+                ? `⚠️ **PERINGATAN KERAS:** Tindakan ini akan **menghapus akun beserta seluruh data tas, properti, kendaraan, kebun, kredit, dan progres** secara permanen dari database. Pemain harus mendaftar ulang dari \`/start\` jika ingin bermain kembali.`
+                : `⚠️ **PERINGATAN:** Tindakan ini akan **mengosongkan seluruh uang (Cash & Bank menjadi Lp 0), menghapus properti, kendaraan, kredit, skill XP, serta mengembalikan isi tas ke bekal awal Zero-Start (3× Roti & 3× Air Mineral)** tanpa menghapus username/akun warga.`
+        ].join('\n')
+    ];
+
+    const confirmRow = new ActionRowBuilder().addComponents(
+        btn('admin', isDelete ? 'confirm_delete' : 'confirm_reset', ownerId, {
+            label: isDelete ? 'Ya, Hapus Akun Permanen!' : 'Ya, Reset Progres ke Nol!',
+            emoji: isDelete ? '🗑️' : '🔄',
+            style: ButtonStyle.Danger,
+            arg: targetRow.discord_id
+        }, now),
+        btn('admin', 'back_player', ownerId, {
+            label: 'Batal & Kembali',
+            emoji: '🔙',
+            style: ButtonStyle.Secondary,
+            arg: targetRow.discord_id
+        }, now)
+    );
+
+    return buildPanel({
+        mod: 'admin',
+        ownerId,
+        accentColor: COLORS.DANGER,
+        title: isDelete ? '⚠️ Konfirmasi Hapus Akun Warga' : '⚠️ Konfirmasi Reset Akun Warga',
+        blocks,
+        rows: [confirmRow],
+        ephemeral: true,
+        now
+    });
+}
+
+function buildAdminPlayerLogsPanelFromData({
+    ownerId,
+    targetId,
+    targetRow = null,
+    susAnalysis = null,
+    logData,
+    filterCat = 'all',
+    banner = null,
+    now = Date.now()
+}) {
+    const filterLabels = {
+        all: '📋 Semua Log (Transaksi + Aktivitas + Moderasi)',
+        transfer: '💸 Khusus Transfer /pay (Lacak Aliran Dana / Tuyul)',
+        economy: '💰 Transaksi Ekonomi (Faucet, Sink, Jual/Beli, Kerja)',
+        moderation: '🛡️ Riwayat Moderasi & Warning',
+        command: '⌨️ Riwayat Eksekusi Command'
+    };
+
+    const headerLines = [
+        `👤 **Target Audit:** **${targetRow ? targetRow.username : 'Warga (Terhapus)'}** (<@${targetId}> · ID: \`${targetId}\`)`,
+        `• 🔍 **Filter Aktif:** ${filterLabels[filterCat] || filterLabels.all}`,
+        susAnalysis
+            ? `• 🕵️ **Status Sus:** ${susAnalysis.badge} *(Skor: ${susAnalysis.score}/100 · Transfer 7h: Masuk +${formatLp(susAnalysis.payIn7d)} / Keluar -${formatLp(susAnalysis.payOut7d)})*`
+            : `• ℹ️ Menampilkan log historis yang tersimpan di database.`
+    ];
+
+    const logLines =
+        logData.formattedLines.length > 0
+            ? logData.formattedLines.join('\n')
+            : '*Belum ada catatan log pada kategori ini.*';
+
+    const filterSelect = select('admin', 'log_filter', ownerId, {
+        placeholder: '🔍 Filter Kategori Log Warga...',
+        options: [
+            { label: 'Semua Log (Gabungan)', value: `${targetId}|all`, emoji: '📋', default: filterCat === 'all' },
+            { label: 'Khusus Transfer /pay (Cek Tuyul)', value: `${targetId}|transfer`, emoji: '💸', default: filterCat === 'transfer' },
+            { label: 'Transaksi Ekonomi (Faucet & Sink)', value: `${targetId}|economy`, emoji: '💰', default: filterCat === 'economy' },
+            { label: 'Riwayat Moderasi & Warning', value: `${targetId}|moderation`, emoji: '🛡️', default: filterCat === 'moderation' },
+            { label: 'Riwayat Eksekusi Command', value: `${targetId}|command`, emoji: '⌨️', default: filterCat === 'command' }
+        ]
+    }, now);
+
+    const navRow = new ActionRowBuilder().addComponents(
+        btn('admin', 'log_page', ownerId, {
+            label: 'Sebelumnya',
+            emoji: '◀️',
+            style: ButtonStyle.Secondary,
+            arg: `${targetId}|${filterCat}|${Math.max(1, logData.page - 1)}|prev`,
+            disabled: logData.page <= 1
+        }, now),
+        btn('admin', 'noop', ownerId, {
+            label: `Hal ${logData.page}/${logData.totalPages} (${logData.totalItems} Log)`,
+            style: ButtonStyle.Secondary,
+            arg: 'log_pg_info',
+            disabled: true
+        }, now),
+        btn('admin', 'log_page', ownerId, {
+            label: 'Berikutnya',
+            emoji: '▶️',
+            style: ButtonStyle.Secondary,
+            arg: `${targetId}|${filterCat}|${Math.min(logData.totalPages, logData.page + 1)}|next`,
+            disabled: logData.page >= logData.totalPages
+        }, now),
+        btn('admin', 'back_player', ownerId, {
+            label: 'Kembali ke Kelola Pemain',
+            emoji: '🔙',
+            style: ButtonStyle.Primary,
+            arg: targetId
+        }, now)
+    );
+
+    return buildPanel({
+        mod: 'admin',
+        ownerId,
+        accentColor: COLORS.ADMIN,
+        title: `📜 Riwayat & Audit Logs — ${targetRow ? targetRow.username : targetId}`,
+        banner,
+        blocks: [
+            headerLines.join('\n'),
+            `### 📄 Daftar Catatan Aktivitas & Transaksi (Hal ${logData.page}/${logData.totalPages})\n${logLines}`
+        ],
+        rows: [filterSelect, navRow],
+        ephemeral: true,
+        now
+    });
+}
+
+async function buildAdminPlayerLogsPanel(ownerId, targetId, filterCat = 'all', page = 1, banner = null, now = Date.now()) {
+    const [rows, susAnalysis, logData] = await Promise.all([
+        query(`SELECT discord_id, username, cash, bank, is_banned, created_at FROM players WHERE discord_id = ? LIMIT 1`, [targetId]),
+        getPlayerSusAnalysis(targetId, now),
+        getPlayerCombinedLogs(targetId, filterCat, page, 8)
+    ]);
+
+    return buildAdminPlayerLogsPanelFromData({
+        ownerId,
+        targetId,
+        targetRow: rows[0] || null,
+        susAnalysis,
+        logData,
+        filterCat,
+        banner,
+        now
+    });
+}
+
+function buildAdminSusRadarPanelFromData({
+    ownerId,
+    radarData,
+    banner = null,
+    now = Date.now()
+}) {
+    const payLines =
+        radarData.topPayRows && radarData.topPayRows.length > 0
+            ? radarData.topPayRows.map((r, i) =>
+                `${i + 1}. **${r.username || r.discord_id}** (<@${r.discord_id}>) — Volume: **${formatLp(r.total_vol)}** *(Masuk: +${formatLp(r.total_in)} | Keluar: -${formatLp(r.total_out)} · ${r.tx_count}× tx)*`
+            ).join('\n')
+            : '*Belum ada aktivitas transfer `/pay` dalam 7 hari terakhir.*';
+
+    const faucetLines =
+        radarData.topFaucetRows && radarData.topFaucetRows.length > 0
+            ? radarData.topFaucetRows.map((r, i) =>
+                `${i + 1}. **${r.username || r.discord_id}** (<@${r.discord_id}>) — Faucet 24j: **+${formatLp(r.faucet_24h)}** *(${r.tx_count}× aktivitas)*`
+            ).join('\n')
+            : '*Belum ada pemasukan faucet dalam 24 jam terakhir.*';
+
+    const warnLines =
+        radarData.activeWarnRows && radarData.activeWarnRows.length > 0
+            ? radarData.activeWarnRows.map((r, i) =>
+                `${i + 1}. **${r.username || r.discord_id}** (<@${r.discord_id}>) — **⚠️ ${r.warn_count}/${MAX_WARNINGS_BEFORE_AUTOBAN} Strike** ${Number(r.is_banned) === 1 ? '*(🔴 BANNED)*' : '*(🟢 Aktif)*'}`
+            ).join('\n')
+            : '*Tidak ada warga yang memiliki warning aktif saat ini.*';
+
+    const rows = [buildAdminTabRow(ownerId, 'sus', now)];
+
+    if (radarData.candidates && radarData.candidates.length > 0) {
+        rows.push(
+            select('admin', 'inspect_sus', ownerId, {
+                placeholder: '🔍 Pilih Warga dari Radar Sus untuk Diaudit Lebih Lanjut...',
+                options: radarData.candidates.map(c => ({
+                    label: `${c.username} (${c.discordId})`.slice(0, 100),
+                    value: c.discordId,
+                    emoji: '🕵️',
+                    description: String(c.tag || 'Klik untuk buka profil & logs').slice(0, 100)
+                }))
+            }, now)
+        );
+    }
+
+    rows.push(
+        new ActionRowBuilder().addComponents(
+            btn('admin', 'tab', ownerId, {
+                label: 'Segarkan Radar Sus',
+                emoji: '🔄',
+                style: ButtonStyle.Secondary,
+                arg: 'sus_refresh'
+            }, now)
+        )
+    );
+
+    return buildPanel({
+        mod: 'admin',
+        ownerId,
+        accentColor: COLORS.ADMIN,
+        title: '🚨 Panel Kendali Owner — Radar Sus & Deteksi Anomali',
+        banner,
+        blocks: [
+            `### 💸 Top Perputaran Transfer \`/pay\` (7 Hari Terakhir — Pantau Indikasi Tuyul)\n${payLines}`,
+            `### 📈 Top Pemasukan Faucet Sistem (24 Jam Terakhir)\n${faucetLines}`,
+            `### ⚠️ Warga dengan Warning Aktif\n${warnLines}`
+        ],
+        rows,
+        ephemeral: true,
+        now
+    });
+}
+
+async function buildAdminSusRadarPanel(ownerId, banner = null, now = Date.now()) {
+    const radarData = await getRadarSusSummary(now);
+    return buildAdminSusRadarPanelFromData({
+        ownerId,
+        radarData,
+        banner,
         now
     });
 }
@@ -344,7 +677,7 @@ module.exports = {
     skipRegistrationCheck: true,
     data: new SlashCommandBuilder()
         .setName('admin')
-        .setDescription('🔒 Buka panel kendali ekonomi, pemain, event, & konfigurasi khusus Owner Bot.'),
+        .setDescription('🔒 Buka panel kendali ekonomi, audit logs, radar sus, warning, & reset/delete khusus Owner.'),
 
     async executeSlash(interaction) {
         if (!isOwner(interaction.user.id)) {
@@ -369,9 +702,34 @@ module.exports = {
                 const now = Date.now();
                 const tab = parsed.arg || 'stats';
                 if (tab === 'player') return await interaction.update(await buildAdminPlayerPanel(interaction.user.id, null, null, now));
+                if (tab === 'sus' || tab === 'sus_refresh') {
+                    return await interaction.update(await buildAdminSusRadarPanel(interaction.user.id, null, now));
+                }
                 if (tab === 'event') return await interaction.update(await buildAdminEventPanel(interaction.user.id, null, now));
                 if (tab === 'config') return await interaction.update(await buildAdminConfigPanel(interaction.user.id, null, now));
                 return await interaction.update(await buildAdminStatsPanel(interaction.user.id, null, now));
+            },
+            async back_player(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const targetId = parsed.arg || null;
+                return await interaction.update(await buildAdminPlayerPanel(interaction.user.id, targetId, null, now));
+            },
+            async view_logs(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const [targetId, filterCat = 'all', pageStr = '1'] = String(parsed.arg || '').split('|');
+                return await interaction.update(
+                    await buildAdminPlayerLogsPanel(interaction.user.id, targetId, filterCat, Number(pageStr) || 1, null, now)
+                );
+            },
+            async log_page(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const [targetId, filterCat = 'all', pageStr = '1'] = String(parsed.arg || '').split('|');
+                return await interaction.update(
+                    await buildAdminPlayerLogsPanel(interaction.user.id, targetId, filterCat, Number(pageStr) || 1, null, now)
+                );
             },
             async give_cash_modal(interaction, parsed) {
                 if (!isOwner(interaction.user.id)) return;
@@ -417,20 +775,174 @@ module.exports = {
                     );
                 return await interaction.showModal(modal);
             },
+            async warn_modal(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const modal = new ModalBuilder()
+                    .setCustomId(makeId('admin', 'warn_submit', interaction.user.id, parsed.arg))
+                    .setTitle('⚠️ Beri Peringatan (Warning) ke Warga')
+                    .addComponents(
+                        new ActionRowBuilder().addComponents(
+                            new TextInputBuilder()
+                                .setCustomId('reason')
+                                .setLabel('Pesan / Alasan Peringatan untuk Warga')
+                                .setStyle(TextInputStyle.Paragraph)
+                                .setPlaceholder('Contoh: Dilarang menyalurkan uang dari akun kedua (akun tuyul). Pelanggaran ke-3 akan di-ban!')
+                                .setMaxLength(350)
+                                .setRequired(true)
+                        )
+                    );
+                return await interaction.showModal(modal);
+            },
+            async clear_warn(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const targetId = parsed.arg || '';
+                await clearPlayerWarnings(targetId, interaction.user.id, now);
+                return await interaction.update(
+                    await buildAdminPlayerPanel(
+                        interaction.user.id,
+                        targetId,
+                        { type: 'success', text: `🧹 Seluruh warning aktif untuk <@${targetId}> berhasil dicabut.` },
+                        now
+                    )
+                );
+            },
             async toggle_ban(interaction, parsed) {
                 if (!isOwner(interaction.user.id)) return;
                 const now = Date.now();
                 const targetId = parsed.arg || '';
                 const rows = await query(`SELECT is_banned FROM players WHERE discord_id = ? LIMIT 1`, [targetId]);
+                let nextBan = 0;
                 if (rows.length > 0) {
-                    const nextBan = Number(rows[0].is_banned) === 1 ? 0 : 1;
+                    nextBan = Number(rows[0].is_banned) === 1 ? 0 : 1;
                     await query(`UPDATE players SET is_banned = ? WHERE discord_id = ?`, [nextBan, targetId]);
+                    await logPlayerActivity(
+                        null,
+                        targetId,
+                        'moderation',
+                        'ban_toggled',
+                        { adminId: interaction.user.id, isBanned: nextBan === 1 },
+                        now
+                    );
                 }
                 return await interaction.update(
                     await buildAdminPlayerPanel(
                         interaction.user.id,
                         targetId,
-                        { type: 'info', text: `Status ban untuk <@${targetId}> telah diperbarui.` },
+                        {
+                            type: nextBan === 1 ? 'danger' : 'success',
+                            text: nextBan === 1
+                                ? `🔨 Akun <@${targetId}> telah dibekukan (BANNED).`
+                                : `🔓 Akun <@${targetId}> telah dipulihkan (UNBANNED).`
+                        },
+                        now
+                    )
+                );
+            },
+            async ask_reset(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const targetId = parsed.arg || '';
+                const rows = await query(
+                    `SELECT discord_id, username, cash, bank FROM players WHERE discord_id = ? LIMIT 1`,
+                    [targetId]
+                );
+                if (rows.length === 0) {
+                    return await interaction.update(
+                        await buildAdminPlayerPanel(
+                            interaction.user.id,
+                            null,
+                            { type: 'danger', text: 'Akun warga tidak ditemukan.' },
+                            now
+                        )
+                    );
+                }
+                return await interaction.update(
+                    buildAdminPlayerConfirmPanel({
+                        ownerId: interaction.user.id,
+                        targetRow: rows[0],
+                        actionType: 'reset',
+                        now
+                    })
+                );
+            },
+            async ask_delete(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const targetId = parsed.arg || '';
+                const rows = await query(
+                    `SELECT discord_id, username, cash, bank FROM players WHERE discord_id = ? LIMIT 1`,
+                    [targetId]
+                );
+                if (rows.length === 0) {
+                    return await interaction.update(
+                        await buildAdminPlayerPanel(
+                            interaction.user.id,
+                            null,
+                            { type: 'danger', text: 'Akun warga tidak ditemukan.' },
+                            now
+                        )
+                    );
+                }
+                return await interaction.update(
+                    buildAdminPlayerConfirmPanel({
+                        ownerId: interaction.user.id,
+                        targetRow: rows[0],
+                        actionType: 'delete',
+                        now
+                    })
+                );
+            },
+            async confirm_reset(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const targetId = parsed.arg || '';
+                const res = await resetPlayerAccount(targetId, interaction.user.id, now);
+                if (!res.ok) {
+                    return await interaction.update(
+                        await buildAdminPlayerPanel(
+                            interaction.user.id,
+                            null,
+                            { type: 'danger', text: res.error },
+                            now
+                        )
+                    );
+                }
+                return await interaction.update(
+                    await buildAdminPlayerPanel(
+                        interaction.user.id,
+                        targetId,
+                        {
+                            type: 'success',
+                            text: `🔄 Progres akun **${res.username}** (<@${targetId}>) berhasil di-reset ke Titik Nol (Zero-Start)! Harta sebelumnya yang dihapus: ${formatLp(res.prevWealth)}.`
+                        },
+                        now
+                    )
+                );
+            },
+            async confirm_delete(interaction, parsed) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const targetId = parsed.arg || '';
+                const res = await deletePlayerAccount(targetId, interaction.user.id, now);
+                if (!res.ok) {
+                    return await interaction.update(
+                        await buildAdminPlayerPanel(
+                            interaction.user.id,
+                            null,
+                            { type: 'danger', text: res.error },
+                            now
+                        )
+                    );
+                }
+                return await interaction.update(
+                    await buildAdminPlayerPanel(
+                        interaction.user.id,
+                        null,
+                        {
+                            type: 'danger',
+                            text: `🗑️ Akun **${res.username}** (<@${targetId}>) telah dihapus permanen dari database! (Harta terakhir: ${formatLp(res.prevWealth)}).`
+                        },
                         now
                     )
                 );
@@ -486,7 +998,32 @@ module.exports = {
                 if (!isOwner(interaction.user.id)) return;
                 const now = Date.now();
                 const targetId = interaction.values[0] || '';
+                const check = await query(`SELECT discord_id FROM players WHERE discord_id = ? LIMIT 1`, [targetId]);
+                if (check.length === 0) {
+                    return await interaction.update(
+                        await buildAdminPlayerPanel(
+                            interaction.user.id,
+                            null,
+                            { type: 'warning', text: `User <@${targetId}> belum terdaftar sebagai warga di database.` },
+                            now
+                        )
+                    );
+                }
                 return await interaction.update(await buildAdminPlayerPanel(interaction.user.id, targetId, null, now));
+            },
+            async inspect_sus(interaction) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const targetId = interaction.values[0] || '';
+                return await interaction.update(await buildAdminPlayerPanel(interaction.user.id, targetId, null, now));
+            },
+            async log_filter(interaction) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const [targetId, filterCat = 'all'] = String(interaction.values[0] || '').split('|');
+                return await interaction.update(
+                    await buildAdminPlayerLogsPanel(interaction.user.id, targetId, filterCat, 1, null, now)
+                );
             },
             async start_event(interaction) {
                 if (!isOwner(interaction.user.id)) return;
@@ -528,7 +1065,10 @@ module.exports = {
                 const targetId = parsed.arg || '';
                 const parsedNum = parseModalNumber(interaction, 'amount', { min: 1 });
                 if (!parsedNum.ok) {
-                    return await interaction.update(await buildAdminPlayerPanel(interaction.user.id, targetId, { type: 'warning', text: parsedNum.error }, now));
+                    return await respondOrUpdate(
+                        interaction,
+                        await buildAdminPlayerPanel(interaction.user.id, targetId, { type: 'warning', text: parsedNum.error }, now)
+                    );
                 }
 
                 await withTransaction(async (conn) => {
@@ -543,7 +1083,8 @@ module.exports = {
                     );
                 });
 
-                return await interaction.update(
+                return await respondOrUpdate(
+                    interaction,
                     await buildAdminPlayerPanel(
                         interaction.user.id,
                         targetId,
@@ -558,7 +1099,10 @@ module.exports = {
                 const targetId = parsed.arg || '';
                 const parsedNum = parseModalNumber(interaction, 'amount', { min: 1 });
                 if (!parsedNum.ok) {
-                    return await interaction.update(await buildAdminPlayerPanel(interaction.user.id, targetId, { type: 'warning', text: parsedNum.error }, now));
+                    return await respondOrUpdate(
+                        interaction,
+                        await buildAdminPlayerPanel(interaction.user.id, targetId, { type: 'warning', text: parsedNum.error }, now)
+                    );
                 }
 
                 await withTransaction(async (conn) => {
@@ -577,7 +1121,8 @@ module.exports = {
                     }
                 });
 
-                return await interaction.update(
+                return await respondOrUpdate(
+                    interaction,
                     await buildAdminPlayerPanel(
                         interaction.user.id,
                         targetId,
@@ -595,7 +1140,8 @@ module.exports = {
                 const it = getItem(itemId);
 
                 if (!it) {
-                    return await interaction.update(
+                    return await respondOrUpdate(
+                        interaction,
                         await buildAdminPlayerPanel(
                             interaction.user.id,
                             targetId,
@@ -606,7 +1152,8 @@ module.exports = {
                 }
 
                 await withTransaction(conn => addItem(conn, targetId, it.id, qty, now));
-                return await interaction.update(
+                return await respondOrUpdate(
+                    interaction,
                     await buildAdminPlayerPanel(
                         interaction.user.id,
                         targetId,
@@ -614,7 +1161,43 @@ module.exports = {
                         now
                     )
                 );
+            },
+            async warn_submit(interaction, parsed, client) {
+                if (!isOwner(interaction.user.id)) return;
+                const now = Date.now();
+                const targetId = parsed.arg || '';
+                const reason = (interaction.fields.getTextInputValue('reason') || '').trim();
+
+                const res = await issuePlayerWarning(client || interaction.client, {
+                    targetId,
+                    adminId: interaction.user.id,
+                    reason,
+                    now
+                });
+
+                const dmInfo = res.dmSent
+                    ? '📩 Pesan DM terkirim.'
+                    : '📌 DM user terkunci (kartu peringatan otomatis dicegat di in-game saat ia pakai command).';
+
+                const bannerText = res.autoBanned
+                    ? `🔨 Warning ke-${res.activeCount}/${MAX_WARNINGS_BEFORE_AUTOBAN} diterbitkan! Akun <@${targetId}> **otomatis di-BAN**. (${dmInfo})`
+                    : `⚠️ Warning ke-${res.activeCount}/${MAX_WARNINGS_BEFORE_AUTOBAN} berhasil dikirim ke <@${targetId}>! (${dmInfo})`;
+
+                return await respondOrUpdate(
+                    interaction,
+                    await buildAdminPlayerPanel(
+                        interaction.user.id,
+                        targetId,
+                        { type: res.autoBanned ? 'danger' : 'warning', text: bannerText },
+                        now
+                    )
+                );
             }
         }
-    }
+    },
+
+    buildAdminPlayerPanelFromData,
+    buildAdminPlayerConfirmPanel,
+    buildAdminPlayerLogsPanelFromData,
+    buildAdminSusRadarPanelFromData
 };

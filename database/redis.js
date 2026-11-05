@@ -304,6 +304,34 @@ async function getActiveUserCount(ts = Date.now()) {
     return entry ? Math.max(1, entry.set.size) : 1;
 }
 
+async function clearUserRedisKeys(discordId, ts = Date.now()) {
+    const dateWib = getWibDateString(ts);
+    const actions = ['work', 'study', 'fishing', 'mining', 'bin'];
+    const keysToDelete = [
+        `lock:user:${discordId}`,
+        `pay:${dateWib}:${discordId}:sent`,
+        `pay:${dateWib}:${discordId}:recv`
+    ];
+    for (const act of actions) {
+        keysToDelete.push(`cd:${discordId}:${act}`);
+        keysToDelete.push(`cap:${dateWib}:${discordId}:${act}`);
+    }
+    for (const itemId of ['kopi_hitam', 'minuman_energi']) {
+        keysToDelete.push(`caffeine:${dateWib}:${discordId}:${itemId}`);
+    }
+
+    if (isReady()) {
+        if (keysToDelete.length > 0) {
+            await redisClient.del(...keysToDelete);
+        }
+        return;
+    }
+
+    for (const k of keysToDelete) {
+        memKv.delete(k);
+    }
+}
+
 module.exports = {
     initRedis,
     isReady,
@@ -327,5 +355,6 @@ module.exports = {
     recordMarketSale,
     getRolling24hSupply,
     recordActiveUser,
-    getActiveUserCount
+    getActiveUserCount,
+    clearUserRedisKeys
 };

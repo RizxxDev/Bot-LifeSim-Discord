@@ -1,5 +1,6 @@
 const { acquireUserLock, releaseUserLock, recordActiveUser } = require('../database/redis');
 const { getPlayerBasic, buildWelcomeCardPayload } = require('./onboardingService');
+const { getUnacknowledgedWarnings, buildWarningInterceptPayload } = require('./moderationService');
 const { COLORS, buildV2Card } = require('../utils/uiBuilder');
 const { parseId } = require('../utils/panelId');
 const { buildExpiredPanel } = require('../utils/panelBuilder');
@@ -96,6 +97,13 @@ async function dispatch(interaction, client, now = Date.now()) {
                     ephemeral: true
                 })
             );
+            return true;
+        }
+
+        const unackWarnings = await getUnacknowledgedWarnings(interaction.user.id);
+        if (unackWarnings.length > 0) {
+            const warnPayload = await buildWarningInterceptPayload(interaction.user.id, unackWarnings);
+            await interaction.reply(warnPayload);
             return true;
         }
     }
