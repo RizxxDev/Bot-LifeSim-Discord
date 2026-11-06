@@ -5,6 +5,7 @@ const { getPlayerInventory, calculateSlotsUsed } = require('../../services/inven
 const { getPlayerPropertyStatus } = require('../../services/propertyService');
 const { getEquippedVehicle } = require('../../services/vehicleService');
 const { evaluatePlayerAchievements } = require('../../services/achievementService');
+const { getPlayerGachaStats } = require('../../services/gachaService');
 const { isNewbieBoostActive } = require('../../services/economyService');
 const { getEducation } = require('../../data/education');
 const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
@@ -41,6 +42,7 @@ async function fetchProfileData(targetId, now = Date.now()) {
             [targetId]
         );
         const achEval = await evaluatePlayerAchievements(conn, synced.player, now);
+        const gachaStats = await getPlayerGachaStats(conn, targetId);
 
         return {
             player: synced.player,
@@ -50,6 +52,7 @@ async function fetchProfileData(targetId, now = Date.now()) {
             equippedVehicle,
             jobShifts,
             achEval,
+            gachaStats,
             collections: colRows.map(r => r.item_id)
         };
     });
@@ -57,6 +60,7 @@ async function fetchProfileData(targetId, now = Date.now()) {
 
 function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
     const { player: p, buffs, slotsUsed, propStatus, equippedVehicle, jobShifts, achEval, collections } = data;
+    const gachaStats = data.gachaStats || { total_pulls: 0, jackpot_count: 0 };
     const edu = getEducation(p.education_level);
     const backpack = getBackpackByTier(p.backpack_tier);
     const fishLv = getLevelInfoFromXp(p.fishing_xp);
@@ -175,6 +179,7 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
                 `• Cooking : **Lv. ${cookLv.level}**${cookStars} (\`${cookLv.currentXp}/${cookLv.requiredXp} EXP\`)`,
                 `• Tas     : ${backpack.emoji} **${backpack.name}** (\`${slotsUsed} / ${p.max_slots} slot\`)`,
                 `• Koleksi : 🐟 Fishpedia **${fishCollected}/${TOTAL_FISH_SPECIES}** · 💎 Mineral **${mineralCollected}/${TOTAL_MINERAL_TYPES}**`,
+                `• Gacha   : 🎰 **${Number(gachaStats.total_pulls || 0)}× Pull** *(👑 ${Number(gachaStats.jackpot_count || gachaStats.jackpots_won || 0)}× Jackpot Legendary)*`,
                 `• Prestasi: 🏆 Achievement **${achEval.unlockedCount}/${achEval.totalCount}**${achEval.claimableCount > 0 ? ` *(🎁 ${achEval.claimableCount} siap klaim di /achievements)*` : ''}`
             ].join('\n')
         ],

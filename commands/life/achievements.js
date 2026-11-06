@@ -16,7 +16,8 @@ const { COLORS, formatLp } = require('../../utils/uiBuilder');
 const {
     buildPanel,
     btn,
-    select
+    select,
+    paginate
 } = require('../../utils/panelBuilder');
 
 function formatRewardLabel(ach) {
@@ -44,25 +45,41 @@ async function fetchAchievementsState(discordId, now = Date.now()) {
     });
 }
 
+function parseCatPageArg(rawArg) {
+    if (!rawArg) return { cat: 'all', page: 1 };
+    const [catPart, pagePart] = String(rawArg).split(':');
+    return {
+        cat: catPart || 'all',
+        page: Math.max(1, parseInt(pagePart || '1', 10) || 1)
+    };
+}
+
 function buildAchievementsPanel({
     state,
     selectedCategory = 'all',
+    page = 1,
     banner = null,
     now = Date.now()
 }) {
     const { player: p, evalRes, unlockedTitles } = state;
     const ownerId = p.discord_id;
 
-    const filtered = selectedCategory === 'all'
-        ? evalRes.achievements
+    const rawFiltered = selectedCategory === 'all'
+        ? [...evalRes.achievements].sort((a, b) => {
+            const aReady = a.unlocked && !a.claimed ? 1 : 0;
+            const bReady = b.unlocked && !b.claimed ? 1 : 0;
+            return bReady - aReady;
+        })
         : evalRes.achievements.filter(a => a.category === selectedCategory);
 
+    const pg = paginate(rawFiltered, page, 9);
     const catInfo = ACHIEVEMENT_CATEGORIES.find(c => c.id === selectedCategory);
+    const pageSuffix = pg.totalPages > 1 ? ` · Hal ${pg.page}/${pg.totalPages}` : '';
     const title = catInfo
-        ? `${catInfo.emoji} Achievement & Gelar: ${catInfo.name}`
-        : `🏆 Buku Pencapaian & Gelar Warga (${evalRes.unlockedCount}/${evalRes.totalCount})`;
+        ? `${catInfo.emoji} Achievement & Gelar: ${catInfo.name}${pageSuffix}`
+        : `🏆 Buku Pencapaian & Gelar Warga (${evalRes.unlockedCount}/${evalRes.totalCount}${pageSuffix})`;
 
-    const lines = filtered.map(a => {
+    const lines = pg.slice.map(a => {
         const statusIcon = a.unlocked
             ? (a.claimed ? '✅' : '🎁')
             : '🔒';
@@ -78,15 +95,10 @@ function buildAchievementsPanel({
             `📊 **Total Terbuka:** **${evalRes.unlockedCount}/${evalRes.totalCount}** Achievement · 🎁 **Siap Diklaim:** **${evalRes.claimableCount}** paket`,
             `🏷️ **Gelar Kehormatan Aktif:** ${p.equipped_title ? `**${p.equipped_title}**` : '*Belum dipasang*'} *(Koleksi Gelar: **${unlockedTitles.length}** terbuka)*`
         ].join('\n'),
-        lines.slice(0, 10).join('\n\n')
+        lines.join('\n\n')
     ];
 
-    if (lines.length > 10) {
-        blocks.push(lines.slice(10, 20).join('\n\n'));
-    }
-    if (lines.length > 20) {
-        blocks.push(lines.slice(20).join('\n\n'));
-    }
+    const stateArg = `${selectedCategory}:${pg.page}`;
 
     const rows = [
         select('achievements', 'cat', ownerId, {
@@ -116,6 +128,7 @@ function buildAchievementsPanel({
         rows.push(
             select('achievements', 'equip_title', ownerId, {
                 placeholder: '🏷️ Pilih Gelar Kehormatan (Title) untuk dipasang...',
+                arg: stateArg,
                 options: unlockedTitles.slice(0, 25).map(t => ({
                     label: t.title.slice(0, 100),
                     value: t.title.slice(0, 100),
@@ -127,15 +140,34 @@ function buildAchievementsPanel({
         );
     }
 
-    const actionButtons = [
+    const actionButtons = [];
+    if (pg.totalPages > 1) {
+        actionButtons.push(
+            btn('achievements', 'prev_page', ownerId, {
+                label: `${pg.page}/${pg.totalPages}`,
+                emoji: '◀️',
+                style: ButtonStyle.Secondary,
+                disabled: pg.page <= 1,
+                arg: `${selectedCategory}:${pg.page - 1}`
+            }, now),
+            btn('achievements', 'next_page', ownerId, {
+                emoji: '▶️',
+                style: ButtonStyle.Secondary,
+                disabled: pg.page >= pg.totalPages,
+                arg: `${selectedCategory}:${pg.page + 1}`
+            }, now)
+        );
+    }
+
+    actionButtons.push(
         btn('achievements', 'claim', ownerId, {
-            label: evalRes.claimableCount > 0 ? `Klaim Semua Hadiah (${evalRes.claimableCount})` : 'Semua Hadiah Diklaim',
+            label: evalRes.claimableCount > 0 ? `Klaim Semua (${evalRes.claimableCount})` : 'Semua Diklaim',
             emoji: '🎁',
             style: ButtonStyle.Success,
             disabled: evalRes.claimableCount <= 0,
-            arg: selectedCategory
+            arg: stateArg
         }, now)
-    ];
+    );
 
     if (p.equipped_title) {
         actionButtons.push(
@@ -143,7 +175,7 @@ function buildAchievementsPanel({
                 label: 'Lepas Gelar',
                 emoji: '🚫',
                 style: ButtonStyle.Secondary,
-                arg: selectedCategory
+                arg: stateArg
             }, now)
         );
     }
@@ -153,7 +185,7 @@ function buildAchievementsPanel({
             label: 'Segarkan',
             emoji: '🔄',
             style: ButtonStyle.Secondary,
-            arg: selectedCategory
+            arg: stateArg
         }, now)
     );
 
@@ -168,7 +200,7 @@ function buildAchievementsPanel({
         banner,
         blocks,
         rows,
-        footer: 'Selesaikan achievement, beli item prestise di /shop, atau ikuti /event untuk membuka gelar eksklusif.',
+        footer: 'Selesaikan achievement, beli item prestise di /shop, putar /gacha, atau ikuti /event untuk membuka gelar eksklusif.',
         now
     });
 }
@@ -190,14 +222,26 @@ module.exports = {
         buttons: {
             async home(interaction, parsed) {
                 const now = Date.now();
-                const cat = parsed.arg || 'all';
+                const { cat, page } = parseCatPageArg(parsed.arg);
                 const state = await fetchAchievementsState(interaction.user.id, now);
-                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, now }));
+                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, page, now }));
+            },
+            async prev_page(interaction, parsed) {
+                const now = Date.now();
+                const { cat, page } = parseCatPageArg(parsed.arg);
+                const state = await fetchAchievementsState(interaction.user.id, now);
+                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, page, now }));
+            },
+            async next_page(interaction, parsed) {
+                const now = Date.now();
+                const { cat, page } = parseCatPageArg(parsed.arg);
+                const state = await fetchAchievementsState(interaction.user.id, now);
+                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, page, now }));
             },
             async claim(interaction, parsed) {
                 const now = Date.now();
                 const userId = interaction.user.id;
-                const cat = parsed.arg || 'all';
+                const { cat, page } = parseCatPageArg(parsed.arg);
                 const res = await withTransaction(async (conn) => {
                     const synced = await syncPlayerVitals(conn, userId, now, true);
                     return await claimAchievementRewards(conn, synced.player, now);
@@ -223,12 +267,12 @@ module.exports = {
                     };
                 }
 
-                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, banner, now }));
+                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, page, banner, now }));
             },
             async unequip(interaction, parsed) {
                 const now = Date.now();
                 const userId = interaction.user.id;
-                const cat = parsed.arg || 'all';
+                const { cat, page } = parseCatPageArg(parsed.arg);
                 await withTransaction(async (conn) => {
                     await syncPlayerVitals(conn, userId, now, true);
                     await conn.execute(`UPDATE players SET equipped_title = NULL WHERE discord_id = ?`, [userId]);
@@ -239,6 +283,7 @@ module.exports = {
                     buildAchievementsPanel({
                         state,
                         selectedCategory: cat,
+                        page,
                         banner: { type: 'info', text: '🏷️ Gelar kehormatan pada profilmu telah dilepas.' },
                         now
                     })
@@ -250,11 +295,12 @@ module.exports = {
                 const now = Date.now();
                 const cat = interaction.values[0] || 'all';
                 const state = await fetchAchievementsState(interaction.user.id, now);
-                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, now }));
+                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, page: 1, now }));
             },
-            async equip_title(interaction) {
+            async equip_title(interaction, parsed) {
                 const now = Date.now();
                 const userId = interaction.user.id;
+                const { cat, page } = parseCatPageArg(parsed.arg);
                 const chosenTitle = interaction.values[0] || '';
 
                 const res = await withTransaction(async (conn) => {
@@ -270,7 +316,7 @@ module.exports = {
                 const banner = res.ok
                     ? { type: 'success', text: `✨ Gelar **${res.matched.title}** berhasil dipasang ke profilmu!` }
                     : { type: 'warning', text: 'Gelar tersebut belum terbuka.' };
-                return await interaction.update(buildAchievementsPanel({ state, banner, now }));
+                return await interaction.update(buildAchievementsPanel({ state, selectedCategory: cat, page, banner, now }));
             }
         }
     },

@@ -609,7 +609,8 @@ async function resetPlayerAccount(targetId, adminId, now = Date.now()) {
             'player_vehicles',
             'player_credits',
             'player_achievements',
-            'player_event_progress'
+            'player_event_progress',
+            'player_gacha_stats'
         ];
 
         for (const tbl of childTables) {

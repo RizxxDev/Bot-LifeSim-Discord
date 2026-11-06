@@ -76,7 +76,7 @@ const COMMAND_DETAILS = {
         usage: '`/achievements`',
         cost: 'Tidak ada',
         cooldown: 'Tidak ada',
-        tips: 'Selesaikan 24 tantangan di 6 kategori, klaim hadiah item, dan pasang Gelar Kehormatan (Title) langsung dari panel ini!'
+        tips: 'Selesaikan 27 tantangan di 6 kategori, klaim hadiah item, dan pasang Gelar Kehormatan (Title) langsung dari panel ini!'
     },
     event: {
         title: '/event — Cuaca 2 Mingguan & Bazar Event Musiman',
@@ -161,6 +161,13 @@ const COMMAND_DETAILS = {
         cost: 'Komoditas di tas (ikan, mineral, hasil tani, masakan)',
         cooldown: 'Tidak ada',
         tips: 'Lihat harga pasar 24 jam secara live dan gunakan tombol cepat Jual Ikan, Jual Tambang, Jual Tani, Jual Masakan, atau Jual Semua!'
+    },
+    gacha: {
+        title: '/gacha — Mesin Kapsul & Mystery Box 3-Tier',
+        usage: '`/gacha`',
+        cost: 'Tiket Gacha di tas atau Lp 25rb (Warung) / Lp 250rb (Mall) / Lp 2,5jt (Sultan)',
+        cooldown: 'Tidak ada',
+        tips: 'Tarik 1× atau 10× (Garansi minimal 1 hadiah Rare+ di 10× Pull)! Hadiah unik kembar otomatis dikonversi menjadi Tiket Gacha.'
     },
     inventory: {
         title: '/inventory — Tas, Reparasi Alat & Upgrade Ransel',
@@ -260,10 +267,10 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 default: category === 'activities' && !selectedCmd
             },
             {
-                label: 'Ekonomi, Bank, Toko & Kredit',
+                label: 'Ekonomi, Bank, Toko, Gacha & Kredit',
                 value: 'economy',
                 emoji: '💰',
-                description: '/bank, /shop, /sell, /inventory, /credit, /pay, /daily, /leaderboard',
+                description: '/bank, /shop, /sell, /gacha, /inventory, /credit, /pay, /daily, /leaderboard',
                 default: category === 'economy' && !selectedCmd
             }
         ]
@@ -402,6 +409,7 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                     '• `/bank` — Setor (Deposit) & Tarik (Withdraw) uang dengan tombol persentase cepat atau modal.',
                     '• `/shop` — Jelajahi 8 toko kota dan beli barang dengan tombol kuantitas interaktif.',
                     '• `/sell` — Cek papan harga pasar 24 jam dan jual hasil pancing, tambang, tani, & masakan.',
+                    '• `/gacha` — Putar Mesin Kapsul Warung, Mystery Box Mall, atau Brankas Sultan (1× & 10× Pull).',
                     '• `/inventory` — Lihat isi tas, perbaiki alat yang rusak, atau upgrade ukuran tas (hingga 130 slot).',
                     '• `/credit` — Cicil Motor Baru, Mobil, Rumah, atau Rumah Mewah dengan DP 20%.',
                     '• `/pay` — Pilih warga lewat User Select Menu dan transfer uang (pajak 5%).',

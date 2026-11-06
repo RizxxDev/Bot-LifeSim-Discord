@@ -12,6 +12,7 @@ const {
 const { generateWorkMinigame, buildWorkMinigameRow } = require('../../services/minigameService');
 const { applyShiftVehicleUsage, getEquippedVehicle } = require('../../services/vehicleService');
 const { getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
+const { rollActivityBonusTicket } = require('../../services/gachaService');
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
 const { ACTIVITY_COSTS } = require('../../data/constants');
@@ -303,6 +304,13 @@ async function runWorkShift(interaction, now = Date.now()) {
         }, finishNow);
 
         const eventReward = await awardEventActivityProgress(conn, discordId, 'work', finishNow);
+        const gachaTicketDrop = await rollActivityBonusTicket(
+            conn,
+            discordId,
+            'work',
+            { jobTier: job.tier || 1, maxSlots: p.max_slots },
+            finishNow
+        );
 
         return {
             player: p,
@@ -320,6 +328,7 @@ async function runWorkShift(interaction, now = Date.now()) {
             lebaranThrActive: Boolean(activeEvent?.lebaranThr?.active),
             lebaranThrMult,
             eventReward,
+            gachaTicketDrop,
             hospitalized
         };
     });
@@ -341,6 +350,9 @@ async function runWorkShift(interaction, now = Date.now()) {
     }
     if (outcome.eventReward) {
         notes.push(`${outcome.eventReward.eventConfig.emoji} **${outcome.eventReward.eventConfig.name}:** **+${outcome.eventReward.tokensAdded} ${outcome.eventReward.tokenEmoji} ${outcome.eventReward.tokenName}** (+1 Progres Komunitas)`);
+    }
+    if (outcome.gachaTicketDrop?.dropped) {
+        notes.push(`🎰 **Bonus Hoki Gacha:** Kamu menemukan **+1× ${outcome.gachaTicketDrop.item.emoji} ${outcome.gachaTicketDrop.item.name}**! (Gunakan di \`/gacha\`)`);
     }
     if (outcome.newbieActive) {
         notes.push(`🌱 **Newbie Boost Aktif:** Bebas pajak penghasilan & progres pengalaman kerja ×1,5 (+${outcome.shiftGain} poin shift)!`);

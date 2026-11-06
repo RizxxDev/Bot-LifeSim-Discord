@@ -14,6 +14,7 @@ const { makeId } = require('./panelId');
 const MAX_V2_COMPONENTS = 40;
 const MAX_ACTION_ROWS = 5;
 const MAX_SELECT_OPTIONS = 25;
+const MAX_DISPLAYABLE_TEXT_LENGTH = 4000;
 
 /**
  * Merender header ringkas 2 baris (Mini-HUD) di bagian atas panel.
@@ -310,6 +311,28 @@ function countV2Components({ title, blocks = [], actionRows = [], footer }) {
     return count;
 }
 
+/**
+ * Menghitung total panjang karakter seluruh TextDisplay dalam satu payload Components V2 (batas Discord <= 4000 karakter).
+ */
+function countV2DisplayableText({ title, blocks = [], footer }) {
+    let totalChars = 0;
+    if (title) {
+        totalChars += (`## ${title}`).length;
+    }
+    for (const b of blocks) {
+        if (!b) continue;
+        if (typeof b === 'string') {
+            totalChars += b.length;
+        } else if (typeof b.text === 'string') {
+            totalChars += b.text.length;
+        }
+    }
+    if (footer) {
+        totalChars += (`-# ${footer}`).length;
+    }
+    return totalChars;
+}
+
 function assertComponentLimit(payloadMeta) {
     const rows = payloadMeta.actionRows || [];
     if (rows.length > MAX_ACTION_ROWS) {
@@ -318,6 +341,10 @@ function assertComponentLimit(payloadMeta) {
     const total = countV2Components(payloadMeta);
     if (total > MAX_V2_COMPONENTS) {
         throw new Error(`Total komponen V2 (${total}) melebihi batas maksimal Discord (${MAX_V2_COMPONENTS}).`);
+    }
+    const textLen = countV2DisplayableText(payloadMeta);
+    if (textLen > MAX_DISPLAYABLE_TEXT_LENGTH) {
+        throw new Error(`Total teks tampilan Components V2 (${textLen} karakter) melebihi batas maksimal Discord (${MAX_DISPLAYABLE_TEXT_LENGTH}).`);
     }
 
     // Validasi tidak ada custom_id yang duplikat atau teks "undefined" dalam satu payload pesan
@@ -602,6 +629,7 @@ module.exports = {
     MAX_V2_COMPONENTS,
     MAX_ACTION_ROWS,
     MAX_SELECT_OPTIONS,
+    MAX_DISPLAYABLE_TEXT_LENGTH,
     formatMiniHud,
     formatBanner,
     btn,
@@ -612,6 +640,7 @@ module.exports = {
     paginate,
     pageRow,
     countV2Components,
+    countV2DisplayableText,
     assertComponentLimit,
     buildPanel,
     confirmView,

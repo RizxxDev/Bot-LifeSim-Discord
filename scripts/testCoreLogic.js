@@ -40,9 +40,9 @@ function collectCommandFiles(dir, list = []) {
 async function runTests() {
     console.log('🧪 Menjalankan pengujian unit logika inti (testCoreLogic.js)...\n');
 
-    // 1. Verifikasi seluruh 29 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
+    // 1. Verifikasi seluruh 30 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
     const cmdFiles = collectCommandFiles(path.join(__dirname, '..', 'commands'));
-    assert.strictEqual(cmdFiles.length, 29, `Harusnya tepat 29 command pasca penambahan /bin, ditemukan: ${cmdFiles.length}`);
+    assert.strictEqual(cmdFiles.length, 30, `Harusnya tepat 30 command pasca penambahan /gacha, ditemukan: ${cmdFiles.length}`);
     for (const file of cmdFiles) {
         const rawSrc = fs.readFileSync(file, 'utf8');
         assert(!rawSrc.includes('fetchReply: true'), `Command ${file} masih mengandung opsi deprecated fetchReply: true`);
@@ -60,7 +60,7 @@ async function runTests() {
     }
     const workCmd = require('../commands/career/work');
     assert(workCmd.lockTtl >= 45, 'Command /work harus punya lockTtl >= 45 detik');
-    console.log(`✅ [1/20] 29 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
+    console.log(`✅ [1/21] 30 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
 
     // 2. Validasi Username & Blacklist
     assert.strictEqual(validateUsername('Budi_99').valid, true);
@@ -365,14 +365,14 @@ async function runTests() {
     const { ACHIEVEMENT_CATEGORIES, ACHIEVEMENTS, getAchievement } = require('../data/achievements');
     const { getItem } = require('../data/items');
     assert.strictEqual(ACHIEVEMENT_CATEGORIES.length, 6);
-    assert.strictEqual(ACHIEVEMENTS.length, 24);
+    assert.strictEqual(ACHIEVEMENTS.length, 27);
     for (const ach of ACHIEVEMENTS) {
         assert.ok(getAchievement(ach.id), `Achievement ${ach.id} harus dapat diakses`);
         for (const rw of (ach.itemRewards || [])) {
             assert.ok(getItem(rw.itemId), `Reward item ${rw.itemId} pada ${ach.id} harus terdaftar di data/items.js`);
         }
     }
-    console.log('✅ [17/18] Rilis 2D: Katalog 24 Achievement (6 Kategori, Non-Uang + Title) terverifikasi.');
+    console.log('✅ [17/21] Rilis 2D + Gacha: Katalog 27 Achievement (6 Kategori, Non-Uang + Title) terverifikasi.');
 
     // ====================================================
     // 18. TEST RILIS 2D: SIKLUS CUACA 2 MINGGU & EVENT MUSIMAN (THR LEBARAN)
@@ -526,6 +526,7 @@ async function runTests() {
     const { buildSellPanel } = require('../commands/economy/sell');
     const { buildLeaderboardPanel } = require('../commands/economy/leaderboard');
     const { buildDailyPanel } = require('../commands/economy/daily');
+    const { buildAchievementsPanel } = require('../commands/life/achievements');
     const { buildFarmPanel } = require('../commands/activities/farm');
     const { buildCookPanel } = require('../commands/activities/cook');
     const { buildBinPanel, rollBinLoot, BIN_LOOT_TABLE } = require('../commands/activities/bin');
@@ -707,6 +708,48 @@ async function runTests() {
         now: nowTs
     });
 
+    const achSampleEval = {
+        unlockedCount: 5,
+        totalCount: ACHIEVEMENTS.length,
+        claimableCount: 2,
+        achievements: ACHIEVEMENTS.map((a, idx) => ({
+            ...a,
+            currentProgress: idx < 5 ? a.target : Math.floor(a.target / 2),
+            unlocked: idx < 5,
+            claimed: idx < 3
+        }))
+    };
+    const achPanelAllP1 = buildAchievementsPanel({
+        state: {
+            player: samplePlayer,
+            evalRes: achSampleEval,
+            unlockedTitles: [{ title: '👑 Sultan', source: 'Achievement' }]
+        },
+        selectedCategory: 'all',
+        page: 1,
+        now: nowTs
+    });
+    const achPanelAllP2 = buildAchievementsPanel({
+        state: {
+            player: samplePlayer,
+            evalRes: achSampleEval,
+            unlockedTitles: [{ title: '👑 Sultan', source: 'Achievement' }]
+        },
+        selectedCategory: 'all',
+        page: 2,
+        now: nowTs
+    });
+    const achPanelAllP3 = buildAchievementsPanel({
+        state: {
+            player: samplePlayer,
+            evalRes: achSampleEval,
+            unlockedTitles: [{ title: '👑 Sultan', source: 'Achievement' }]
+        },
+        selectedCategory: 'all',
+        page: 3,
+        now: nowTs
+    });
+
     const { computeSusFlagsFromMetrics } = require('../services/moderationService');
     const {
         buildAdminPlayerPanelFromData,
@@ -826,15 +869,181 @@ async function runTests() {
         ['pay', payPanel],
         ['sell', sellPanel],
         ['leaderboard', lbPanel],
-        ['daily', dailyPanel]
+        ['daily', dailyPanel],
+        ['achievements (all p1)', achPanelAllP1],
+        ['achievements (all p2)', achPanelAllP2],
+        ['achievements (all p3)', achPanelAllP3]
     ]) {
         assert((pObj.flags & 32768) === 32768, `Panel /${name} wajib menggunakan MessageFlags.IsComponentsV2`);
         const compCount = countV2Components(pObj);
         assert(compCount <= 40, `Panel /${name} melebihi batas 40 komponen (${compCount})`);
     }
-    console.log('✅ [20/20] Batch 2–4 UI Revamp + /bin & Tool Gate: Seluruh 29 Command Panel Interaktif & Batas <= 40 Komponen terverifikasi.\n');
+    console.log('✅ [20/21] Batch 2–4 UI Revamp + /bin & Tool Gate: Seluruh Panel Interaktif & Batas <= 40 Komponen terverifikasi.');
 
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (20/20 PASSED)!');
+    // ====================================================
+    // 21. TEST FITUR /GACHA: 3-TIER MESIN KAPSUL, GARANSI 10x RARE+, KONVERSI DUPLIKAT & KENDARAAN EKSKLUSIF
+    // ====================================================
+    const {
+        GACHA_TIERS,
+        RARITY_META,
+        DUPLICATE_TICKET_YIELD,
+        getGachaTier,
+        getGachaTitle,
+        isRareOrAbove
+    } = require('../data/gacha');
+    const {
+        simulateGachaPullBatch,
+        isUniquePrizeAlreadyOwned
+    } = require('../services/gachaService');
+    const { buildGachaPanel } = require('../commands/economy/gacha');
+
+    // Validasi setiap tier memiliki total bobot tepat 100% dan semua item/vehicle/title valid
+    for (const tier of GACHA_TIERS) {
+        const sumWeight = tier.lootTable.reduce((acc, e) => acc + e.weight, 0);
+        assert(Math.abs(sumWeight - 100) < 0.001, `Tier Gacha ${tier.id} harus memiliki total bobot 100% (ditemukan ${sumWeight})`);
+        assert.ok(getItem(tier.ticketItemId), `Tiket Gacha ${tier.ticketItemId} untuk tier ${tier.id} harus terdaftar`);
+        for (const entry of tier.lootTable) {
+            assert.ok(RARITY_META[entry.rarity], `Rarity ${entry.rarity} tidak valid pada tier ${tier.id}`);
+            if (entry.type === 'item') {
+                assert.ok(getItem(entry.itemId), `Item Gacha ${entry.itemId} pada tier ${tier.id} harus terdaftar di data/items.js`);
+            } else if (entry.type === 'vehicle') {
+                assert.ok(getVehicle(entry.vehicleId), `Vehicle Gacha ${entry.vehicleId} pada tier ${tier.id} harus terdaftar di data/vehicles.js`);
+            } else if (entry.type === 'title') {
+                assert.ok(getGachaTitle(entry.titleId), `Title Gacha ${entry.titleId} pada tier ${tier.id} wajib terdaftar di GACHA_TITLES`);
+            }
+        }
+    }
+
+    // Validasi Kendaraan Eksklusif Gacha (Vespa Klasik & Supercar Sport Sultan)
+    const vespa = getVehicle('vespa_klasik');
+    const sportCar = getVehicle('mobil_sport');
+    assert.strictEqual(vespa.gachaExclusive, true);
+    assert.strictEqual(vespa.canCredit, false);
+    assert.strictEqual(sportCar.gachaExclusive, true);
+    assert.strictEqual(sportCar.canCredit, false);
+
+    // Vespa Klasik memberi bonus +40% shift Kurir/Ojol saat BBM cukup
+    const vespaShiftBonus = calculateShiftVehicleBonus(
+        { vehicle_id: 'vespa_klasik', fuel_liters: 4, odometer_km: 100, last_service_km: 0 },
+        'ojek_online'
+    );
+    assert.strictEqual(vespaShiftBonus.active, true);
+    assert.strictEqual(vespaShiftBonus.bonusMultiplier, 0.40);
+
+    // Supercar Sport Sultan menghemat 4 Energy ke lokasi jauh ('laut')
+    const sportTrip = calculateTripVehicleDiscount(
+        { vehicle_id: 'mobil_sport', fuel_liters: 20, odometer_km: 200, last_service_km: 0 },
+        'laut'
+    );
+    assert.strictEqual(sportTrip.active, true);
+    assert.strictEqual(sportTrip.energyDiscount, 4);
+
+    // Uji 10x Pull Rare+ Guarantee: jika rollFn selalu 0.0 (selalu jatuh ke entri Common pertama di pull 1-9),
+    // pull ke-10 WAJIB ditarik dari pool Rare+ (Rare/Epic/Legendary)
+    const batchGuaranteed = simulateGachaPullBatch(
+        'warung',
+        10,
+        { ownedItemIds: [], ownedVehicleIds: [], unlockedTitleIds: [] },
+        () => 0.0
+    );
+    assert.strictEqual(batchGuaranteed.results.length, 10);
+    assert.strictEqual(batchGuaranteed.results[9].entry.guaranteedRarePlus, true, 'Pull ke-10 wajib memicu garansi Rare+ jika 9 pull awal Common/Uncommon');
+    assert.strictEqual(
+        isRareOrAbove(batchGuaranteed.results[9].entry.rarity),
+        true,
+        `Pull ke-10 harus minimal Rare (ditemukan ${batchGuaranteed.results[9].entry.rarity})`
+    );
+
+    // Uji Konversi Duplikat Otomatis menjadi Tiket Gacha
+    assert.strictEqual(
+        isUniquePrizeAlreadyOwned(
+            { type: 'item', itemId: 'pancing_bambu' },
+            { ownedItemIds: new Set(['pancing_bambu']), ownedVehicleIds: new Set(), unlockedTitleIds: new Set() }
+        ),
+        true,
+        'Alat pancing yang sudah dimiliki harus terdeteksi sebagai duplikat unik'
+    );
+    const batchDup = simulateGachaPullBatch(
+        'sultan',
+        1,
+        {
+            ownedItemIds: [],
+            ownedVehicleIds: ['mobil_sport'],
+            unlockedTitleIds: []
+        },
+        () => 0.99 // Jatuh ke mobil_sport (Legendary: 98.5% - 99.25%) di tier sultan
+    );
+    assert.strictEqual(batchDup.results[0].isDuplicate, true, 'Kendaraan eksklusif yang sudah dimiliki harus otomatis menjadi duplikat');
+    assert.strictEqual(
+        batchDup.results[0].duplicateTickets,
+        DUPLICATE_TICKET_YIELD[batchDup.results[0].entry.rarity],
+        'Jumlah tiket kompensasi duplikat harus sesuai tabel rarity'
+    );
+
+    // Uji UI Panel /gacha (Machine mode, Pull Result mode, & Rates mode) <= 40 komponen & bebas "undefined"
+    const gachaStateSample = {
+        player: samplePlayer,
+        bagRows: [{ item_id: 'tiket_gacha_warung', quantity: 3 }],
+        slotsUsed: 5,
+        ticketCounts: {
+            tiket_gacha_warung: 3,
+            tiket_gacha_mall: 0,
+            tiket_gacha_sultan: 1
+        },
+        stats: {
+            total_pulls: 12,
+            warung_pulls: 10,
+            mall_pulls: 1,
+            sultan_pulls: 1,
+            jackpot_count: 1,
+            duplicate_tickets_earned: 2
+        }
+    };
+    const gachaPanelMachine = buildGachaPanel({
+        state: gachaStateSample,
+        tierId: 'warung',
+        mode: 'machine',
+        lastPullResult: null,
+        now: nowTs
+    });
+    const gachaPanelResult = buildGachaPanel({
+        state: gachaStateSample,
+        tierId: 'warung',
+        mode: 'machine',
+        lastPullResult: {
+            ok: true,
+            tier: getGachaTier('warung'),
+            pullCount: 10,
+            results: batchGuaranteed.results,
+            ticketsUsed: 3,
+            lpPaid: 175000,
+            totalDuplicateTickets: batchGuaranteed.totalDuplicateTickets,
+            jackpotHitCount: batchGuaranteed.jackpotHitCount
+        },
+        now: nowTs
+    });
+    const gachaPanelRates = buildGachaPanel({
+        state: gachaStateSample,
+        tierId: 'sultan',
+        mode: 'rates',
+        lastPullResult: null,
+        now: nowTs
+    });
+
+    for (const [gName, gPanel] of [
+        ['gacha (machine)', gachaPanelMachine],
+        ['gacha (10x result)', gachaPanelResult],
+        ['gacha (rates)', gachaPanelRates]
+    ]) {
+        assert((gPanel.flags & 32768) === 32768, `Panel /${gName} wajib menggunakan MessageFlags.IsComponentsV2`);
+        const cCount = countV2Components(gPanel);
+        assert(cCount <= 40, `Panel /${gName} melebihi batas 40 komponen (${cCount})`);
+        const serialized = JSON.stringify(gPanel);
+        assert(!serialized.includes('undefined'), `Panel /${gName} tidak boleh mengandung string "undefined"`);
+    }
+    console.log('✅ [21/21] Fitur /gacha: 3-Tier Mesin Kapsul, Garansi 10x Rare+, Konversi Duplikat & Panel V2 terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (21/21 PASSED)!');
     process.exit(0);
 }
 

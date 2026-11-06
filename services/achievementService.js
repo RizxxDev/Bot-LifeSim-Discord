@@ -4,6 +4,7 @@ const { getItem } = require('../data/items');
 const { RECIPES } = require('../data/recipes');
 const { getLevelInfoFromXp } = require('../data/locations');
 const { SEASONAL_EVENTS } = require('../data/events');
+const { GACHA_TITLES } = require('../data/gacha');
 const { getPlayerInventory, getMaxSlots, canFitItems, addItem } = require('./inventoryService');
 
 const STANDARD_RECIPE_IDS = new Set(RECIPES.map(r => r.id));
@@ -29,6 +30,10 @@ async function computePlayerMetrics(conn, player) {
     );
     const [vehRows] = await conn.execute(
         `SELECT vehicle_id FROM player_vehicles WHERE discord_id = ?`,
+        [discordId]
+    );
+    const [gachaRows] = await conn.execute(
+        `SELECT total_pulls, jackpot_count FROM player_gacha_stats WHERE discord_id = ? LIMIT 1`,
         [discordId]
     );
 
@@ -83,8 +88,10 @@ async function computePlayerMetrics(conn, player) {
     const paidOffCredits = creditRows.filter(c => c.status === 'paid_off').length;
     const netWorth = Number(player.cash || 0) + Number(player.bank || 0);
     const dailyStreak = Number(player.daily_streak || 0);
-    const ownsCar = vehRows.some(v => v.vehicle_id === 'mobil') ? 1 : 0;
+    const ownsCar = vehRows.some(v => v.vehicle_id === 'mobil' || v.vehicle_id === 'mobil_sport') ? 1 : 0;
     const cookedDishesEaten = Number(player.cooked_dishes_eaten || 0);
+    const gachaTotalPulls = Number(gachaRows[0]?.total_pulls || 0);
+    const gachaJackpots = Number(gachaRows[0]?.jackpot_count || 0);
 
     return {
         total_shifts: totalShifts,
@@ -104,7 +111,9 @@ async function computePlayerMetrics(conn, player) {
         net_worth: netWorth,
         daily_streak: dailyStreak,
         owns_car: ownsCar,
-        cooked_dishes_eaten: cookedDishesEaten
+        cooked_dishes_eaten: cookedDishesEaten,
+        gacha_total_pulls: gachaTotalPulls,
+        gacha_jackpots: gachaJackpots
     };
 }
 
@@ -244,9 +253,9 @@ async function getUnlockedTitles(conn, player, now = Date.now()) {
         }
     }
 
-    // 3. Gelar Eksklusif dari Event Musiman (disimpan di player_collections dengan key 'title_<id>')
+    // 3. Gelar Eksklusif dari Event Musiman & Gacha (disimpan di player_collections dengan key 'title_<id>' atau 'gacha_title_<id>')
     const [colRows] = await conn.execute(
-        `SELECT item_id FROM player_collections WHERE discord_id = ? AND item_id LIKE 'title_%' AND total_caught > 0`,
+        `SELECT item_id FROM player_collections WHERE discord_id = ? AND (item_id LIKE 'title_%' OR item_id LIKE 'gacha_title_%') AND total_caught > 0`,
         [discordId]
     );
     const unlockedShopTitleIds = new Set(colRows.map(r => r.item_id));
@@ -260,6 +269,17 @@ async function getUnlockedTitles(conn, player, now = Date.now()) {
                     source: `Event: ${ev.name}`
                 });
             }
+        }
+    }
+
+    for (const gt of GACHA_TITLES) {
+        if (unlockedShopTitleIds.has(gt.id) && !seen.has(gt.titleValue)) {
+            seen.add(gt.titleValue);
+            titles.push({
+                id: gt.id,
+                title: gt.titleValue,
+                source: `Jackpot /gacha`
+            });
         }
     }
 

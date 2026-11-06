@@ -14,6 +14,7 @@ const {
 const { isNewbieBoostActive, getSoftCapModifier, getLiveEconomyConfig } = require('../../services/economyService');
 const { applyTripVehicleUsage } = require('../../services/vehicleService');
 const { getCurrentWeather, getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
+const { rollActivityBonusTicket } = require('../../services/gachaService');
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { executeSellItems } = require('../../services/marketService');
 const { FISHING_LOCATIONS, getFishingLocation, getLevelInfoFromXp, rollLoot } = require('../../data/locations');
@@ -491,6 +492,7 @@ async function runFishingCast(interaction, now = Date.now()) {
 
         const remainingRodDur = Math.max(0, Number(pre.rod.row.durability) - 1);
         const eventReward = await awardEventActivityProgress(conn, discordId, 'fishing', finishNow);
+        const gachaTicketDrop = await rollActivityBonusTicket(conn, discordId, 'fishing', { maxSlots: p.max_slots }, finishNow);
 
         return {
             player: p,
@@ -506,6 +508,7 @@ async function runFishingCast(interaction, now = Date.now()) {
             weather,
             weatherRarity,
             eventReward,
+            gachaTicketDrop,
             hospitalized
         };
     });
@@ -516,6 +519,9 @@ async function runFishingCast(interaction, now = Date.now()) {
     }
     if (outcome.eventReward) {
         notes.push(`${outcome.eventReward.eventConfig.emoji} **${outcome.eventReward.eventConfig.name}:** **+${outcome.eventReward.tokensAdded} ${outcome.eventReward.tokenEmoji} ${outcome.eventReward.tokenName}** (+1 Progres Komunitas)`);
+    }
+    if (outcome.gachaTicketDrop?.dropped) {
+        notes.push(`🎰 **Bonus Hoki Gacha:** Kailmu juga menyangkut **+1× ${outcome.gachaTicketDrop.item.emoji} ${outcome.gachaTicketDrop.item.name}**! (Gunakan di \`/gacha\`)`);
     }
     if (outcome.tripVeh?.active && outcome.tripVeh.energyDiscount > 0) {
         const v = outcome.tripVeh.vehicle;

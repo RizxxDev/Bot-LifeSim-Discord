@@ -88,6 +88,47 @@ const VEHICLES = [
         },
         unlocksJobs: ['taksi_online', 'sopir_pribadi'],
         description: 'Kendaraan roda empat bergengsi (bisa dicicil). Membuka profesi Taksi Online & Sopir Pribadi serta hemat -3 Energy.'
+    },
+    {
+        id: 'vespa_klasik',
+        order: 5,
+        name: 'Vespa Klasik Antik',
+        emoji: '🛵',
+        buyPrice: 15000000,
+        canCredit: false,
+        gachaExclusive: true,
+        tankCapacity: 4.5,
+        fuelPerShift: 0.15,
+        fuelPerTrip: 0.05,
+        serviceIntervalKm: 2500,
+        serviceCost: 150000,
+        farEnergyDiscount: 2,
+        jobBonuses: {
+            kurir_paket: 0.40,
+            ojek_online: 0.40
+        },
+        description: 'Skuter antik edisi kolektor eksklusif /gacha! Super irit BBM (0.15L/shift), +40% gaji Kurir/Ojol & hemat -2 Energy.'
+    },
+    {
+        id: 'mobil_sport',
+        order: 6,
+        name: 'Supercar Sport Sultan',
+        emoji: '🏎️',
+        buyPrice: 350000000,
+        canCredit: false,
+        gachaExclusive: true,
+        tankCapacity: 50,
+        fuelPerShift: 1.2,
+        fuelPerTrip: 0.35,
+        serviceIntervalKm: 3500,
+        serviceCost: 2500000,
+        farEnergyDiscount: 4,
+        jobBonuses: {
+            kurir_paket: 0.60,
+            ojek_online: 0.60
+        },
+        unlocksJobs: ['taksi_online', 'sopir_pribadi'],
+        description: 'Supercar mewah eksklusif /gacha! Membuka Taksi Online & Sopir Pribadi, +60% gaji Kurir/Ojol & hemat -4 Energy ke lokasi jauh.'
     }
 ];
 

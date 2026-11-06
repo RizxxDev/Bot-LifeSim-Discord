@@ -13,6 +13,7 @@ const {
 const { isNewbieBoostActive, getSoftCapModifier, getLiveEconomyConfig } = require('../../services/economyService');
 const { applyTripVehicleUsage } = require('../../services/vehicleService');
 const { getCurrentWeather, getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
+const { rollActivityBonusTicket } = require('../../services/gachaService');
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { executeSellItems } = require('../../services/marketService');
 const { MINING_LOCATIONS, getMiningLocation, getLevelInfoFromXp, rollLoot } = require('../../data/locations');
@@ -428,6 +429,7 @@ async function runMiningSwing(interaction, now = Date.now()) {
 
         const remainingPickDur = Math.max(0, Number(pre.pickaxe.row.durability) - 1);
         const eventReward = await awardEventActivityProgress(conn, discordId, 'mining', finishNow);
+        const gachaTicketDrop = await rollActivityBonusTicket(conn, discordId, 'mining', { maxSlots: p.max_slots }, finishNow);
 
         return {
             player: p,
@@ -442,11 +444,15 @@ async function runMiningSwing(interaction, now = Date.now()) {
             softCap,
             tripVeh,
             eventReward,
+            gachaTicketDrop,
             hospitalized
         };
     });
 
     const notes = [];
+    if (outcome.gachaTicketDrop?.dropped && outcome.gachaTicketDrop.item) {
+        notes.push(`🎟️ **TEMUAN BONUS!** Di sela bebatuan tambang, kamu menemukan **1× ${outcome.gachaTicketDrop.item.emoji} ${outcome.gachaTicketDrop.item.name}** untuk diputar di \`/gacha\`!`);
+    }
     if (outcome.eventReward) {
         notes.push(`${outcome.eventReward.eventConfig.emoji} **${outcome.eventReward.eventConfig.name}:** **+${outcome.eventReward.tokensAdded} ${outcome.eventReward.tokenEmoji} ${outcome.eventReward.tokenName}** (+1 Progres Komunitas)`);
     }

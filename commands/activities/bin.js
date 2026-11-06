@@ -12,6 +12,7 @@ const {
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { executeSellItems } = require('../../services/marketService');
 const { awardEventActivityProgress } = require('../../services/eventService');
+const { rollActivityBonusTicket } = require('../../services/gachaService');
 const { getItem } = require('../../data/items');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, formatDuration } = require('../../utils/uiBuilder');
@@ -298,11 +299,13 @@ async function handleBinSearch(interaction, rollFn = Math.random) {
         await addItem(conn, userId, loot.itemId, loot.qty, now, 'bag');
         await recordCollection(conn, userId, loot.itemId, loot.qty, now);
         const eventReward = await awardEventActivityProgress(conn, userId, 'bin', now);
+        const gachaTicketDrop = await rollActivityBonusTicket(conn, userId, 'bin', { maxSlots: p.max_slots }, now);
 
         outcome = {
             ok: true,
             loot,
-            eventReward
+            eventReward,
+            gachaTicketDrop
         };
     });
 
@@ -324,9 +327,12 @@ async function handleBinSearch(interaction, rollFn = Math.random) {
     await incrementDailyAction(userId, 'bin', now);
 
     const state = await fetchBinState(userId, now);
-    const { loot, eventReward } = outcome;
+    const { loot, eventReward, gachaTicketDrop } = outcome;
     const evNotice = eventReward
         ? ` · 🎪 Event: **+${eventReward.tokensAdded} ${eventReward.tokenEmoji} ${eventReward.tokenName}**!`
+        : '';
+    const ticketNotice = gachaTicketDrop?.dropped && gachaTicketDrop.item
+        ? ` · 🎟️ Bonus: **+1× ${gachaTicketDrop.item.emoji} ${gachaTicketDrop.item.name}**!`
         : '';
 
     return await interaction.update(
@@ -335,7 +341,7 @@ async function handleBinSearch(interaction, rollFn = Math.random) {
             foundLoot: loot,
             banner: {
                 type: 'success',
-                text: `🔍 Kamu menemukan **${loot.qty}× ${loot.item.emoji} ${loot.item.name}** dari tempat sampah! (-⚡${ACTIVITY_COSTS.bin.energy} Energy)${evNotice}`
+                text: `🔍 Kamu menemukan **${loot.qty}× ${loot.item.emoji} ${loot.item.name}** dari tempat sampah! (-⚡${ACTIVITY_COSTS.bin.energy} Energy)${evNotice}${ticketNotice}`
             },
             now
         })

@@ -103,11 +103,11 @@ module.exports = {
     DAILY_REWARDS: [
         { day: 1, items: [{ itemId: 'roti', qty: 2 }, { itemId: 'air_mineral', qty: 2 }], cash: 0 },
         { day: 2, items: [{ itemId: 'umpan_cacing', qty: 10 }, { itemId: 'teh_manis', qty: 2 }], cash: 0 },
-        { day: 3, items: [{ itemId: 'nasi_bungkus', qty: 2 }, { itemId: 'kopi', qty: 1 }], cash: 0 },
+        { day: 3, items: [{ itemId: 'nasi_bungkus', qty: 2 }, { itemId: 'kopi', qty: 1 }, { itemId: 'tiket_gacha_warung', qty: 1 }], cash: 0 },
         { day: 4, items: [{ itemId: 'umpan_udang', qty: 5 }, { itemId: 'es_buah', qty: 2 }], cash: 0 },
         { day: 5, items: [{ itemId: 'nasi_padang', qty: 1 }, { itemId: 'vitamin_c', qty: 1 }], cash: 0 },
         { day: 6, items: [{ itemId: 'umpan_pro', qty: 3 }, { itemId: 'energy_drink', qty: 1 }], cash: 0 },
-        { day: 7, items: [{ itemId: 'nasi_padang', qty: 2 }, { itemId: 'umpan_pro', qty: 5 }], cash: 20000 }
+        { day: 7, items: [{ itemId: 'nasi_padang', qty: 2 }, { itemId: 'umpan_pro', qty: 5 }, { itemId: 'tiket_gacha_mall', qty: 1 }], cash: 20000 }
     ],
 
     USERNAME_BLACKLIST: [

@@ -164,6 +164,9 @@ async function getEquippedVehicle(conn, discordId, forUpdate = false) {
 async function buyVehicleCash(conn, player, vehicleId, now = Date.now()) {
     const vehicle = getVehicle(vehicleId);
     if (!vehicle) return { error: 'INVALID_VEHICLE' };
+    if (vehicle.gachaExclusive) {
+        return { error: 'GACHA_EXCLUSIVE', vehicle };
+    }
 
     const owned = await getPlayerVehicles(conn, player.discord_id, true);
     if (owned.some(v => v.vehicle_id === vehicle.id)) {

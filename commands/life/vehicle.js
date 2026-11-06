@@ -83,12 +83,14 @@ function buildVehiclePanel({
             : 'Tanpa BBM (Tenaga Kayuh)';
         const ownBadge = activeOwnedRow
             ? (activeOwnedRow.is_equipped === 1 ? '🟢 **Sedang Dipakai**' : '✅ **Dimiliki di Garasi**')
-            : (activeVeh.canCredit ? '💳 *Belum Dimiliki (Bisa Tunai / Kredit `/credit`)*' : '💵 *Belum Dimiliki (Beli Tunai)*');
+            : activeVeh.gachaExclusive
+                ? '🎰 *Belum Dimiliki (Eksklusif Jackpot `/gacha`)*'
+                : (activeVeh.canCredit ? '💳 *Belum Dimiliki (Bisa Tunai / Kredit `/credit`)*' : '💵 *Belum Dimiliki (Beli Tunai)*');
 
         blocks.push(
             [
                 `🔎 **Spesifikasi Kendaraan: ${activeVeh.emoji} ${activeVeh.name}** — ${ownBadge}`,
-                `• 💰 Harga Dealer : **${formatLp(activeVeh.buyPrice)}**`,
+                `• 💰 ${activeVeh.gachaExclusive ? 'Nilai Taksiran Aset' : 'Harga Dealer'} : **${formatLp(activeVeh.buyPrice)}**`,
                 `• ⛽ Konsumsi BBM : ${fuelSpec}`,
                 `• 🔧 Servis Rutin : Tiap **${activeVeh.serviceIntervalKm} km** (**${formatLp(activeVeh.serviceCost)}**)`,
                 `• ✨ Manfaat      : ${activeVeh.description}`
@@ -97,7 +99,11 @@ function buildVehiclePanel({
     } else {
         const dealerLines = allVehicles.map(v => {
             const isOwned = ownedMap.has(v.id);
-            const badge = isOwned ? '✅ **Dimiliki**' : (v.canCredit ? '💳 *Tunai/Kredit*' : '💵 *Tunai*');
+            const badge = isOwned
+                ? '✅ **Dimiliki**'
+                : v.gachaExclusive
+                    ? '🎰 *Jackpot `/gacha`*'
+                    : (v.canCredit ? '💳 *Tunai/Kredit*' : '💵 *Tunai*');
             return `${v.emoji} **${v.name}** — **${formatLp(v.buyPrice)}** (${badge})\n   └ ✨ ${v.description}`;
         });
         blocks.push(`**📋 Katalog Dealer Kendaraan Kota:**\n${dealerLines.join('\n')}`);
@@ -157,7 +163,7 @@ function buildVehiclePanel({
                     arg: activeVeh.id
                 }, now)
             );
-        } else {
+        } else if (!activeVeh.gachaExclusive) {
             actionButtons.push(
                 btn('vehicle', 'buy_prompt', ownerId, {
                     label: `Beli Tunai (${formatLp(activeVeh.buyPrice)})`,
@@ -345,6 +351,8 @@ module.exports = {
                     };
                 } else if (res.error === 'ALREADY_OWNED') {
                     banner = { type: 'warning', text: `Kamu sudah memiliki **${res.vehicle.emoji} ${res.vehicle.name}** di garasimu!` };
+                } else if (res.error === 'GACHA_EXCLUSIVE') {
+                    banner = { type: 'warning', text: `🎰 **${res.vehicle.emoji} ${res.vehicle.name}** hanya bisa didapatkan melalui Jackpot di \`/gacha\`!` };
                 } else if (res.error === 'INSUFFICIENT_FUNDS') {
                     const creditHint = res.vehicle.canCredit
                         ? ` Kamu juga bisa mencicilnya dengan DP 20% (${formatLp(Math.round(res.required * 0.2))}) di \`/credit\`.`

@@ -344,6 +344,45 @@ const ACHIEVEMENTS = [
         itemRewards: [
             { itemId: 'bibit_stroberi', qty: 5 }
         ]
+    },
+    {
+        id: 'gacha_pull_10',
+        category: 'koleksi',
+        name: 'Pecandu Mesin Kapsul',
+        emoji: '🎰',
+        description: 'Putar total 10 kapsul atau Mystery Box di /gacha.',
+        target: 10,
+        metric: 'gacha_total_pulls',
+        titleReward: null,
+        itemRewards: [
+            { itemId: 'tiket_gacha_warung', qty: 2 }
+        ]
+    },
+    {
+        id: 'gacha_pull_100',
+        category: 'koleksi',
+        name: 'Kolektor Mystery Box',
+        emoji: '📦',
+        description: 'Putar total 100 kapsul atau Mystery Box di /gacha.',
+        target: 100,
+        metric: 'gacha_total_pulls',
+        titleReward: '🎰 Pemburu Kapsul',
+        itemRewards: [
+            { itemId: 'tiket_gacha_mall', qty: 1 }
+        ]
+    },
+    {
+        id: 'gacha_jackpot_1',
+        category: 'koleksi',
+        name: 'Sentuhan Emas Jackpot',
+        emoji: '🌟',
+        description: 'Menangkan minimal 1 hadiah Legendary (Jackpot) di /gacha.',
+        target: 1,
+        metric: 'gacha_jackpots',
+        titleReward: null,
+        itemRewards: [
+            { itemId: 'tiket_gacha_sultan', qty: 1 }
+        ]
     }
 ];
 

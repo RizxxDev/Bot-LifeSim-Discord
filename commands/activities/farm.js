@@ -7,6 +7,7 @@ const { withTransaction, query } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
 const { getPlayerInventory } = require('../../services/inventoryService');
 const { getCurrentWeather } = require('../../services/eventService');
+const { rollActivityBonusTicket } = require('../../services/gachaService');
 const {
     getPlayerFarmPlots,
     rentFarmPlot,
@@ -324,13 +325,17 @@ async function handleFarmQuickAction(interaction, actionType) {
         } else if (actionType === 'harvest') {
             const res = await harvestPlots(conn, player, null, now, synced.buffs);
             if (res.ok) {
+                const gachaTicketDrop = await rollActivityBonusTicket(conn, userId, 'farm', { maxSlots: player.max_slots }, now);
+                const ticketNotice = gachaTicketDrop?.dropped && gachaTicketDrop.item
+                    ? ` · 🎟️ Bonus: **+1× ${gachaTicketDrop.item.emoji} ${gachaTicketDrop.item.name}**!`
+                    : '';
                 const itemSummary = Object.entries(res.harvestedItems)
                     .map(([id, qty]) => {
                         const it = getItem(id);
                         return `${qty}× ${it ? `${it.emoji} ${it.name}` : id}`;
                     })
                     .join(', ');
-                banner = { type: 'success', text: `🌾 Panen berhasil dari Petak **#${res.harvestedPlots.join(', #')}**: **${itemSummary}** (+${res.totalXpGained} EXP)!` };
+                banner = { type: 'success', text: `🌾 Panen berhasil dari Petak **#${res.harvestedPlots.join(', #')}**: **${itemSummary}** (+${res.totalXpGained} EXP)${ticketNotice}!` };
             } else {
                 banner = { type: 'warning', text: 'Belum ada petak yang siap dipanen atau kapasitas tas penuh.' };
             }

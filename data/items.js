@@ -1305,6 +1305,101 @@ const ITEMS = [
         stackSize: 20,
         effects: { hunger: 85, thirst: 40, energy: 30, stress: -20 },
         description: 'Nasi tumpeng komplit perayaan Kemerdekaan 17 Agustus (+85 Hunger, +40 Thirst, +30 Energy, -20 Stress).'
+    },
+
+    // ==========================================
+    // 14. SISTEM GACHA (/GACHA): TIKET & HADIAH EKSKLUSIF
+    // ==========================================
+    {
+        id: 'tiket_gacha_warung',
+        name: 'Tiket Kapsul Warung',
+        emoji: '🎟️',
+        shop: null,
+        tags: ['gacha_ticket'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 100,
+        description: 'Tiket untuk memutar 1× Mesin Kapsul Pojok Warung (Tier 1) di /gacha secara gratis!'
+    },
+    {
+        id: 'tiket_gacha_mall',
+        name: 'Tiket Mystery Box Mall',
+        emoji: '🎫',
+        shop: null,
+        tags: ['gacha_ticket'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 100,
+        description: 'Tiket untuk membuka 1× Mystery Box Mall (Tier 2) di /gacha secara gratis!'
+    },
+    {
+        id: 'tiket_gacha_sultan',
+        name: 'Tiket Brankas Sultan',
+        emoji: '💳',
+        shop: null,
+        tags: ['gacha_ticket'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 100,
+        description: 'Tiket VIP untuk membuka 1× Brankas Eksklusif Sultan (Tier 3) di /gacha secara gratis!'
+    },
+    {
+        id: 'pancing_emas_sultan',
+        name: 'Pancingan Emas Sultan',
+        emoji: '🔱',
+        shop: null,
+        tags: ['tool', 'fishing_rod', 'gacha_exclusive'],
+        buyPrice: 10000000,
+        sellPrice: 0,
+        stackSize: 1,
+        maxDurability: 750,
+        toolTier: 5,
+        rarityBonus: 0.60,
+        description: 'Pancingan legendaris berbalut emas 24K eksklusif /gacha (Tier 5 · Durability 750 · Bonus Rarity +60%).'
+    },
+    {
+        id: 'beliung_meteorit',
+        name: 'Beliung Meteorit',
+        emoji: '☄️',
+        shop: null,
+        tags: ['tool', 'pickaxe', 'gacha_exclusive'],
+        buyPrice: 12000000,
+        sellPrice: 0,
+        stackSize: 1,
+        maxDurability: 750,
+        toolTier: 5,
+        rarityBonus: 0.60,
+        description: 'Beliung tempaan logam meteorit eksklusif /gacha (Tier 5 · Durability 750 · Bonus Rarity +60%).'
+    },
+    {
+        id: 'kopi_luwak_emas',
+        name: 'Kopi Luwak Emas',
+        emoji: '☕',
+        shop: null,
+        tags: ['drink', 'gacha_exclusive'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 20,
+        effects: { energy: 100, thirst: 30 },
+        description: 'Racikan kopi luwak premium bertabur serbuk emas (+100 Energy & +30 Thirst seketika tanpa penalti kafein).'
+    },
+    {
+        id: 'eliksir_sultan',
+        name: 'Eliksir Stamina Sultan',
+        emoji: '🧪',
+        shop: null,
+        tags: ['medicine', 'drink', 'food', 'gacha_exclusive'],
+        buyPrice: 0,
+        sellPrice: 0,
+        stackSize: 20,
+        effects: { energy: 100, hunger: 100, thirst: 100, health: 100 },
+        buff: {
+            type: 'luck_boost',
+            multiplier: 1.15,
+            durationSec: 7200,
+            label: '+15% Peluang Rarity (2 Jam)'
+        },
+        description: 'Ramuan rahasia para Sultan! Memulihkan seluruh stat vital ke 100% + Buff +15% Rarity selama 2 jam.'
     }
 ];
 
