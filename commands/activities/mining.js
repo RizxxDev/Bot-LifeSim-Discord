@@ -14,6 +14,7 @@ const { isNewbieBoostActive, getSoftCapModifier, getLiveEconomyConfig } = requir
 const { applyTripVehicleUsage } = require('../../services/vehicleService');
 const { getCurrentWeather, getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
 const { rollActivityBonusTicket } = require('../../services/gachaService');
+const { getPlayerEquippedOutfit, computeClothingBuffs } = require('../../services/avatarService');
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { executeSellItems } = require('../../services/marketService');
 const { MINING_LOCATIONS, getMiningLocation, getLevelInfoFromXp, rollLoot } = require('../../data/locations');
@@ -373,8 +374,10 @@ async function runMiningSwing(interaction, now = Date.now()) {
         await addItem(conn, discordId, minedItem.id, loot.quantity, finishNow, 'bag');
         const isNewDiscovery = await recordCollection(conn, discordId, minedItem.id, loot.quantity, finishNow);
 
+        const eqOutfit = await getPlayerEquippedOutfit(conn, discordId, false);
+        const clothingMineSafe = Number(computeClothingBuffs(eqOutfit).miningAccidentReduction || 0);
         const baseAccident = (pre.location.accidentChance || 0.03) + Number(weather.miningAccidentDelta || 0);
-        const finalAccidentChance = pre.helmet ? baseAccident * 0.30 : baseAccident;
+        const finalAccidentChance = (pre.helmet ? baseAccident * 0.30 : baseAccident) * Math.max(0.10, 1 - clothingMineSafe);
         let accidentDamage = 0;
         if (Math.random() < finalAccidentChance) {
             accidentDamage = 10 + Math.floor(Math.random() * 16);

@@ -3,6 +3,7 @@ const { withTransaction } = require('../database/mariadb');
 const { syncPlayerVitals } = require('./vitalService');
 const { getPlayerInventory, canFitItems, addItem, calculateSlotsUsed } = require('./inventoryService');
 const { debitPlayerFunds, getLiveEconomyConfig } = require('./economyService');
+const { getPlayerOwnedClothingIds, grantClothing } = require('./avatarService');
 const { SHOPS, getItem, getItemsByShop } = require('../data/items');
 const { getBackpackByTier, getNextBackpackTier } = require('../data/backpacks');
 const { COLORS, formatLp } = require('../utils/uiBuilder');
@@ -31,10 +32,12 @@ async function fetchShopState(discordId, now = Date.now()) {
     return await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, false);
         const invRows = await getPlayerInventory(conn, discordId, false, 'bag', now);
+        const ownedClothes = await getPlayerOwnedClothingIds(conn, discordId, false);
         const liveCfg = await getLiveEconomyConfig(conn);
         return {
             player: synced.player,
             invRows,
+            ownedClothes,
             slotsUsed: calculateSlotsUsed(invRows),
             liveCfg
         };
@@ -50,6 +53,7 @@ function buildShopPanel({
     now = Date.now()
 }) {
     const { player: p, slotsUsed, liveCfg } = state;
+    const ownedClothes = state.ownedClothes || new Set();
     const ownerId = p.discord_id;
     const shop = SHOPS.find(s => s.id === shopId) || SHOPS[0];
     const allItems = getItemsByShop(shop.id);
@@ -88,15 +92,24 @@ function buildShopPanel({
         }
     }
 
+    if (shop.id === 'busana') {
+        blocks.push(
+            `👔 **Lemari Pakaian (\`/wardrobe\`):** Pakaian yang dibeli langsung masuk ke lemarimu (**0 slot tas**) dan bisa dicoba kapan saja di \`/wardrobe\`!`
+        );
+    }
+
     const itemLines = pageItems.map(item => {
         const price = getEffectiveItemPrice(item, liveCfg);
         const isSel = item.id === activeItemId;
         const pointer = isSel ? '▶️ ' : '• ';
-        const slotNote = item.stackSize === 0
-            ? '0 slot'
-            : item.maxDurability
-                ? `1 slot/unit · Dur ${item.maxDurability}`
-                : `${item.stackSize}/slot`;
+        const isClothingOwned = item.tags?.includes('clothing') && ownedClothes.has(item.id);
+        const slotNote = item.tags?.includes('clothing')
+            ? (isClothingOwned ? '✅ Sudah di Lemari' : 'Lemari /wardrobe')
+            : item.stackSize === 0
+                ? '0 slot'
+                : item.maxDurability
+                    ? `1 slot/unit · Dur ${item.maxDurability}`
+                    : `${item.stackSize}/slot`;
         return `${pointer}${item.emoji} **${item.name}** — **${formatLp(price)}** *(${slotNote})*\n  -# ${item.description}`;
     });
 
@@ -205,15 +218,24 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
         const unitPrice = getEffectiveItemPrice(item, liveCfg);
         const totalCost = unitPrice * qty;
 
-        // Jika item non-stackable unik (SIM C, Laptop, Gelar Prestise), cek apakah sudah punya
-        if (item.stackSize === 0 && item.id !== 'izin_melaut') {
+        // Jika pakaian (/wardrobe), cek kepemilikan di player_clothes
+        const isClothingItem = Boolean(item.tags && item.tags.includes('clothing'));
+        if (isClothingItem) {
+            const ownedClothes = await getPlayerOwnedClothingIds(conn, discordId, true);
+            if (ownedClothes.has(item.id)) {
+                return { error: 'ALREADY_OWNED_UNIQUE', item, player: p };
+            }
+        } else if (item.stackSize === 0 && item.id !== 'izin_melaut') {
+            // Jika item non-stackable unik (SIM C, Laptop, Gelar Prestise), cek apakah sudah punya
             const alreadyHas = invRows.some(r => r.item_id === item.id && Number(r.quantity) > 0);
             if (alreadyHas) {
                 return { error: 'ALREADY_OWNED_UNIQUE', item, player: p };
             }
         }
 
-        const fitCheck = canFitItems(invRows, p.max_slots, [{ itemId: item.id, qty }]);
+        const fitCheck = isClothingItem
+            ? { fits: true, slotsBefore: calculateSlotsUsed(invRows), slotsAfter: calculateSlotsUsed(invRows), maxSlots: p.max_slots }
+            : canFitItems(invRows, p.max_slots, [{ itemId: item.id, qty }]);
         if (!fitCheck.fits) {
             return {
                 error: 'BAG_FULL',
@@ -255,7 +277,13 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
             p.equipped_title = item.titleLabel;
         }
 
-        await addItem(conn, discordId, item.id, qty, now, 'bag');
+        let autoEquippedClothing = false;
+        if (isClothingItem) {
+            const grantRes = await grantClothing(conn, discordId, item.id, true, now);
+            autoEquippedClothing = Boolean(grantRes.autoEquipped);
+        } else {
+            await addItem(conn, discordId, item.id, qty, now, 'bag');
+        }
 
         return {
             ok: true,
@@ -264,6 +292,7 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
             unitPrice,
             totalCost,
             payment,
+            autoEquippedClothing,
             slotsAfter: fitCheck.slotsAfter,
             maxSlots: fitCheck.maxSlots,
             player: p
@@ -328,7 +357,14 @@ function formatPurchaseBanner(res) {
         };
     }
 
-    const extra = res.item.id === 'izin_melaut' ? ' *(⚓ Izin Melaut 24j aktif)*' : '';
+    let extra = '';
+    if (res.item.id === 'izin_melaut') {
+        extra = ' *(⚓ Izin Melaut 24j aktif)*';
+    } else if (res.item.tags && res.item.tags.includes('clothing')) {
+        extra = res.autoEquippedClothing
+            ? ' *(👔 Masuk ke `/wardrobe` & langsung dikenakan ke karaktermu!)*'
+            : ' *(👔 Tersimpan di `/wardrobe` — buka `/wardrobe` untuk mengganti gaya!)*';
+    }
     return {
         type: 'success',
         text: `Berhasil membeli **${res.qty}× ${res.item.emoji} ${res.item.name}** seharga **${formatLp(res.totalCost)}**!${extra}`

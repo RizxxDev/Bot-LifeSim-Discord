@@ -15,6 +15,7 @@ const { isNewbieBoostActive, getSoftCapModifier, getLiveEconomyConfig } = requir
 const { applyTripVehicleUsage } = require('../../services/vehicleService');
 const { getCurrentWeather, getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
 const { rollActivityBonusTicket } = require('../../services/gachaService');
+const { getPlayerEquippedOutfit, computeClothingBuffs } = require('../../services/avatarService');
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { executeSellItems } = require('../../services/marketService');
 const { FISHING_LOCATIONS, getFishingLocation, getLevelInfoFromXp, rollLoot } = require('../../data/locations');
@@ -456,8 +457,12 @@ async function runFishingCast(interaction, now = Date.now()) {
             isNewDiscovery = await recordCollection(conn, discordId, caughtItem.id, loot.quantity, finishNow);
         }
 
+        const eqOutfit = await getPlayerEquippedOutfit(conn, discordId, false);
+        const clothingFishXpBonus = Number(computeClothingBuffs(eqOutfit).fishingXpBonus || 0);
         const newbieMult = isNewbieBoostActive(p, finishNow) ? 1.5 : 1.0;
-        const xpBuffMult = (xpBuff ? Number(xpBuff.multiplier) : 1.0) * Number(activeEvent?.config?.bonuses?.fishingXpMult || 1.0);
+        const xpBuffMult = (xpBuff ? Number(xpBuff.multiplier) : 1.0)
+            * Number(activeEvent?.config?.bonuses?.fishingXpMult || 1.0)
+            * (1 + clothingFishXpBonus);
         const mgXpMult = pulledInTime ? 1.0 : 0.5;
         const gainedXp = Math.max(
             1,
@@ -507,6 +512,7 @@ async function runFishingCast(interaction, now = Date.now()) {
             tripVeh,
             weather,
             weatherRarity,
+            clothingFishXpBonus,
             eventReward,
             gachaTicketDrop,
             hospitalized
@@ -516,6 +522,9 @@ async function runFishingCast(interaction, now = Date.now()) {
     const notes = [];
     if (outcome.weatherRarity > 0) {
         notes.push(`${outcome.weather.emoji} **${outcome.weather.name}:** Peluang ikan langka di ${pre.location.name} meningkat **+${Math.round(outcome.weatherRarity * 100)}%**!`);
+    }
+    if (outcome.clothingFishXpBonus > 0) {
+        notes.push(`👒 **Bonus Busana Pemancing:** Pakaianmu memberikan **+${Math.round(outcome.clothingFishXpBonus * 100)}% EXP Fishing**!`);
     }
     if (outcome.eventReward) {
         notes.push(`${outcome.eventReward.eventConfig.emoji} **${outcome.eventReward.eventConfig.name}:** **+${outcome.eventReward.tokensAdded} ${outcome.eventReward.tokenEmoji} ${outcome.eventReward.tokenName}** (+1 Progres Komunitas)`);

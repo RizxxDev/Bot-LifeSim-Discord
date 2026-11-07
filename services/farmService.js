@@ -13,6 +13,7 @@ const { getPlayerInventory, canFitItems, addItem, removeItem } = require('./inve
 const { logLedger } = require('./economyService');
 const { getWeatherSeason } = require('../data/events');
 const { getCurrentWeather, getActiveSeasonalEvent, awardEventActivityProgress } = require('./eventService');
+const { getPlayerEquippedOutfit, computeClothingBuffs } = require('./avatarService');
 
 function getPhaseDurationMs(crop, fertilizerType, weatherSeason = null) {
     const fertMult = fertilizerType === 'urea' ? 0.75 : 1.0;
@@ -441,8 +442,10 @@ async function harvestPlots(conn, player, plotNumber = null, now = Date.now(), a
 
     const xpBuff = (activeBuffs || []).find(b => b.buff_type === 'xp_boost' && Number(b.expires_at) > now);
     const activeEvent = await getActiveSeasonalEvent(conn, now);
+    const eqOutfit = await getPlayerEquippedOutfit(conn, player.discord_id, false);
+    const clothingFarmXpBonus = Number(computeClothingBuffs(eqOutfit).farmingXpBonus || 0);
     const eventFarmMult = activeEvent?.config?.bonuses?.farmingXpMult || 1.0;
-    const xpMult = (xpBuff ? Number(xpBuff.multiplier) : 1.0) * eventFarmMult;
+    const xpMult = (xpBuff ? Number(xpBuff.multiplier) : 1.0) * eventFarmMult * (1 + clothingFarmXpBonus);
 
     const harvestedItems = {};
     const harvestedPlots = [];

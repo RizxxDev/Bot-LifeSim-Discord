@@ -2,6 +2,7 @@ const {
     ContainerBuilder,
     SectionBuilder,
     TextDisplayBuilder,
+    ThumbnailBuilder,
     SeparatorBuilder,
     SeparatorSpacingSize,
     ActionRowBuilder,
@@ -71,7 +72,8 @@ function buildV2Card({
     blocks = [],
     actionRows = [],
     footer = null,
-    ephemeral = false
+    ephemeral = false,
+    files = null
 }) {
     const container = new ContainerBuilder().setAccentColor(accentColor);
 
@@ -92,6 +94,20 @@ function buildV2Card({
             container.addSeparatorComponents(
                 new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small)
             );
+        } else if ((block.text || Array.isArray(block.texts)) && block.thumbnail) {
+            const textItems = Array.isArray(block.texts)
+                ? block.texts.filter(Boolean).slice(0, 3)
+                : [block.text].filter(Boolean);
+            const thumb = block.thumbnail instanceof ThumbnailBuilder
+                ? block.thumbnail
+                : new ThumbnailBuilder().setURL(block.thumbnail.url);
+            if (!(block.thumbnail instanceof ThumbnailBuilder) && block.thumbnail.description) {
+                thumb.setDescription(String(block.thumbnail.description).slice(0, 1024));
+            }
+            const section = new SectionBuilder()
+                .addTextDisplayComponents(...textItems.map(t => new TextDisplayBuilder().setContent(t)))
+                .setThumbnailAccessory(thumb);
+            container.addSectionComponents(section);
         } else if (block.text && block.button) {
             const section = new SectionBuilder()
                 .addTextDisplayComponents(new TextDisplayBuilder().setContent(block.text))
@@ -131,10 +147,15 @@ function buildV2Card({
         flags |= MessageFlags.Ephemeral;
     }
 
-    return {
+    const payload = {
         components: [container],
         flags
     };
+    if (Array.isArray(files) && files.length > 0) {
+        payload.files = files;
+    }
+
+    return payload;
 }
 
 function normalizeForBlacklist(str) {

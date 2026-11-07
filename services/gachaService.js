@@ -9,7 +9,9 @@ const {
 } = require('../data/gacha');
 const { getItem } = require('../data/items');
 const { getVehicle } = require('../data/vehicles');
+const { getClothing } = require('../data/clothes');
 const { debitPlayerFunds } = require('./economyService');
+const { getPlayerOwnedClothingIds, grantClothing } = require('./avatarService');
 const {
     getPlayerInventory,
     calculateSlotsUsed,
@@ -54,6 +56,15 @@ function resolvePrizeMetadata(entry) {
             isUnique: true
         };
     }
+    if (entry.type === 'clothing') {
+        const cObj = getClothing(entry.clothingId);
+        return {
+            name: cObj ? cObj.name : entry.clothingId,
+            emoji: cObj ? cObj.emoji : '👔',
+            categoryLabel: 'Busana Eksklusif (/wardrobe)',
+            isUnique: true
+        };
+    }
     const it = getItem(entry.itemId);
     const unique = isUniqueItem(it);
     return {
@@ -72,12 +83,16 @@ function isUniquePrizeAlreadyOwned(entry, ownershipSets) {
     const ownedItemIds = ownershipSets?.ownedItemIds || new Set();
     const ownedVehicleIds = ownershipSets?.ownedVehicleIds || new Set();
     const unlockedTitleIds = ownershipSets?.unlockedTitleIds || new Set();
+    const ownedClothingIds = ownershipSets?.ownedClothingIds || new Set();
 
     if (entry.type === 'vehicle') {
         return ownedVehicleIds.has(entry.vehicleId);
     }
     if (entry.type === 'title') {
         return unlockedTitleIds.has(entry.titleId);
+    }
+    if (entry.type === 'clothing') {
+        return ownedClothingIds.has(entry.clothingId);
     }
     if (entry.type === 'item') {
         const it = getItem(entry.itemId);
@@ -99,7 +114,8 @@ function simulateGachaPullBatch(tierOrId, pullCount = 1, initialOwnership = {}, 
     const ownershipSets = {
         ownedItemIds: new Set(initialOwnership.ownedItemIds || []),
         ownedVehicleIds: new Set(initialOwnership.ownedVehicleIds || []),
-        unlockedTitleIds: new Set(initialOwnership.unlockedTitleIds || [])
+        unlockedTitleIds: new Set(initialOwnership.unlockedTitleIds || []),
+        ownedClothingIds: new Set(initialOwnership.ownedClothingIds || [])
     };
 
     const rawEntries = [];
@@ -146,6 +162,8 @@ function simulateGachaPullBatch(tierOrId, pullCount = 1, initialOwnership = {}, 
                 ownershipSets.ownedVehicleIds.add(entry.vehicleId);
             } else if (entry.type === 'title') {
                 ownershipSets.unlockedTitleIds.add(entry.titleId);
+            } else if (entry.type === 'clothing') {
+                ownershipSets.ownedClothingIds.add(entry.clothingId);
             } else if (entry.type === 'item' && meta.isUnique) {
                 ownershipSets.ownedItemIds.add(entry.itemId);
             }
@@ -286,11 +304,12 @@ async function executeGachaPull(conn, player, tierId, pullCount = 1, now = Date.
     );
     const ownedVehicleIds = new Set(vehRows.map(v => v.vehicle_id));
     const unlockedTitleIds = new Set(colRows.map(c => c.item_id));
+    const ownedClothingIds = await getPlayerOwnedClothingIds(conn, discordId, true);
 
     const batch = simulateGachaPullBatch(
         tier,
         count,
-        { ownedItemIds, ownedVehicleIds, unlockedTitleIds },
+        { ownedItemIds, ownedVehicleIds, unlockedTitleIds, ownedClothingIds },
         rollFn
     );
 
@@ -338,6 +357,8 @@ async function executeGachaPull(conn, player, tierId, pullCount = 1, now = Date.
                     );
                 }
             }
+        } else if (entry.type === 'clothing') {
+            await grantClothing(conn, discordId, entry.clothingId, true, now);
         } else if (entry.type === 'item') {
             itemGrantAggregator.set(
                 entry.itemId,

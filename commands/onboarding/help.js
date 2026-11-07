@@ -27,7 +27,14 @@ const COMMAND_DETAILS = {
         usage: '`/profile` (pilih warga lewat dropdown di dalam panel)',
         cost: 'Tidak ada',
         cooldown: 'Tidak ada',
-        tips: 'Menampilkan stat vital, pendidikan, karir, level 4 skill (Fishing, Mining, Farming, Cooking), hunian, kendaraan, & koleksi.'
+        tips: 'Menampilkan avatar chibi kustom, stat vital, pendidikan, karir, level 4 skill, hunian, kendaraan, & koleksi.'
+    },
+    wardrobe: {
+        title: '/wardrobe — Lemari Pakaian & Kustomisasi Avatar Chibi',
+        usage: '`/wardrobe` (atau klik tombol 👔 Lemari Pakaian di `/profile`)',
+        cost: 'Gratis ganti pakaian · Beli busana baru di `/shop` (Butik Busana) atau `/gacha`',
+        cooldown: 'Tidak ada',
+        tips: 'Kustomisasi 7 slot tubuh chibi (Kulit, Rambut, Topi, Atasan, Bawahan, Sepatu, Aksesoris). Busana profesi/langka memberi buff gaji & EXP!'
     },
     consume: {
         title: '/consume — Meja Konsumsi (Makan, Minum, Obat & Dokumen)',
@@ -153,7 +160,7 @@ const COMMAND_DETAILS = {
         usage: '`/shop`',
         cost: 'Lp sesuai harga barang (otomatis potong Bank jika Cash kurang)',
         cooldown: 'Tidak ada',
-        tips: 'Jelajahi 8 toko kota, pilih barang dari dropdown, dan beli 1×, 5×, 10×, atau jumlah kustom lewat modal langsung di panel!'
+        tips: 'Jelajahi 9 toko kota (termasuk Butik & Distro Busana), pilih barang dari dropdown, dan beli langsung di panel!'
     },
     sell: {
         title: '/sell — Papan Harga Pasar & Pengepul Komoditas',
@@ -246,10 +253,10 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 default: category === 'home' && !selectedCmd
             },
             {
-                label: 'Kehidupan, Properti & Kendaraan',
+                label: 'Kehidupan, Busana, Properti & Kendaraan',
                 value: 'life',
                 emoji: '🧍',
-                description: '/profile, /consume, /sleep, /property, /storage, /vehicle, /achievements, /event',
+                description: '/profile, /wardrobe, /consume, /sleep, /property, /storage, /vehicle, /achievements',
                 default: category === 'life' && !selectedCmd
             },
             {
@@ -330,7 +337,8 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
             blocks: [
                 'Karaktermu memiliki 4 stat vital (0–100): **⚡ Energy**, **🍔 Hunger**, **💧 Thirst**, dan **❤️ Health**.',
                 [
-                    '• `/profile` — Lihat kartu identitas, pekerjaan, hunian, skill, dan intip profil warga lain.',
+                    '• `/profile` — Lihat kartu identitas + avatar chibi, pekerjaan, hunian, skill, dan intip profil warga lain.',
+                    '• `/wardrobe` — Kustomisasi 7 slot pakaian avatar chibi dan aktifkan buff busana profesi/langka.',
                     '• `/consume` — Makan, minum, pakai obat/vitamin, atau klik **🍴 Makan & Minum Otomatis**.',
                     '• `/sleep` — Tidur di hunianmu untuk memulihkan +50 s/d +100 ⚡ Energy.',
                     '• `/property` — Sewa Kos/Kontrakan atau beli Rumah untuk membuka Kulkas, Freezer, & Dapur.',
@@ -407,7 +415,7 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 'Kelola keuanganmu, belanja kebutuhan, dan pantau harga pasar dinamis.',
                 [
                     '• `/bank` — Setor (Deposit) & Tarik (Withdraw) uang dengan tombol persentase cepat atau modal.',
-                    '• `/shop` — Jelajahi 8 toko kota dan beli barang dengan tombol kuantitas interaktif.',
+                    '• `/shop` — Jelajahi 9 toko kota (termasuk Butik Busana) dan beli barang dengan tombol interaktif.',
                     '• `/sell` — Cek papan harga pasar 24 jam dan jual hasil pancing, tambang, tani, & masakan.',
                     '• `/gacha` — Putar Mesin Kapsul Warung, Mystery Box Mall, atau Brankas Sultan (1× & 10× Pull).',
                     '• `/inventory` — Lihat isi tas, perbaiki alat yang rusak, atau upgrade ukuran tas (hingga 130 slot).',

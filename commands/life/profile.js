@@ -6,6 +6,11 @@ const { getPlayerPropertyStatus } = require('../../services/propertyService');
 const { getEquippedVehicle } = require('../../services/vehicleService');
 const { evaluatePlayerAchievements } = require('../../services/achievementService');
 const { getPlayerGachaStats } = require('../../services/gachaService');
+const {
+    getPlayerWardrobeState,
+    buildAvatarAttachment,
+    formatEquippedSummaryLines
+} = require('../../services/avatarService');
 const { isNewbieBoostActive } = require('../../services/economyService');
 const { getEducation } = require('../../data/education');
 const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
@@ -19,7 +24,7 @@ const TOTAL_FISH_SPECIES = ITEMS.filter(i => i.tags && i.tags.includes('fish')).
 const TOTAL_MINERAL_TYPES = ITEMS.filter(i => i.tags && i.tags.includes('mineral')).length;
 
 async function fetchProfileData(targetId, now = Date.now()) {
-    return await withTransaction(async (conn) => {
+    const dbData = await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, targetId, now, true);
         if (!synced) return null;
 
@@ -43,6 +48,7 @@ async function fetchProfileData(targetId, now = Date.now()) {
         );
         const achEval = await evaluatePlayerAchievements(conn, synced.player, now);
         const gachaStats = await getPlayerGachaStats(conn, targetId);
+        const wardrobe = await getPlayerWardrobeState(conn, targetId, false);
 
         return {
             player: synced.player,
@@ -53,9 +59,17 @@ async function fetchProfileData(targetId, now = Date.now()) {
             jobShifts,
             achEval,
             gachaStats,
+            wardrobe,
             collections: colRows.map(r => r.item_id)
         };
     });
+
+    if (!dbData) return null;
+    const avatar = await buildAvatarAttachment(dbData.wardrobe.equipped);
+    return {
+        ...dbData,
+        avatar
+    };
 }
 
 function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
@@ -122,6 +136,7 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
     const vehLabel = equippedVehicle?.vehicle
         ? `${equippedVehicle.vehicle.emoji} **${equippedVehicle.vehicle.name}** *(${equippedVehicle.odometer_km.toFixed(0)} km${equippedVehicle.vehicle.tankCapacity > 0 ? ` · ⛽ ${equippedVehicle.fuel_liters.toFixed(1)}L` : ''})*`
         : '🚶 *Jalan Kaki*';
+    const outfitLabel = formatEquippedSummaryLines(data.wardrobe?.equipped || null);
 
     const rows = [
         userSelect('profile', 'inspect_user', ownerId, {
@@ -133,6 +148,11 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
                 emoji: '🪪',
                 style: p.discord_id === ownerId ? ButtonStyle.Primary : ButtonStyle.Secondary
             }, now),
+            btn('profile', 'open_wardrobe', ownerId, {
+                label: 'Lemari Pakaian',
+                emoji: '👔',
+                style: ButtonStyle.Success
+            }, now),
             btn('profile', 'refresh', ownerId, {
                 label: 'Segarkan',
                 emoji: '🔄',
@@ -142,6 +162,40 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
         )
     ];
 
+    const wealthText = [
+        `💵 **Dompet (Cash):** ${formatLp(p.cash)}`,
+        `🏦 **Tabungan Bank:** ${formatLp(p.bank)}`,
+        `💎 **Total Kekayaan:** ${formatLp(Number(p.cash) + Number(p.bank))}`
+    ].join('\n');
+
+    const vitalsText = [
+        '**❤️ Kondisi Tubuh (Stat Vital):**',
+        `⚡ Energy : \`${renderBar(p.energy, 100)}\``,
+        `🍔 Hunger : \`${renderBar(p.hunger, 100)}\``,
+        `💧 Thirst : \`${renderBar(p.thirst, 100)}\``,
+        `❤️ Health : \`${renderBar(p.health, 100)}\``
+    ].join('\n');
+
+    const topBlocks = data.avatar
+        ? [
+            {
+                texts: [
+                    ...(badges.length > 0 ? [badges.join(' · ')] : []),
+                    wealthText,
+                    vitalsText
+                ],
+                thumbnail: {
+                    url: data.avatar.url,
+                    description: `Avatar Chibi ${p.username}`
+                }
+            }
+        ]
+        : [
+            badges.length > 0 ? badges.join(' · ') : null,
+            wealthText,
+            vitalsText
+        ];
+
     return buildPanel({
         mod: 'profile',
         ownerId,
@@ -150,26 +204,15 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
         player: p,
         banner,
         blocks: [
-            badges.length > 0 ? badges.join(' · ') : null,
-            [
-                `💵 **Dompet (Cash):** ${formatLp(p.cash)}`,
-                `🏦 **Tabungan Bank:** ${formatLp(p.bank)}`,
-                `💎 **Total Kekayaan:** ${formatLp(Number(p.cash) + Number(p.bank))}`
-            ].join('\n'),
-            [
-                '**❤️ Kondisi Tubuh (Stat Vital):**',
-                `⚡ Energy : \`${renderBar(p.energy, 100)}\``,
-                `🍔 Hunger : \`${renderBar(p.hunger, 100)}\``,
-                `💧 Thirst : \`${renderBar(p.thirst, 100)}\``,
-                `❤️ Health : \`${renderBar(p.health, 100)}\``
-            ].join('\n'),
+            ...topBlocks,
             [
                 '**💼 Karir, Pendidikan & Hunian:**',
                 `• Pekerjaan : ${jobText}`,
                 `• Total Shift: **${p.total_shifts} shift**`,
                 `• Pendidikan: ${eduText}`,
                 `• Hunian    : ${propLabel}`,
-                `• Kendaraan : ${vehLabel}`
+                `• Kendaraan : ${vehLabel}`,
+                `• Busana    : ${outfitLabel}`
             ].join('\n'),
             [
                 '**🎣 Keahlian & Eksplorasi:**',
@@ -185,6 +228,7 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
         ],
         rows,
         footer: `Warga sejak ${new Date(Number(p.created_at)).toLocaleDateString('id-ID')} · Streak Harian: ${p.daily_streak} hari`,
+        files: data.avatar ? [data.avatar.attachment] : undefined,
         now
     });
 }
@@ -217,6 +261,19 @@ module.exports = {
                     buildProfilePanel({
                         ownerId: interaction.user.id,
                         data,
+                        now
+                    })
+                );
+            },
+            async open_wardrobe(interaction) {
+                const now = Date.now();
+                const { fetchWardrobePanelData, buildWardrobePanel } = require('./wardrobe');
+                const state = await fetchWardrobePanelData(interaction.user.id, now);
+                return await interaction.update(
+                    buildWardrobePanel({
+                        ownerId: interaction.user.id,
+                        state,
+                        selectedSlot: 'top',
                         now
                     })
                 );

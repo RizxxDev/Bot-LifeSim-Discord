@@ -12,6 +12,7 @@
     "simulate": "node scripts/simulateEconomy.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.1.0",
     "discord.js": "^14.19.3",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.1",

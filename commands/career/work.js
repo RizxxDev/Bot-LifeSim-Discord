@@ -13,6 +13,7 @@ const { generateWorkMinigame, buildWorkMinigameRow } = require('../../services/m
 const { applyShiftVehicleUsage, getEquippedVehicle } = require('../../services/vehicleService');
 const { getActiveSeasonalEvent, awardEventActivityProgress } = require('../../services/eventService');
 const { rollActivityBonusTicket } = require('../../services/gachaService');
+const { getPlayerEquippedOutfit, computeClothingBuffs, getJobClothingBonus } = require('../../services/avatarService');
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
 const { ACTIVITY_COSTS } = require('../../data/constants');
@@ -35,6 +36,8 @@ async function fetchWorkPrepState(discordId, now = Date.now()) {
         }
         const equippedVehicle = await getEquippedVehicle(conn, discordId, false);
         const activeEvent = await getActiveSeasonalEvent(conn, now);
+        const eqOutfit = await getPlayerEquippedOutfit(conn, discordId, false);
+        const clothingBonus = job ? getJobClothingBonus(computeClothingBuffs(eqOutfit), job.id) : 0;
 
         const cost = job
             ? {
@@ -52,6 +55,7 @@ async function fetchWorkPrepState(discordId, now = Date.now()) {
             job,
             shiftsCompleted,
             equippedVehicle,
+            clothingBonus,
             activeEvent,
             cost,
             elig,
@@ -88,6 +92,9 @@ function buildWorkPrepPanel(state, banner = null, now = Date.now()) {
             const v = equippedVehicle.vehicle;
             const fuelStr = v.tankCapacity > 0 ? ` · ⛽ ${equippedVehicle.fuel_liters.toFixed(1)}L` : '';
             blocks.push(`🚘 **Kendaraan Kerja:** ${v.emoji} **${v.name}** (${equippedVehicle.odometer_km.toFixed(0)} km${fuelStr})`);
+        }
+        if (Number(state.clothingBonus || 0) > 0) {
+            blocks.push(`👔 **Bonus Busana Kerja:** **+${Math.round(Number(state.clothingBonus) * 100)}% Gaji** aktif dari pakaianmu`);
         }
 
         if (remCd > 0) {
@@ -252,6 +259,9 @@ async function runWorkShift(interaction, now = Date.now()) {
         const adminSalaryMult = Number(liveCfg.salary_multiplier || 1.0);
         const vehicleRes = await applyShiftVehicleUsage(conn, discordId, job.id);
         const vehicleMult = 1 + Number(vehicleRes.bonusMultiplier || 0);
+        const eqOutfit = await getPlayerEquippedOutfit(conn, discordId, false);
+        const clothingBonus = getJobClothingBonus(computeClothingBuffs(eqOutfit), job.id);
+        const clothingMult = 1 + clothingBonus;
 
         const activeEvent = await getActiveSeasonalEvent(conn, finishNow);
         const lebaranThrMult = activeEvent?.lebaranThr?.active ? Number(activeEvent.lebaranThr.multiplier || 1.5) : 1.0;
@@ -262,6 +272,7 @@ async function runWorkShift(interaction, now = Date.now()) {
             oldRank.multiplier *
             minigameMult *
             vehicleMult *
+            clothingMult *
             elig.yieldMultiplier *
             softCap.multiplier *
             adminSalaryMult
@@ -325,6 +336,7 @@ async function runWorkShift(interaction, now = Date.now()) {
             netSalary,
             softCap,
             vehicleRes,
+            clothingBonus,
             lebaranThrActive: Boolean(activeEvent?.lebaranThr?.active),
             lebaranThrMult,
             eventReward,
@@ -344,6 +356,9 @@ async function runWorkShift(interaction, now = Date.now()) {
         notes.push(`🚨 **Kendaraan Mogok!** **${outcome.vehicleRes.vehicle.name}** mogok di jalan karena terlambat diservis (bonus gaji hangus). Segera gunakan \`/vehicle\`!`);
     } else if (outcome.vehicleRes?.reason === 'NO_FUEL') {
         notes.push(`⛽ **Bensin Habis!** Tangki **${outcome.vehicleRes.vehicle.name}** kosong sehingga bonus gaji tidak aktif. Isi bensin di \`/vehicle\`!`);
+    }
+    if (outcome.clothingBonus > 0) {
+        notes.push(`👔 **Bonus Busana Aktif:** Pakaian kerjamu memberikan **+${Math.round(outcome.clothingBonus * 100)}% Gaji**!`);
     }
     if (outcome.lebaranThrActive) {
         notes.push(`🌙 **THR Lebaran Aktif (1–3 Syawal):** Gaji dasar shift ini dikalikan **×${outcome.lebaranThrMult}**!`);

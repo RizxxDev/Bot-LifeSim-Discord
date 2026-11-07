@@ -1,5 +1,6 @@
 const { CROPS } = require('./crops');
 const { RECIPES } = require('./recipes');
+const { getShopClothes } = require('./clothes');
 
 const SHOPS = [
     { id: 'warung', name: 'Warung & Minimarket', emoji: '🏪', description: 'Kebutuhan makan dan minum sehari-hari dengan harga terjangkau.' },
@@ -9,6 +10,7 @@ const SHOPS = [
     { id: 'tani', name: 'Toko Tani & Dapur', emoji: '🌾', description: 'Bibit tanaman kebun, pupuk urea, dan tabung gas LPG untuk memasak.' },
     { id: 'elektronik', name: 'Toko Elektronik', emoji: '💻', description: 'Perangkat kerja penunjang karir profesional.' },
     { id: 'layanan', name: 'Kantor Layanan Publik', emoji: '📄', description: 'Pembuatan SIM, surat izin melaut, dan dokumen resmi.' },
+    { id: 'busana', name: 'Butik & Distro Busana', emoji: '👕', description: 'Pakaian kasual, gaya rambut, sepatu, topi, & aksesoris untuk karakter chibimu (/wardrobe).' },
     { id: 'prestise', name: 'Butik Prestise', emoji: '👑', description: 'Gelar dan koleksi eksklusif penanda status warga.' }
 ];
 
@@ -1487,6 +1489,22 @@ for (const it of ITEMS) {
         it.shelfLifeHours = 72;
         it.spoilageCategory = 'fish';
     }
+}
+
+for (const c of getShopClothes()) {
+    ITEMS.push({
+        id: c.id,
+        name: c.name,
+        emoji: c.emoji,
+        shop: 'busana',
+        tags: ['clothing'],
+        clothingId: c.id,
+        clothingSlot: c.slot,
+        buyPrice: c.priceLp,
+        sellPrice: 0,
+        stackSize: 0,
+        description: c.description
+    });
 }
 
 const ITEM_MAP = new Map(ITEMS.map(it => [it.id, it]));

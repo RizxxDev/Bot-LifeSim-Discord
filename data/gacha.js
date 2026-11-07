@@ -102,11 +102,13 @@ const GACHA_TIERS = [
             // Rare (13%)
             { id: 'w_pancing_bambu', type: 'item', itemId: 'pancing_bambu', qty: 1, rarity: 'rare', weight: 4.5 },
             { id: 'w_beliung_batu', type: 'item', itemId: 'beliung_batu', qty: 1, rarity: 'rare', weight: 4.5 },
-            { id: 'w_gas_lpg', type: 'item', itemId: 'gas_lpg', qty: 1, rarity: 'rare', weight: 4.0 },
+            { id: 'w_gas_lpg', type: 'item', itemId: 'gas_lpg', qty: 1, rarity: 'rare', weight: 2.0 },
+            { id: 'w_cloth_headphones', type: 'clothing', clothingId: 'acc_headphones', qty: 1, rarity: 'rare', weight: 2.0 },
 
             // Epic (4%)
-            { id: 'w_helm_tambang', type: 'item', itemId: 'helm_tambang', qty: 1, rarity: 'epic', weight: 1.5 },
-            { id: 'w_cooler_box', type: 'item', itemId: 'cooler_box', qty: 1, rarity: 'epic', weight: 1.5 },
+            { id: 'w_helm_tambang', type: 'item', itemId: 'helm_tambang', qty: 1, rarity: 'epic', weight: 1.0 },
+            { id: 'w_cooler_box', type: 'item', itemId: 'cooler_box', qty: 1, rarity: 'epic', weight: 1.0 },
+            { id: 'w_cloth_ojol', type: 'clothing', clothingId: 'top_ojol_jacket', qty: 1, rarity: 'epic', weight: 1.0 },
             { id: 'w_tiket_mall', type: 'item', itemId: 'tiket_gacha_mall', qty: 1, rarity: 'epic', weight: 1.0 },
 
             // Legendary (1%)
@@ -146,9 +148,11 @@ const GACHA_TIERS = [
             { id: 'm_sim_a', type: 'item', itemId: 'sim_a', qty: 1, rarity: 'rare', weight: 4.5 },
 
             // Epic (5%)
-            { id: 'm_pancing_carbon', type: 'item', itemId: 'pancing_carbon', qty: 1, rarity: 'epic', weight: 1.8 },
-            { id: 'm_beliung_baja', type: 'item', itemId: 'beliung_baja', qty: 1, rarity: 'epic', weight: 1.8 },
-            { id: 'm_tiket_sultan', type: 'item', itemId: 'tiket_gacha_sultan', qty: 1, rarity: 'epic', weight: 1.4 },
+            { id: 'm_pancing_carbon', type: 'item', itemId: 'pancing_carbon', qty: 1, rarity: 'epic', weight: 1.3 },
+            { id: 'm_beliung_baja', type: 'item', itemId: 'beliung_baja', qty: 1, rarity: 'epic', weight: 1.3 },
+            { id: 'm_cloth_sultan_pants', type: 'clothing', clothingId: 'bottom_sultan_gold', qty: 1, rarity: 'epic', weight: 0.7 },
+            { id: 'm_cloth_hype_shoes', type: 'clothing', clothingId: 'shoes_hype_neon', qty: 1, rarity: 'epic', weight: 0.7 },
+            { id: 'm_tiket_sultan', type: 'item', itemId: 'tiket_gacha_sultan', qty: 1, rarity: 'epic', weight: 1.0 },
 
             // Legendary (1%)
             { id: 'm_veh_vespa', type: 'vehicle', vehicleId: 'vespa_klasik', qty: 1, rarity: 'legendary', weight: 0.5 },
@@ -187,13 +191,15 @@ const GACHA_TIERS = [
             { id: 's_eliksir_pack', type: 'item', itemId: 'eliksir_sultan', qty: 4, rarity: 'rare', weight: 5 },
 
             // Epic (5.5%)
-            { id: 's_pancing_emas', type: 'item', itemId: 'pancing_emas_sultan', qty: 1, rarity: 'epic', weight: 2.0 },
-            { id: 's_beliung_meteorit', type: 'item', itemId: 'beliung_meteorit', qty: 1, rarity: 'epic', weight: 2.0 },
-            { id: 's_veh_motor_baru', type: 'vehicle', vehicleId: 'motor_baru', qty: 1, rarity: 'epic', weight: 1.5 },
+            { id: 's_pancing_emas', type: 'item', itemId: 'pancing_emas_sultan', qty: 1, rarity: 'epic', weight: 1.6 },
+            { id: 's_beliung_meteorit', type: 'item', itemId: 'beliung_meteorit', qty: 1, rarity: 'epic', weight: 1.6 },
+            { id: 's_cloth_crown', type: 'clothing', clothingId: 'hat_crown_sultan', qty: 1, rarity: 'epic', weight: 1.2 },
+            { id: 's_veh_motor_baru', type: 'vehicle', vehicleId: 'motor_baru', qty: 1, rarity: 'epic', weight: 1.1 },
 
             // Legendary (1.5%)
-            { id: 's_veh_mobil_sport', type: 'vehicle', vehicleId: 'mobil_sport', qty: 1, rarity: 'legendary', weight: 0.75 },
-            { id: 's_title_dewa', type: 'title', titleId: 'gacha_title_dewa_gacha', qty: 1, rarity: 'legendary', weight: 0.75 }
+            { id: 's_veh_mobil_sport', type: 'vehicle', vehicleId: 'mobil_sport', qty: 1, rarity: 'legendary', weight: 0.6 },
+            { id: 's_cloth_sultan_suit', type: 'clothing', clothingId: 'top_suit_sultan', qty: 1, rarity: 'legendary', weight: 0.5 },
+            { id: 's_title_dewa', type: 'title', titleId: 'gacha_title_dewa_gacha', qty: 1, rarity: 'legendary', weight: 0.4 }
         ]
     }
 ];

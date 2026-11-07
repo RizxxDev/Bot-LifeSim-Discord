@@ -285,6 +285,9 @@ function countV2Components({ title, blocks = [], actionRows = [], footer }) {
             count += 1;
         } else if (b.divider) {
             count += 1;
+        } else if ((b.text || Array.isArray(b.texts)) && b.thumbnail) {
+            const tLen = Array.isArray(b.texts) ? b.texts.filter(Boolean).slice(0, 3).length : 1;
+            count += 2 + tLen; // Section + TextDisplays + ThumbnailAccessory
         } else if (b.text && b.button) {
             count += 3; // Section + TextDisplay + ButtonAccessory
         } else if (b.text) {
@@ -323,6 +326,10 @@ function countV2DisplayableText({ title, blocks = [], footer }) {
         if (!b) continue;
         if (typeof b === 'string') {
             totalChars += b.length;
+        } else if (Array.isArray(b.texts)) {
+            for (const t of b.texts.filter(Boolean).slice(0, 3)) {
+                totalChars += String(t).length;
+            }
         } else if (typeof b.text === 'string') {
             totalChars += b.text.length;
         }
@@ -360,8 +367,16 @@ function assertComponentLimit(payloadMeta) {
     for (const b of (payloadMeta.blocks || [])) {
         if (typeof b === 'string') {
             checkNoUndefined(b, 'block');
+        } else if (Array.isArray(b?.texts)) {
+            for (const t of b.texts) {
+                checkNoUndefined(t, 'block.texts');
+            }
         } else if (b?.text) {
             checkNoUndefined(b.text, 'block.text');
+        }
+        if (b?.thumbnail) {
+            checkNoUndefined(b.thumbnail.url, 'block.thumbnail.url');
+            checkNoUndefined(b.thumbnail.description, 'block.thumbnail.description');
         }
         const cid = b?.button?.data?.custom_id;
         if (cid) {
@@ -407,6 +422,7 @@ function buildPanel({
     nav = null,
     footer = null,
     ephemeral = false,
+    files = null,
     now = Date.now()
 }) {
     const finalBlocks = [];
@@ -475,7 +491,8 @@ function buildPanel({
         blocks: finalBlocks,
         actionRows: finalRows,
         footer,
-        ephemeral
+        ephemeral,
+        files
     });
 }
 

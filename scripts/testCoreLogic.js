@@ -40,9 +40,9 @@ function collectCommandFiles(dir, list = []) {
 async function runTests() {
     console.log('🧪 Menjalankan pengujian unit logika inti (testCoreLogic.js)...\n');
 
-    // 1. Verifikasi seluruh 30 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
+    // 1. Verifikasi seluruh 31 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
     const cmdFiles = collectCommandFiles(path.join(__dirname, '..', 'commands'));
-    assert.strictEqual(cmdFiles.length, 30, `Harusnya tepat 30 command pasca penambahan /gacha, ditemukan: ${cmdFiles.length}`);
+    assert.strictEqual(cmdFiles.length, 31, `Harusnya tepat 31 command pasca penambahan /wardrobe, ditemukan: ${cmdFiles.length}`);
     for (const file of cmdFiles) {
         const rawSrc = fs.readFileSync(file, 'utf8');
         assert(!rawSrc.includes('fetchReply: true'), `Command ${file} masih mengandung opsi deprecated fetchReply: true`);
@@ -60,7 +60,7 @@ async function runTests() {
     }
     const workCmd = require('../commands/career/work');
     assert(workCmd.lockTtl >= 45, 'Command /work harus punya lockTtl >= 45 detik');
-    console.log(`✅ [1/21] 30 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
+    console.log(`✅ [1/22] 31 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
 
     // 2. Validasi Username & Blacklist
     assert.strictEqual(validateUsername('Budi_99').valid, true);
@@ -896,8 +896,15 @@ async function runTests() {
         isUniquePrizeAlreadyOwned
     } = require('../services/gachaService');
     const { buildGachaPanel } = require('../commands/economy/gacha');
+    const {
+        CLOTHES,
+        CLOTHING_SLOTS,
+        STARTER_CLOTHING_IDS,
+        getClothing,
+        getClothingAssetPath
+    } = require('../data/clothes');
 
-    // Validasi setiap tier memiliki total bobot tepat 100% dan semua item/vehicle/title valid
+    // Validasi setiap tier memiliki total bobot tepat 100% dan semua item/vehicle/title/clothing valid
     for (const tier of GACHA_TIERS) {
         const sumWeight = tier.lootTable.reduce((acc, e) => acc + e.weight, 0);
         assert(Math.abs(sumWeight - 100) < 0.001, `Tier Gacha ${tier.id} harus memiliki total bobot 100% (ditemukan ${sumWeight})`);
@@ -910,6 +917,8 @@ async function runTests() {
                 assert.ok(getVehicle(entry.vehicleId), `Vehicle Gacha ${entry.vehicleId} pada tier ${tier.id} harus terdaftar di data/vehicles.js`);
             } else if (entry.type === 'title') {
                 assert.ok(getGachaTitle(entry.titleId), `Title Gacha ${entry.titleId} pada tier ${tier.id} wajib terdaftar di GACHA_TITLES`);
+            } else if (entry.type === 'clothing') {
+                assert.ok(getClothing(entry.clothingId), `Clothing Gacha ${entry.clothingId} pada tier ${tier.id} wajib terdaftar di data/clothes.js`);
             }
         }
     }
@@ -1041,9 +1050,179 @@ async function runTests() {
         const serialized = JSON.stringify(gPanel);
         assert(!serialized.includes('undefined'), `Panel /${gName} tidak boleh mengandung string "undefined"`);
     }
-    console.log('✅ [21/21] Fitur /gacha: 3-Tier Mesin Kapsul, Garansi 10x Rare+, Konversi Duplikat & Panel V2 terverifikasi.\n');
+    console.log('✅ [21/22] Fitur /gacha: 3-Tier Mesin Kapsul, Garansi 10x Rare+, Konversi Duplikat & Panel V2 terverifikasi.');
 
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (21/21 PASSED)!');
+    // ====================================================
+    // 22. TEST AVATAR CHIBI 7-SLOT, COMPOSITING PNG, BUFF BUSANA, BUTIK /SHOP, /WARDROBE & /PROFILE THUMBNAIL
+    // ====================================================
+    const {
+        normalizeEquippedOutfit,
+        generateAvatarBuffer,
+        buildAvatarAttachment,
+        computeClothingBuffs,
+        getJobClothingBonus
+    } = require('../services/avatarService');
+    const { buildShopPanel } = require('../services/shopService');
+    const { buildWardrobePanel } = require('../commands/life/wardrobe');
+    const { buildProfilePanel } = require('../commands/life/profile');
+    const { countV2DisplayableText } = require('../utils/panelBuilder');
+
+    assert.strictEqual(CLOTHING_SLOTS.length, 7, 'Sistem busana harus memiliki tepat 7 slot modular');
+    assert(CLOTHES.length >= 35, `Katalog pakaian harus memiliki minimal 35 item (ditemukan ${CLOTHES.length})`);
+    for (const c of CLOTHES) {
+        const assetFile = getClothingAssetPath(c);
+        assert.ok(assetFile && fs.existsSync(assetFile), `File sprite PNG untuk ${c.id} tidak ditemukan di ${assetFile}`);
+    }
+
+    // Uji komposisi gambar PNG karakter chibi polos vs setelan Sultan
+    const defaultOutfit = normalizeEquippedOutfit(null);
+    assert.strictEqual(defaultOutfit.body, 'chibi_body_light');
+    assert.strictEqual(defaultOutfit.top, null, 'Default avatar harus tampil polos tanpa baju');
+
+    const polosAvatar = await buildAvatarAttachment(defaultOutfit);
+    assert.ok(Buffer.isBuffer(polosAvatar.buffer) && polosAvatar.buffer.length > 1000, 'Buffer PNG avatar polos harus valid');
+    assert.strictEqual(polosAvatar.buffer.subarray(0, 4).toString('hex'), '89504e47', 'Output @napi-rs/canvas harus berupa PNG valid');
+    assert(polosAvatar.url.startsWith('attachment://avatar_'), 'URL avatar harus berupa skema attachment://avatar_<hash>.png');
+
+    const sultanOutfit = {
+        body: 'chibi_body_medium',
+        hair: 'hair_wavy_gold',
+        hat: 'hat_crown_sultan',
+        top: 'top_suit_sultan',
+        bottom: 'bottom_sultan_gold',
+        shoes: 'shoes_hype_neon',
+        accessory: 'acc_sunglasses_aviator'
+    };
+    const sultanAvatar = await buildAvatarAttachment(sultanOutfit);
+    assert.notStrictEqual(sultanAvatar.fileName, polosAvatar.fileName, 'Hash nama file PNG harus berubah saat pakaian diganti (anti-cache Discord)');
+    const cachedBuf = await generateAvatarBuffer(sultanOutfit);
+    assert.strictEqual(cachedBuf, sultanAvatar.buffer, 'Render cache RAM harus mengembalikan buffer yang sama untuk kombinasi identik');
+
+    // Uji kalkulasi buff pasif busana & batas cap
+    const ojolOutfitBuffs = computeClothingBuffs({
+        body: 'chibi_body_light',
+        hair: 'hair_short_black',
+        hat: 'hat_helm_proyek',
+        top: 'top_ojol_jacket',
+        bottom: 'bottom_cargo_olive',
+        shoes: 'shoes_boots_brown',
+        accessory: 'acc_headphones'
+    });
+    assert.strictEqual(getJobClothingBonus(ojolOutfitBuffs, 'ojek_online'), 0.09, 'Jaket Ojol (+6%) + Headphone (+3%) harus memberi +9% gaji Ojol');
+    assert.strictEqual(getJobClothingBonus(ojolOutfitBuffs, 'kasir_minimarket'), 0.03, 'Profesi lain tetap mendapat +3% umum dari Headphone');
+    assert.strictEqual(ojolOutfitBuffs.miningAccidentReduction, 0.20, 'Helm Proyek harus mengurangi risiko tambang 20%');
+
+    const farmerAnglerBuffs = computeClothingBuffs({
+        body: 'chibi_body_light',
+        hair: 'hair_short_black',
+        hat: 'hat_straw_farmer',
+        top: 'top_raincoat_yellow',
+        bottom: 'bottom_shorts_black',
+        shoes: 'shoes_sandal_jepit',
+        accessory: null
+    });
+    assert.strictEqual(farmerAnglerBuffs.farmingXpBonus, 0.10, 'Topi Jerami Petani harus memberi +10% Farming EXP');
+    assert.strictEqual(farmerAnglerBuffs.fishingXpBonus, 0.10, 'Jas Hujan Anti-Badai harus memberi +10% Fishing EXP');
+
+    // Uji Duplikat Pakaian di Gacha otomatis dikonversi menjadi tiket
+    assert.strictEqual(
+        isUniquePrizeAlreadyOwned(
+            { type: 'clothing', clothingId: 'hat_crown_sultan' },
+            {
+                ownedItemIds: new Set(),
+                ownedVehicleIds: new Set(),
+                unlockedTitleIds: new Set(),
+                ownedClothingIds: new Set(['hat_crown_sultan'])
+            }
+        ),
+        true,
+        'Pakaian eksklusif Gacha yang sudah ada di lemari harus otomatis terdeteksi duplikat'
+    );
+
+    // Uji Panel /wardrobe, /profile (dengan thumbnail avatar), & /shop (Butik Busana)
+    const sampleWardrobeState = {
+        ownedSet: new Set([...STARTER_CLOTHING_IDS, 'top_suit_sultan', 'hat_crown_sultan', 'acc_sunglasses_aviator']),
+        ownedCount: STARTER_CLOTHING_IDS.length + 3,
+        totalCatalogCount: CLOTHES.length,
+        equipped: sultanOutfit,
+        buffs: computeClothingBuffs(sultanOutfit)
+    };
+
+    const wardrobePanel = buildWardrobePanel({
+        ownerId: samplePlayer.discord_id,
+        state: {
+            player: samplePlayer,
+            wardrobe: sampleWardrobeState,
+            avatar: sultanAvatar
+        },
+        selectedSlot: 'top',
+        now: nowTs
+    });
+
+    const profileWithAvatarPanel = buildProfilePanel({
+        ownerId: samplePlayer.discord_id,
+        data: {
+            player: {
+                ...samplePlayer,
+                education_level: 'SMA',
+                backpack_tier: 1,
+                fishing_xp: 25,
+                mining_xp: 60,
+                farming_xp: 0,
+                cooking_xp: 0,
+                max_slots: 20,
+                total_shifts: 10,
+                daily_streak: 3,
+                created_at: nowTs - 86400000,
+                hospital_until: 0,
+                sleeping_until: 0
+            },
+            buffs: [],
+            slotsUsed: 4,
+            propStatus: { effectiveTier: getPropertyTier('kos'), row: { ownership_type: 'rent' } },
+            equippedVehicle: null,
+            jobShifts: 0,
+            achEval: { unlockedCount: 3, totalCount: 27, claimableCount: 1 },
+            gachaStats: { total_pulls: 15, jackpot_count: 1 },
+            wardrobe: sampleWardrobeState,
+            avatar: sultanAvatar,
+            collections: ['ikan_nila']
+        },
+        now: nowTs
+    });
+
+    const shopBusanaPanel = buildShopPanel({
+        state: {
+            player: { ...samplePlayer, backpack_tier: 1, max_slots: 20 },
+            invRows: [],
+            ownedClothesSet: sampleWardrobeState.ownedSet,
+            slotsUsed: 2,
+            liveCfg: { shop_price_multiplier: 1.0 }
+        },
+        shopId: 'busana',
+        page: 1,
+        now: nowTs
+    });
+
+    assert.strictEqual(Array.isArray(wardrobePanel.files) && wardrobePanel.files.length, 1, 'Panel /wardrobe wajib menyertakan 1 file attachment avatar');
+    assert.strictEqual(Array.isArray(profileWithAvatarPanel.files) && profileWithAvatarPanel.files.length, 1, 'Panel /profile wajib menyertakan 1 file attachment avatar');
+
+    for (const [pName, pObj] of [
+        ['wardrobe', wardrobePanel],
+        ['profile (chibi avatar)', profileWithAvatarPanel],
+        ['shop (butik busana)', shopBusanaPanel]
+    ]) {
+        assert((pObj.flags & 32768) === 32768, `Panel /${pName} wajib menggunakan MessageFlags.IsComponentsV2`);
+        const cCount = countV2Components(pObj);
+        const tLen = countV2DisplayableText(pObj);
+        assert(cCount <= 40, `Panel /${pName} melebihi batas 40 komponen (${cCount})`);
+        assert(tLen <= 4000, `Panel /${pName} melebihi batas 4000 karakter (${tLen})`);
+        const rawJson = JSON.stringify(pObj.components.map(c => c.toJSON()));
+        assert(!rawJson.includes('undefined'), `Panel /${pName} tidak boleh mengandung string "undefined"`);
+    }
+    console.log('✅ [22/22] Fitur Avatar Chibi 7-Slot, Compositing PNG, Buff Busana, Butik /shop, /wardrobe & Thumbnail /profile terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (22/22 PASSED)!');
     process.exit(0);
 }
 

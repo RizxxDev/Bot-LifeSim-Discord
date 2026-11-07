@@ -73,7 +73,7 @@ async function dispatch(interaction, client, now = Date.now()) {
                 interaction.isFromMessage());
 
         if (canUpdateMessage && typeof interaction.update === 'function') {
-            await interaction.update(expiredCard);
+            await interaction.update({ ...expiredCard, attachments: [] });
         } else {
             await interaction.reply({ ...expiredCard, ephemeral: true });
         }
