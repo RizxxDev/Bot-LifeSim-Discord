@@ -36,6 +36,13 @@ const COMMAND_DETAILS = {
         cooldown: 'Tidak ada',
         tips: 'Kustomisasi 7 slot tubuh chibi (Kulit, Rambut, Topi, Atasan, Bawahan, Sepatu, Aksesoris). Busana profesi/langka memberi buff gaji & EXP!'
     },
+    travel: {
+        title: '/travel — Terminal & Perjalanan Antar 3 Kota',
+        usage: '`/travel`',
+        cost: 'Kendaraan bermotor + SIM + Bensin sesuai jarak (30/45/75 km) · Opsional sewa Supir Mobil',
+        cooldown: 'Waktu tempuh 60–150 detik (aktivitas terkunci selama di jalan)',
+        tips: 'Jelajahi 3 kota: Tanjung Barat (/mining & Laut), Metropolis Sentral (/study, /credit, Mall/Sultan Gacha), & Lembah Hijau (/farm & Danau). Pakai Mobil + Supir agar 0 pengurangan stat & bebas buka /consume dan /profile di jalan!'
+    },
     consume: {
         title: '/consume — Meja Konsumsi (Makan, Minum, Obat & Dokumen)',
         usage: '`/consume`',
@@ -253,10 +260,10 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 default: category === 'home' && !selectedCmd
             },
             {
-                label: 'Kehidupan, Busana, Properti & Kendaraan',
+                label: 'Kehidupan, Travel Kota, Properti & Kendaraan',
                 value: 'life',
                 emoji: '🧍',
-                description: '/profile, /wardrobe, /consume, /sleep, /property, /storage, /vehicle, /achievements',
+                description: '/profile, /wardrobe, /travel, /consume, /sleep, /property, /storage, /vehicle',
                 default: category === 'life' && !selectedCmd
             },
             {
@@ -337,13 +344,14 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
             blocks: [
                 'Karaktermu memiliki 4 stat vital (0–100): **⚡ Energy**, **🍔 Hunger**, **💧 Thirst**, dan **❤️ Health**.',
                 [
-                    '• `/profile` — Lihat kartu identitas + avatar chibi, pekerjaan, hunian, skill, dan intip profil warga lain.',
+                    '• `/profile` — Lihat kartu identitas + avatar chibi, lokasi kota, pekerjaan, hunian, & skill.',
                     '• `/wardrobe` — Kustomisasi 7 slot pakaian avatar chibi dan aktifkan buff busana profesi/langka.',
+                    '• `/travel` — Perjalanan antar 3 kota (Tanjung Barat, Metropolis Sentral, Lembah Hijau) dengan kendaraan & opsi Supir Mobil.',
                     '• `/consume` — Makan, minum, pakai obat/vitamin, atau klik **🍴 Makan & Minum Otomatis**.',
-                    '• `/sleep` — Tidur di hunianmu untuk memulihkan +50 s/d +100 ⚡ Energy.',
+                    '• `/sleep` — Tidur di hunianmu (+50 s/d +100 ⚡) atau sewa **🏨 Motel Transit** saat merantau di luar kota.',
                     '• `/property` — Sewa Kos/Kontrakan atau beli Rumah untuk membuka Kulkas, Freezer, & Dapur.',
                     '• `/storage` — Simpan makanan/ikan ke Kulkas, Freezer, Gudang, atau Cooler Box.',
-                    '• `/vehicle` — Kelola kendaraan, isi bensin di SPBU, dan servis berkala di bengkel.',
+                    '• `/vehicle` — Kelola kendaraan, isi bensin SPBU, servis berkala, & kontrak Supir Pribadi 7 hari.',
                     '• `/achievements` — Klaim hadiah pencapaian dan pasang Gelar Kehormatan (Title).',
                     '• `/event` — Cek cuaca 2 mingguan, bazar token event musiman, dan target komunitas.',
                     '• `/cooldowns` — Lihat semua jadwal tunggu dan kuota harian aktivitasmu.'

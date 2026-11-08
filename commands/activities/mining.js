@@ -17,6 +17,7 @@ const { rollActivityBonusTicket } = require('../../services/gachaService');
 const { getPlayerEquippedOutfit, computeClothingBuffs } = require('../../services/avatarService');
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { executeSellItems } = require('../../services/marketService');
+const { buildCityGatePanel } = require('../../services/cityService');
 const { MINING_LOCATIONS, getMiningLocation, getLevelInfoFromXp, rollLoot } = require('../../data/locations');
 const { getItem } = require('../../data/items');
 const { ACTIVITY_COSTS } = require('../../data/constants');
@@ -128,6 +129,15 @@ function buildMiningRows(ownerId, state, now = Date.now()) {
 
 function buildMiningPrepPanel(state, banner = null, now = Date.now()) {
     const { player: p, weather, bestPickaxe, helmet, lvInfo, slotsUsed, location, elig, remCd } = state;
+    if ((p.current_city || 'kota_sentral') !== 'kota_barat') {
+        return buildCityGatePanel({
+            player: p,
+            requiredCityId: 'kota_barat',
+            facilityTitle: '⛏️ Kawasan Pertambangan (/mining)',
+            reasonText: 'Seluruh terowongan tambang mineral (Batu, Tembaga, Emas, hingga Berlian) hanya berada di kawasan industri **🚢 Pelabuhan Tanjung Barat**! Gunakan `/travel` untuk menuju ke sana.',
+            now
+        });
+    }
     const ownerId = p.discord_id;
 
     if (!bestPickaxe) {
@@ -242,6 +252,9 @@ async function runMiningSwing(interaction, now = Date.now()) {
     const pre = await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, true);
         const p = synced.player;
+        if ((p.current_city || 'kota_sentral') !== 'kota_barat') {
+            return { error: 'Kawasan tambang hanya berada di Pelabuhan Tanjung Barat! Gunakan `/travel`.' };
+        }
         const invRows = await getPlayerInventory(conn, discordId, true, 'bag', now);
 
         const elig = checkActivityEligibility(p, cost, 'mining', now);

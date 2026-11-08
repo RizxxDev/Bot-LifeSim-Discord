@@ -16,6 +16,7 @@ const { getEducation } = require('../../data/education');
 const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
 const { getBackpackByTier } = require('../../data/backpacks');
 const { getLevelInfoFromXp } = require('../../data/locations');
+const { getCity } = require('../../data/cities');
 const { ITEMS } = require('../../data/items');
 const { COLORS, formatLp, renderBar, formatDuration } = require('../../utils/uiBuilder');
 const { buildPanel, btn, userSelect } = require('../../utils/panelBuilder');
@@ -117,7 +118,11 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
     } else if (Number(p.sleeping_until) > now) {
         badges.push(`🛌 **Sedang Tidur** (${formatDuration(Number(p.sleeping_until) - now)})`);
     }
+    if (Number(p.traveling_until || 0) > now) {
+        badges.push(`🚗 **Dalam Perjalanan** (${formatDuration(Number(p.traveling_until) - now)})`);
+    }
     for (const b of buffs) {
+        if (b.buff_type === 'motel_sleep') continue;
         const rem = Number(b.expires_at) - now;
         if (rem > 0) {
             badges.push(`✨ **${b.buff_type}** (${formatDuration(rem)})`);
@@ -129,9 +134,15 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
     const farmStars = farmLv.masteryStars > 0 ? ` ⭐×${farmLv.masteryStars}` : '';
     const cookStars = cookLv.masteryStars > 0 ? ` ⭐×${cookLv.masteryStars}` : '';
 
+    const curCity = getCity(p.current_city);
+    const cityLabel = Number(p.traveling_until || 0) > now
+        ? `🚗 **Dalam Perjalanan** (${getCity(p.travel_origin).shortName} ➔ ${getCity(p.travel_destination).shortName} · <t:${Math.floor(Number(p.traveling_until) / 1000)}:R>)`
+        : `${curCity.emoji} **${curCity.name}**`;
+
+    const propCityObj = getCity(propStatus.propertyCityId);
     const propLabel = propStatus.effectiveTier.id === 'tunawisma'
         ? `${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}**`
-        : `${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}** *(${propStatus.row?.ownership_type === 'owned' ? 'Milik Pribadi' : 'Sewa'})*`;
+        : `${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}** *(${propStatus.row?.ownership_type === 'owned' ? 'Milik Pribadi' : 'Sewa'} · ${propCityObj.shortName})*`;
 
     const vehLabel = equippedVehicle?.vehicle
         ? `${equippedVehicle.vehicle.emoji} **${equippedVehicle.vehicle.name}** *(${equippedVehicle.odometer_km.toFixed(0)} km${equippedVehicle.vehicle.tankCapacity > 0 ? ` · ⛽ ${equippedVehicle.fuel_liters.toFixed(1)}L` : ''})*`
@@ -152,6 +163,11 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
                 label: 'Lemari Pakaian',
                 emoji: '👔',
                 style: ButtonStyle.Success
+            }, now),
+            btn('travel', 'home', ownerId, {
+                label: 'Peta Kota',
+                emoji: '🗺️',
+                style: ButtonStyle.Secondary
             }, now),
             btn('profile', 'refresh', ownerId, {
                 label: 'Segarkan',
@@ -207,6 +223,7 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
             ...topBlocks,
             [
                 '**💼 Karir, Pendidikan & Hunian:**',
+                `• Lokasi Kota: ${cityLabel}`,
                 `• Pekerjaan : ${jobText}`,
                 `• Total Shift: **${p.total_shifts} shift**`,
                 `• Pendidikan: ${eduText}`,

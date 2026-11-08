@@ -2,6 +2,7 @@ const { SlashCommandBuilder, ActionRowBuilder, ButtonStyle } = require('discord.
 const { withTransaction, query } = require('../../database/mariadb');
 const { getCooldownRemaining, getDailyActionCount, getWibDateString } = require('../../database/redis');
 const { syncPlayerVitals } = require('../../services/vitalService');
+const { getCity } = require('../../data/cities');
 const { COLORS, formatDuration } = require('../../utils/uiBuilder');
 const { buildPanel, btn } = require('../../utils/panelBuilder');
 
@@ -35,6 +36,10 @@ async function buildCooldownsPanel(discordId, now = Date.now()) {
     }
     if (Number(p.sleeping_until) > now) {
         statusLines.push(`🛌 **Tidur (/sleep):** Bangun **<t:${Math.floor(Number(p.sleeping_until) / 1000)}:R>** (${formatDuration(Number(p.sleeping_until) - now)})`);
+    }
+    if (Number(p.traveling_until || 0) > now) {
+        const destCity = getCity(p.travel_destination || p.current_city);
+        statusLines.push(`🚗 **Perjalanan (/travel):** Tiba di **${destCity.emoji} ${destCity.name}** **<t:${Math.floor(Number(p.traveling_until) / 1000)}:R>** (${formatDuration(Number(p.traveling_until) - now)})`);
     }
     if (statusLines.length === 0) {
         statusLines.push('🟢 **Kondisi Karakter:** Bebas beraktivitas');

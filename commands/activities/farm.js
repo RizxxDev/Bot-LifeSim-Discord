@@ -18,6 +18,7 @@ const {
     harvestPlots,
     craftCompost
 } = require('../../services/farmService');
+const { buildCityGatePanel } = require('../../services/cityService');
 const {
     CROPS,
     FARM_LIMITS,
@@ -124,6 +125,15 @@ function buildFarmPanel({
     now = Date.now()
 }) {
     const { player: p, plots, weather, seedCounts, activeCropId, ureaCount, komposCount, basiCount } = state;
+    if ((p.current_city || 'kota_sentral') !== 'kota_timur') {
+        return buildCityGatePanel({
+            player: p,
+            requiredCityId: 'kota_timur',
+            facilityTitle: '🌾 Perkebunan & Lahan Tani (/farm)',
+            reasonText: 'Kawasan Agropolitan & Lahan Perkebunan Raya hanya terdapat di **🌾 Lembah Hijau**! Gunakan `/travel` untuk menanam, menyiram, dan memanen hasil kebunmu di sana.',
+            now
+        });
+    }
     const ownerId = p.discord_id;
     const farmingInfo = getLevelInfoFromXp(p.farming_xp || 0);
     const bonusYieldPct = Math.round(getBonusYieldChanceFromLevel(farmingInfo.level) * 100);
@@ -312,6 +322,10 @@ async function handleFarmQuickAction(interaction, actionType) {
     await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, userId, now, true);
         const player = synced.player;
+        if ((player.current_city || 'kota_sentral') !== 'kota_timur') {
+            banner = { type: 'warning', text: 'Lahan perkebunan hanya dapat dikelola langsung di **🌾 Lembah Hijau**!' };
+            return;
+        }
         if (actionType === 'plant') {
             const res = await plantPlots(conn, player, player.last_farm_crop || 'bayam', null, now);
             banner = res.ok

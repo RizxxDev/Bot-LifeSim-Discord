@@ -7,6 +7,10 @@ const {
     getVehicle,
     isFarLocation
 } = require('../data/vehicles');
+const {
+    WEEKLY_DRIVER_CONTRACT_COST,
+    WEEKLY_DRIVER_DURATION_MS
+} = require('../data/cities');
 const { debitPlayerFunds } = require('./economyService');
 
 function isServiceOverdue(vehicleRow, vehicleObj = null) {
@@ -134,7 +138,7 @@ function calculateTripVehicleDiscount(vehicleRow, locationId, rollFn = Math.rand
     };
 }
 
-async function getPlayerVehicles(conn, discordId, forUpdate = false) {
+async function getPlayerVehicles(conn, discordId, forUpdate = false, now = Date.now()) {
     const lockSql = forUpdate ? ' FOR UPDATE' : '';
     const [rows] = await conn.execute(
         `SELECT * FROM player_vehicles WHERE discord_id = ? ORDER BY id ASC${lockSql}`,
@@ -142,12 +146,15 @@ async function getPlayerVehicles(conn, discordId, forUpdate = false) {
     );
     return rows.map(r => {
         const obj = getVehicle(r.vehicle_id);
+        const driverUntil = Number(r.driver_hired_until || 0);
         return {
             ...r,
             id: Number(r.id),
             fuel_liters: Number(r.fuel_liters || 0),
             odometer_km: Number(r.odometer_km || 0),
             last_service_km: Number(r.last_service_km || 0),
+            driver_hired_until: driverUntil,
+            hasActiveDriverContract: Boolean(obj?.supportsDriver && driverUntil > now),
             is_equipped: Number(r.is_equipped || 0),
             acquired_at: Number(r.acquired_at || 0),
             overdue: isServiceOverdue(r, obj),
@@ -156,8 +163,8 @@ async function getPlayerVehicles(conn, discordId, forUpdate = false) {
     });
 }
 
-async function getEquippedVehicle(conn, discordId, forUpdate = false) {
-    const list = await getPlayerVehicles(conn, discordId, forUpdate);
+async function getEquippedVehicle(conn, discordId, forUpdate = false, now = Date.now()) {
+    const list = await getPlayerVehicles(conn, discordId, forUpdate, now);
     return list.find(v => v.is_equipped === 1) || list[0] || null;
 }
 
@@ -342,6 +349,52 @@ async function applyTripVehicleUsage(conn, discordId, locationId, rollFn = Math.
     return calc;
 }
 
+async function hireWeeklyDriver(conn, player, vehicleId = null, now = Date.now()) {
+    const owned = await getPlayerVehicles(conn, player.discord_id, true, now);
+    if (owned.length === 0) {
+        return { error: 'NO_VEHICLE' };
+    }
+
+    const target = vehicleId
+        ? owned.find(v => v.vehicle_id === String(vehicleId).toLowerCase())
+        : (owned.find(v => v.is_equipped === 1) || owned[0]);
+
+    if (!target || !target.vehicle) {
+        return { error: 'NOT_OWNED' };
+    }
+
+    if (!target.vehicle.supportsDriver) {
+        return { error: 'NOT_A_CAR', vehicle: target.vehicle };
+    }
+
+    const cost = WEEKLY_DRIVER_CONTRACT_COST;
+    const totalFunds = Number(player.cash || 0) + Number(player.bank || 0);
+    if (totalFunds < cost) {
+        return { error: 'INSUFFICIENT_FUNDS', required: cost, totalFunds, vehicle: target.vehicle };
+    }
+
+    await debitPlayerFunds(conn, player, cost, 'hire_weekly_driver', {
+        vehicleId: target.vehicle.id,
+        durationDays: 7
+    }, now);
+
+    const baseTime = Math.max(now, Number(target.driver_hired_until || 0));
+    const newUntil = baseTime + WEEKLY_DRIVER_DURATION_MS;
+
+    await conn.execute(
+        `UPDATE player_vehicles SET driver_hired_until = ? WHERE id = ?`,
+        [newUntil, target.id]
+    );
+
+    return {
+        ok: true,
+        vehicle: target.vehicle,
+        cost,
+        driverHiredUntil: newUntil,
+        player
+    };
+}
+
 module.exports = {
     isServiceOverdue,
     calculateShiftVehicleBonus,
@@ -352,6 +405,7 @@ module.exports = {
     equipVehicle,
     refuelVehicle,
     serviceVehicle,
+    hireWeeklyDriver,
     applyShiftVehicleUsage,
     applyTripVehicleUsage
 };

@@ -1,6 +1,11 @@
 const { acquireUserLock, releaseUserLock, recordActiveUser } = require('../database/redis');
 const { getPlayerBasic, buildWelcomeCardPayload } = require('./onboardingService');
 const { getUnacknowledgedWarnings, buildWarningInterceptPayload } = require('./moderationService');
+const {
+    settlePlayerTravelIfArrived,
+    isCommandAllowedDuringTravel,
+    buildTravelStatusInterceptPanel
+} = require('./cityService');
 const { COLORS, buildV2Card } = require('../utils/uiBuilder');
 const { parseId } = require('../utils/panelId');
 const { buildExpiredPanel } = require('../utils/panelBuilder');
@@ -105,6 +110,22 @@ async function dispatch(interaction, client, now = Date.now()) {
             const warnPayload = await buildWarningInterceptPayload(interaction.user.id, unackWarnings);
             await interaction.reply(warnPayload);
             return true;
+        }
+
+        if (Number(player.traveling_until || 0) > 0) {
+            if (now >= Number(player.traveling_until)) {
+                await settlePlayerTravelIfArrived(interaction.user.id, now);
+            } else if (!isCommandAllowedDuringTravel(parsed.mod, Number(player.travel_has_driver) === 1)) {
+                await interaction.reply(
+                    buildTravelStatusInterceptPanel({
+                        player,
+                        blockedCommand: parsed.mod,
+                        ephemeral: true,
+                        now
+                    })
+                );
+                return true;
+            }
         }
     }
 

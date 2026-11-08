@@ -19,6 +19,7 @@ const { getPlayerEquippedOutfit, computeClothingBuffs } = require('../../service
 const { executeQuickMeal } = require('../../services/consumptionService');
 const { executeSellItems } = require('../../services/marketService');
 const { FISHING_LOCATIONS, getFishingLocation, getLevelInfoFromXp, rollLoot } = require('../../data/locations');
+const { getCity } = require('../../data/cities');
 const { getItem } = require('../../data/items');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, formatDuration, buildV2Card } = require('../../utils/uiBuilder');
@@ -94,16 +95,22 @@ async function fetchFishingState(discordId, now = Date.now()) {
 
 function buildFishingRows(ownerId, state, now = Date.now()) {
     const { location, activeBaitId, baitCounts, lvInfo, bestRod, hasSeaAccess, slotsUsed, player, elig, remCd, fishInBagCount } = state;
+    const playerCity = getCity(player.current_city);
+    const locCity = location.cityId ? getCity(location.cityId) : null;
+    const inSpotCity = !locCity || locCity.id === playerCity.id;
 
     const locRow = select('fishing', 'loc', ownerId, {
         placeholder: '🏞️ Pilih Lokasi Memancing...',
         options: FISHING_LOCATIONS.map(loc => {
-            const unlocked = lvInfo.level >= loc.minLevel && (bestRod ? (bestRod.item.toolTier || 1) >= loc.minRodTier : false);
+            const spotCityObj = loc.cityId ? getCity(loc.cityId) : null;
+            const spotInCity = !spotCityObj || spotCityObj.id === playerCity.id;
+            const unlocked = spotInCity && lvInfo.level >= loc.minLevel && (bestRod ? (bestRod.item.toolTier || 1) >= loc.minRodTier : false);
+            const cityTag = spotCityObj ? `[${spotCityObj.shortName}]` : '[Semua Kota]';
             return {
-                label: `${loc.name} (Lv. ${loc.minLevel}+)`,
+                label: `${loc.name} (Lv. ${loc.minLevel}+ · ${spotCityObj ? spotCityObj.shortName : 'Umum'})`.slice(0, 100),
                 value: loc.id,
                 emoji: unlocked ? loc.emoji : '🔒',
-                description: `Syarat: Fishing Lv.${loc.minLevel} & Pancingan Tier ${loc.minRodTier}${loc.requiresSeaPermit ? ' + Izin Melaut' : ''}`,
+                description: `${cityTag} Fishing Lv.${loc.minLevel} & Pancingan Tier ${loc.minRodTier}${loc.requiresSeaPermit ? ' + Izin Melaut' : ''}`.slice(0, 100),
                 default: loc.id === location.id
             };
         })
@@ -125,6 +132,7 @@ function buildFishingRows(ownerId, state, now = Date.now()) {
     }, now);
 
     const canCast =
+        inSpotCity &&
         remCd <= 0 &&
         elig.allowed &&
         slotsUsed < Number(player.max_slots) &&
@@ -134,13 +142,27 @@ function buildFishingRows(ownerId, state, now = Date.now()) {
         (!location.requiresSeaPermit || hasSeaAccess) &&
         (baitCounts[activeBaitId] || 0) > 0;
 
-    const actionRow = new ActionRowBuilder().addComponents(
+    const actionButtons = [
         btn('fishing', 'cast', ownerId, {
-            label: remCd > 0 ? 'Menunggu Air Tenang' : 'Lempar Kail',
+            label: !inSpotCity && locCity ? `Wajib di ${locCity.shortName}` : (remCd > 0 ? 'Menunggu Air Tenang' : 'Lempar Kail'),
             emoji: '🎣',
             style: ButtonStyle.Success,
             disabled: !canCast
-        }, now),
+        }, now)
+    ];
+
+    if (!inSpotCity && locCity) {
+        actionButtons.push(
+            btn('travel', 'pick_dest_btn', ownerId, {
+                label: `Ke ${locCity.shortName}`,
+                emoji: '🚗',
+                style: ButtonStyle.Primary,
+                arg: locCity.id
+            }, now)
+        );
+    }
+
+    actionButtons.push(
         btn('fishing', 'quick_meal', ownerId, {
             label: 'Makan Cepat',
             emoji: '🍴',
@@ -158,6 +180,8 @@ function buildFishingRows(ownerId, state, now = Date.now()) {
             style: ButtonStyle.Secondary
         }, now)
     );
+
+    const actionRow = new ActionRowBuilder().addComponents(actionButtons.slice(0, 5));
 
     return [locRow, baitRow, actionRow];
 }
@@ -221,7 +245,14 @@ function buildFishingPrepPanel(state, banner = null, now = Date.now()) {
     const baitQty = baitCounts[baitItem.id] || 0;
     const baitText = `${baitItem.emoji} **${baitItem.name}** *(Tersedia: \`×${baitQty}\`)*`;
 
+    const playerCity = getCity(p.current_city);
+    const locCity = location.cityId ? getCity(location.cityId) : null;
+    const inSpotCity = !locCity || locCity.id === playerCity.id;
+
     const statusNotices = [];
+    if (!inSpotCity && locCity) {
+        statusNotices.push(`🏙️ **Lokasi Berbeda:** Spot **${location.emoji} ${location.name}** berada di **${locCity.emoji} ${locCity.name}** *(Lokasimu sekarang: ${playerCity.emoji} ${playerCity.shortName})*. Pilih **🏞️ Sungai Kota** di dropdown atau gunakan \`/travel\`!`);
+    }
     if (remCd > 0) {
         statusNotices.push(`⏳ **Cooldown:** Siap melempar kail lagi **<t:${Math.floor((now + remCd) / 1000)}:R>** (${formatDuration(remCd)}).`);
     }
@@ -297,6 +328,11 @@ async function runFishingCast(interaction, now = Date.now()) {
         const locId = p.last_fishing_loc || 'sungai';
         const location = getFishingLocation(locId);
         const lvInfo = getLevelInfoFromXp(p.fishing_xp);
+
+        if (location.cityId && (p.current_city || 'kota_sentral') !== location.cityId) {
+            const reqCity = getCity(location.cityId);
+            return { error: `Spot ${location.name} hanya terdapat di ${reqCity.name}! Pilih Sungai Kota atau gunakan /travel.` };
+        }
 
         if (lvInfo.level < location.minLevel) {
             return { error: `Lokasi ${location.name} membutuhkan Fishing Lv. ${location.minLevel}.` };

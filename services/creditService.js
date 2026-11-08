@@ -235,19 +235,21 @@ async function applyCredit(conn, player, assetId, tenorWeeks, now = Date.now()) 
         );
     } else if (plan.asset.category === 'property') {
         const nextPbbAt = now + 30 * 86400000;
+        const propCityId = player.current_city || 'kota_sentral';
         await conn.execute(
             `INSERT INTO player_properties
-             (discord_id, property_tier, ownership_type, acquired_at, next_billing_at, grace_until, is_evicted, updated_at)
-             VALUES (?, ?, 'owned', ?, ?, 0, 0, ?)
+             (discord_id, property_tier, city_id, ownership_type, acquired_at, next_billing_at, grace_until, is_evicted, updated_at)
+             VALUES (?, ?, ?, 'owned', ?, ?, 0, 0, ?)
              ON DUPLICATE KEY UPDATE
                 property_tier = VALUES(property_tier),
+                city_id = VALUES(city_id),
                 ownership_type = 'owned',
                 acquired_at = VALUES(acquired_at),
                 next_billing_at = VALUES(next_billing_at),
                 grace_until = 0,
                 is_evicted = 0,
                 updated_at = VALUES(updated_at)`,
-            [player.discord_id, plan.asset.id, now, nextPbbAt, now]
+            [player.discord_id, plan.asset.id, propCityId, now, nextPbbAt, now]
         );
     }
 

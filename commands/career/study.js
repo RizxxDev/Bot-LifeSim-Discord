@@ -4,6 +4,7 @@ const { getCooldownRemaining, setCooldown } = require('../../database/redis');
 const { syncPlayerVitals, checkActivityEligibility, deductActivityVitals } = require('../../services/vitalService');
 const { debitPlayerFunds } = require('../../services/economyService');
 const { executeQuickMeal } = require('../../services/consumptionService');
+const { buildCityGatePanel } = require('../../services/cityService');
 const { EDUCATION_LEVELS, getEducation, getAvailableNextEducations } = require('../../data/education');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, renderBar, formatDuration } = require('../../utils/uiBuilder');
@@ -32,6 +33,15 @@ async function fetchStudyState(discordId, now = Date.now()) {
 
 function buildStudyPanel(state, banner = null, now = Date.now()) {
     const { player: p, currentEdu, availableNext, activeTarget, elig, remCd } = state;
+    if ((p.current_city || 'kota_sentral') !== 'kota_sentral') {
+        return buildCityGatePanel({
+            player: p,
+            requiredCityId: 'kota_sentral',
+            facilityTitle: '🎓 Kampus & Akademi Universitas (/study)',
+            reasonText: 'Kampus Perguruan Tinggi & Akademi Pendidikan (SMP s/d S2) hanya berpusat di **🏛️ Metropolis Sentral**! Gunakan `/travel` untuk menuju ke sana.',
+            now
+        });
+    }
     const ownerId = p.discord_id;
     const cost = ACTIVITY_COSTS.study;
 
@@ -146,6 +156,10 @@ async function executeStudySession(discordId, requestedTargetId, now = Date.now(
     return await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, true);
         const p = synced.player;
+
+        if ((p.current_city || 'kota_sentral') !== 'kota_sentral') {
+            return { error: 'WRONG_CITY' };
+        }
 
         const currentEdu = getEducation(p.education_level);
         const availableNext = getAvailableNextEducations(currentEdu.id);

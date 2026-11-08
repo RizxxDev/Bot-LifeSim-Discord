@@ -62,6 +62,7 @@ async function getPlayerPropertyStatus(conn, discordId, playerMaxSlots = 20, now
 
     return {
         row,
+        propertyCityId: row ? (row.city_id || 'kota_sentral') : 'kota_sentral',
         actualTier,
         effectiveTier,
         isEvicted,
@@ -138,18 +139,20 @@ async function rentProperty(conn, player, tierId, now = Date.now()) {
         nextBillingAt = Number(currentRow.next_billing_at) + ONE_WEEK_MS;
     }
 
+    const propCityId = player.current_city || 'kota_sentral';
     await conn.execute(
         `INSERT INTO player_properties
-         (discord_id, property_tier, ownership_type, acquired_at, next_billing_at, grace_until, is_evicted, updated_at)
-         VALUES (?, ?, 'rent', ?, ?, 0, 0, ?)
+         (discord_id, property_tier, city_id, ownership_type, acquired_at, next_billing_at, grace_until, is_evicted, updated_at)
+         VALUES (?, ?, ?, 'rent', ?, ?, 0, 0, ?)
          ON DUPLICATE KEY UPDATE
             property_tier = VALUES(property_tier),
+            city_id = VALUES(city_id),
             ownership_type = 'rent',
             next_billing_at = VALUES(next_billing_at),
             grace_until = 0,
             is_evicted = 0,
             updated_at = VALUES(updated_at)`,
-        [player.discord_id, targetTier.id, now, nextBillingAt, now]
+        [player.discord_id, targetTier.id, propCityId, now, nextBillingAt, now]
     );
 
     return {
@@ -198,19 +201,21 @@ async function buyProperty(conn, player, tierId, now = Date.now()) {
         tier: targetTier.id
     }, now);
 
+    const propCityId = player.current_city || 'kota_sentral';
     const nextBillingAt = now + ONE_MONTH_MS;
     await conn.execute(
         `INSERT INTO player_properties
-         (discord_id, property_tier, ownership_type, acquired_at, next_billing_at, grace_until, is_evicted, updated_at)
-         VALUES (?, ?, 'owned', ?, ?, 0, 0, ?)
+         (discord_id, property_tier, city_id, ownership_type, acquired_at, next_billing_at, grace_until, is_evicted, updated_at)
+         VALUES (?, ?, ?, 'owned', ?, ?, 0, 0, ?)
          ON DUPLICATE KEY UPDATE
             property_tier = VALUES(property_tier),
+            city_id = VALUES(city_id),
             ownership_type = 'owned',
             next_billing_at = VALUES(next_billing_at),
             grace_until = 0,
             is_evicted = 0,
             updated_at = VALUES(updated_at)`,
-        [player.discord_id, targetTier.id, now, nextBillingAt, now]
+        [player.discord_id, targetTier.id, propCityId, now, nextBillingAt, now]
     );
 
     return {

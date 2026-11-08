@@ -15,7 +15,8 @@ const { getActiveSeasonalEvent, awardEventActivityProgress } = require('../../se
 const { rollActivityBonusTicket } = require('../../services/gachaService');
 const { getPlayerEquippedOutfit, computeClothingBuffs, getJobClothingBonus } = require('../../services/avatarService');
 const { executeQuickMeal } = require('../../services/consumptionService');
-const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
+const { getJob, getRankForShifts, getNextRank, isJobAllowedInCity } = require('../../data/jobs');
+const { getCity } = require('../../data/cities');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, formatDuration, buildV2Card } = require('../../utils/uiBuilder');
 const { buildPanel, btn } = require('../../utils/panelBuilder');
@@ -69,6 +70,10 @@ function buildWorkPrepPanel(state, banner = null, now = Date.now()) {
     const ownerId = p.discord_id;
     const blocks = [];
 
+    const inValidCity = job ? isJobAllowedInCity(job, p.current_city || 'kota_sentral') : true;
+    const reqJobCity = job?.cityId ? getCity(job.cityId) : null;
+    const curCity = getCity(p.current_city);
+
     if (!job) {
         blocks.push(
             `💼 **Status Karir:** Kamu saat ini **belum memiliki pekerjaan**.\nKetik \`/job\` untuk melihat lowongan kerja dan melamar profesi pertamamu!`
@@ -78,10 +83,12 @@ function buildWorkPrepPanel(state, banner = null, now = Date.now()) {
         const nextRank = getNextRank(shiftsCompleted);
         const basePay = Math.round(job.baseSalary * rank.multiplier);
         const thrInfo = activeEvent?.lebaranThr?.active ? ` · 🌙 **THR ×${activeEvent.lebaranThr.multiplier}**` : '';
+        const cityInfo = reqJobCity ? `${reqJobCity.emoji} **${reqJobCity.name}**` : '🌐 **Semua Kota**';
 
         blocks.push(
             [
                 `🏢 **Profesi Aktif:** ${job.emoji} **${job.name}** — Jabatan **${rank.name}** (×${rank.multiplier})`,
+                `📍 **Lokasi Kerja:** ${cityInfo}`,
                 `💵 **Estimasi Gaji Pokok:** **${formatLp(basePay)} / shift**${thrInfo}`,
                 `📈 **Pengalaman:** **${shiftsCompleted} shift**${nextRank ? ` *(Menuju ${nextRank.name}: ${shiftsCompleted}/${nextRank.minShifts})*` : ' *(Jabatan Puncak)*'}`,
                 `⚡ **Biaya Vital Shift:** **-${cost.energy} Energy · -${cost.hunger} Hunger · -${cost.thirst} Thirst**`
@@ -97,7 +104,9 @@ function buildWorkPrepPanel(state, banner = null, now = Date.now()) {
             blocks.push(`👔 **Bonus Busana Kerja:** **+${Math.round(Number(state.clothingBonus) * 100)}% Gaji** aktif dari pakaianmu`);
         }
 
-        if (remCd > 0) {
+        if (!inValidCity && reqJobCity) {
+            blocks.push(`🏙️ **Lokasi Berbeda:** Kantor/lokasi kerja **${job.emoji} ${job.name}** berada di **${reqJobCity.emoji} ${reqJobCity.name}**, sedangkan kamu saat ini di **${curCity.emoji} ${curCity.shortName}**. Gunakan \`/travel\` untuk menuju ke sana!`);
+        } else if (remCd > 0) {
             const readyUnix = Math.floor((now + remCd) / 1000);
             blocks.push(`⏳ **Status Shift:** Istirahat kerja — siap kembali **<t:${readyUnix}:R>** (${formatDuration(remCd)}).`);
         } else if (!elig.allowed) {
@@ -107,15 +116,29 @@ function buildWorkPrepPanel(state, banner = null, now = Date.now()) {
         }
     }
 
-    const canStart = Boolean(job && remCd <= 0 && elig.allowed);
+    const canStart = Boolean(job && inValidCity && remCd <= 0 && elig.allowed);
 
-    const row = new ActionRowBuilder().addComponents(
+    const rowButtons = [
         btn('work', 'start', ownerId, {
-            label: remCd > 0 ? 'Sedang Istirahat' : 'Mulai Shift Kerja',
+            label: !inValidCity && reqJobCity ? `Wajib di ${reqJobCity.shortName}` : (remCd > 0 ? 'Sedang Istirahat' : 'Mulai Shift Kerja'),
             emoji: '▶️',
             style: ButtonStyle.Success,
             disabled: !canStart
-        }, now),
+        }, now)
+    ];
+
+    if (!inValidCity && reqJobCity) {
+        rowButtons.push(
+            btn('travel', 'pick_dest_btn', ownerId, {
+                label: `Rute ke ${reqJobCity.shortName}`,
+                emoji: '🚗',
+                style: ButtonStyle.Primary,
+                arg: reqJobCity.id
+            }, now)
+        );
+    }
+
+    rowButtons.push(
         btn('work', 'quick_meal', ownerId, {
             label: 'Makan Cepat',
             emoji: '🍴',
@@ -127,6 +150,8 @@ function buildWorkPrepPanel(state, banner = null, now = Date.now()) {
             style: ButtonStyle.Secondary
         }, now)
     );
+
+    const row = new ActionRowBuilder().addComponents(rowButtons.slice(0, 5));
 
     return buildPanel({
         mod: 'work',
@@ -161,6 +186,9 @@ async function runWorkShift(interaction, now = Date.now()) {
         if (!p.current_job) return { error: 'NO_JOB' };
         const job = getJob(p.current_job);
         if (!job) return { error: 'NO_JOB' };
+        if (!isJobAllowedInCity(job, p.current_city || 'kota_sentral')) {
+            return { error: 'WRONG_CITY', requiredCity: getCity(job.cityId) };
+        }
 
         const cost = {
             energy: job.energyCost || ACTIVITY_COSTS.work_normal.energy,
@@ -188,7 +216,9 @@ async function runWorkShift(interaction, now = Date.now()) {
         const state = await fetchWorkPrepState(discordId, now);
         const msg = preCheck.error === 'NO_JOB'
             ? 'Kamu belum memiliki pekerjaan! Gunakan `/job` untuk melamar.'
-            : preCheck.elig.message;
+            : preCheck.error === 'WRONG_CITY'
+                ? `Profesi ini hanya dapat dikerjakan di **${preCheck.requiredCity.emoji} ${preCheck.requiredCity.name}**! Gunakan \`/travel\`.`
+                : preCheck.elig.message;
         const payload = buildWorkPrepPanel(state, { type: 'danger', text: msg }, now);
         return interaction.isMessageComponent() ? await interaction.update(payload) : await interaction.reply(payload);
     }

@@ -11,6 +11,7 @@ const {
     payCreditInstallment,
     payoffCreditEarly
 } = require('../../services/creditService');
+const { buildCityGatePanel } = require('../../services/cityService');
 const {
     COLORS,
     formatLp,
@@ -59,6 +60,15 @@ async function fetchCreditState(discordId, now = Date.now()) {
 
 function buildCreditPanel({ state, banner = null, now = Date.now() }) {
     const { player: p, activeCredits, income7d } = state;
+    if ((p.current_city || 'kota_sentral') !== 'kota_sentral') {
+        return buildCityGatePanel({
+            player: p,
+            requiredCityId: 'kota_sentral',
+            facilityTitle: '💳 Kantor Pusat Pembiayaan & Kredit (/credit)',
+            reasonText: 'Kantor Pusat Pembiayaan & Leasing hanya berdiri di **🏛️ Metropolis Sentral**! Gunakan `/travel` untuk mengajukan kredit baru atau melunasi kontrak di kantor pusat *(penarikan cicilan mingguan tetap berjalan otomatis)*.',
+            now
+        });
+    }
     const ownerId = p.discord_id;
 
     const maxInstallment = Math.floor(income7d * CREDIT_RULES.MAX_DTI_RATIO);

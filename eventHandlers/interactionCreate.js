@@ -11,6 +11,11 @@ const {
     acknowledgePlayerWarnings,
     buildWarningInterceptPayload
 } = require('../services/moderationService');
+const {
+    settlePlayerTravelIfArrived,
+    isCommandAllowedDuringTravel,
+    buildTravelStatusInterceptPanel
+} = require('../services/cityService');
 const { buildHelpCategoryPayload } = require('../commands/onboarding/help');
 const { fetchJobState, buildJobPanel } = require('../commands/career/job');
 const { COLORS, buildV2Card } = require('../utils/uiBuilder');
@@ -61,6 +66,22 @@ module.exports = {
                     if (unackWarnings.length > 0) {
                         const warnPayload = await buildWarningInterceptPayload(userId, unackWarnings);
                         return await interaction.reply(warnPayload);
+                    }
+
+                    const nowCheck = Date.now();
+                    if (Number(player.traveling_until || 0) > 0) {
+                        if (nowCheck >= Number(player.traveling_until)) {
+                            await settlePlayerTravelIfArrived(userId, nowCheck);
+                        } else if (!isCommandAllowedDuringTravel(interaction.commandName, Number(player.travel_has_driver) === 1)) {
+                            return await interaction.reply(
+                                buildTravelStatusInterceptPanel({
+                                    player,
+                                    blockedCommand: interaction.commandName,
+                                    ephemeral: true,
+                                    now: nowCheck
+                                })
+                            );
+                        }
                     }
                 }
 

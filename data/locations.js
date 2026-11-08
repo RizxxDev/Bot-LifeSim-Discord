@@ -31,6 +31,7 @@ const FISHING_LOCATIONS = [
         id: 'sungai',
         name: 'Sungai Kota',
         emoji: '🏞️',
+        cityId: null,
         minLevel: 1,
         minRodTier: 1,
         requiresSeaPermit: false,
@@ -48,6 +49,7 @@ const FISHING_LOCATIONS = [
         id: 'danau',
         name: 'Danau Hijau',
         emoji: '🛶',
+        cityId: 'kota_timur',
         minLevel: 10,
         minRodTier: 2, // Fiberglass
         requiresSeaPermit: false,
@@ -65,6 +67,7 @@ const FISHING_LOCATIONS = [
         id: 'laut',
         name: 'Laut Lepas',
         emoji: '🌊',
+        cityId: 'kota_barat',
         minLevel: 25,
         minRodTier: 3, // Carbon
         requiresSeaPermit: true,
@@ -85,6 +88,7 @@ const MINING_LOCATIONS = [
         id: 'tambang_batu',
         name: 'Tambang Batu Permukaan',
         emoji: '🪨',
+        cityId: 'kota_barat',
         minLevel: 1,
         minPickaxeTier: 1,
         requiresHelmet: false,
@@ -102,6 +106,7 @@ const MINING_LOCATIONS = [
         id: 'tambang_tembaga',
         name: 'Tambang Tembaga & Perak',
         emoji: '🟠',
+        cityId: 'kota_barat',
         minLevel: 10,
         minPickaxeTier: 2, // Besi
         requiresHelmet: false,
@@ -119,6 +124,7 @@ const MINING_LOCATIONS = [
         id: 'tambang_emas',
         name: 'Tambang Emas Dalam',
         emoji: '🪙',
+        cityId: 'kota_barat',
         minLevel: 25,
         minPickaxeTier: 3, // Baja
         requiresHelmet: true,
@@ -136,6 +142,7 @@ const MINING_LOCATIONS = [
         id: 'tambang_berlian',
         name: 'Gua Inti Berlian',
         emoji: '💎',
+        cityId: 'kota_barat',
         minLevel: 40,
         minPickaxeTier: 4, // Titanium
         requiresHelmet: true,

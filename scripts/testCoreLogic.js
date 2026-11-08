@@ -40,9 +40,9 @@ function collectCommandFiles(dir, list = []) {
 async function runTests() {
     console.log('🧪 Menjalankan pengujian unit logika inti (testCoreLogic.js)...\n');
 
-    // 1. Verifikasi seluruh 31 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
+    // 1. Verifikasi seluruh 32 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
     const cmdFiles = collectCommandFiles(path.join(__dirname, '..', 'commands'));
-    assert.strictEqual(cmdFiles.length, 31, `Harusnya tepat 31 command pasca penambahan /wardrobe, ditemukan: ${cmdFiles.length}`);
+    assert.strictEqual(cmdFiles.length, 32, `Harusnya tepat 32 command pasca penambahan /travel, ditemukan: ${cmdFiles.length}`);
     for (const file of cmdFiles) {
         const rawSrc = fs.readFileSync(file, 'utf8');
         assert(!rawSrc.includes('fetchReply: true'), `Command ${file} masih mengandung opsi deprecated fetchReply: true`);
@@ -60,7 +60,7 @@ async function runTests() {
     }
     const workCmd = require('../commands/career/work');
     assert(workCmd.lockTtl >= 45, 'Command /work harus punya lockTtl >= 45 detik');
-    console.log(`✅ [1/22] 31 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
+    console.log(`✅ [1/23] 32 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
 
     // 2. Validasi Username & Blacklist
     assert.strictEqual(validateUsername('Budi_99').valid, true);
@@ -590,7 +590,7 @@ async function runTests() {
     }, null, nowTs);
 
     const miningGatePanel = buildMiningPrepPanel({
-        player: samplePlayer,
+        player: { ...samplePlayer, current_city: 'kota_barat' },
         invRows: [],
         bestPickaxe: null,
         oreInBagCount: 0
@@ -598,7 +598,7 @@ async function runTests() {
 
     const farmPanelView = buildFarmPanel({
         state: {
-            player: samplePlayer,
+            player: { ...samplePlayer, current_city: 'kota_timur' },
             buffs: [],
             plots: [],
             invRows: [],
@@ -1220,9 +1220,299 @@ async function runTests() {
         const rawJson = JSON.stringify(pObj.components.map(c => c.toJSON()));
         assert(!rawJson.includes('undefined'), `Panel /${pName} tidak boleh mengandung string "undefined"`);
     }
-    console.log('✅ [22/22] Fitur Avatar Chibi 7-Slot, Compositing PNG, Buff Busana, Butik /shop, /wardrobe & Thumbnail /profile terverifikasi.\n');
+    console.log('✅ [22/23] Fitur Avatar Chibi 7-Slot, Compositing PNG, Buff Busana, Butik /shop, /wardrobe & Thumbnail /profile terverifikasi.');
 
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (22/22 PASSED)!');
+    // ====================================================
+    // 23. TEST SISTEM MULTI-KOTA, /TRAVEL, SUPIR & LOCKDOWN PERJALANAN
+    // ====================================================
+    const {
+        getAllCities,
+        calculateCityRoute,
+        calculateTravelVitalCost,
+        isCommandAllowedDuringTravel,
+        MOTEL_TRANSIT_CONFIG
+    } = require('../data/cities');
+    const { calculateIntercityFuelNeeded } = require('../data/vehicles');
+    const { isJobAllowedInCity, JOBS } = require('../data/jobs');
+    const {
+        validateTravelAttempt,
+        buildTravelStatusInterceptPanel,
+        buildCityGatePanel
+    } = require('../services/cityService');
+    const { buildTravelPanel } = require('../commands/life/travel');
+    const { buildSleepPanel } = require('../commands/life/sleep');
+
+    // A. Verifikasi 3 kota linear & aditivitas jarak/waktu/stat Barat <-> Sentral <-> Timur
+    assert.strictEqual(getAllCities().length, 3, 'Harus ada tepat 3 kota di katalog');
+    assert.strictEqual(Object.keys(JOBS).length, 22, 'Katalog pekerjaan harus memiliki 22 profesi (18 dasar + 4 regional)');
+
+    const routeBaratSentral = calculateCityRoute('kota_barat', 'kota_sentral');
+    const routeSentralTimur = calculateCityRoute('kota_sentral', 'kota_timur');
+    const routeBaratTimur = calculateCityRoute('kota_barat', 'kota_timur');
+    const routeTimurBarat = calculateCityRoute('kota_timur', 'kota_barat');
+
+    assert.strictEqual(routeBaratSentral.distanceKm, 30);
+    assert.strictEqual(routeBaratSentral.durationSec, 60);
+    assert.strictEqual(routeBaratSentral.driverFareLp, 15000);
+    assert.strictEqual(routeBaratSentral.passesCentral, false);
+
+    assert.strictEqual(routeSentralTimur.distanceKm, 45);
+    assert.strictEqual(routeSentralTimur.durationSec, 90);
+    assert.strictEqual(routeSentralTimur.driverFareLp, 22500);
+    assert.strictEqual(routeSentralTimur.passesCentral, false);
+
+    assert.strictEqual(routeBaratTimur.distanceKm, routeBaratSentral.distanceKm + routeSentralTimur.distanceKm, 'Jarak Barat->Timur wajib aditif (30+45 = 75 km)');
+    assert.strictEqual(routeBaratTimur.durationSec, 150);
+    assert.strictEqual(routeBaratTimur.driverFareLp, 35000);
+    assert.strictEqual(routeBaratTimur.passesCentral, true);
+    assert.strictEqual(routeTimurBarat.distanceKm, 75);
+    assert.strictEqual(routeTimurBarat.passesCentral, true);
+
+    assert.strictEqual(
+        routeBaratTimur.selfDriveVitalCost.energy,
+        routeBaratSentral.selfDriveVitalCost.energy + routeSentralTimur.selfDriveVitalCost.energy,
+        'Pengurangan Energy 75 km wajib aditif (12 + 18 = 30)'
+    );
+    assert.strictEqual(
+        routeBaratTimur.selfDriveVitalCost.hunger,
+        routeBaratSentral.selfDriveVitalCost.hunger + routeSentralTimur.selfDriveVitalCost.hunger,
+        'Pengurangan Hunger 75 km wajib aditif (8 + 12 = 20)'
+    );
+    assert.strictEqual(
+        routeBaratTimur.selfDriveVitalCost.thirst,
+        routeBaratSentral.selfDriveVitalCost.thirst + routeSentralTimur.selfDriveVitalCost.thirst,
+        'Pengurangan Thirst 75 km wajib aditif (10 + 15 = 25)'
+    );
+    assert.deepStrictEqual(calculateTravelVitalCost(75, true), { energy: 0, hunger: 0, thirst: 0 }, 'Pakai supir wajib 0 pengurangan stat vital');
+
+    // B. Verifikasi kebutuhan BBM antar-kota
+    assert.strictEqual(calculateIntercityFuelNeeded('sepeda', 30), 0);
+    assert.strictEqual(calculateIntercityFuelNeeded('motor_bekas', 30), 0.60);
+    assert.strictEqual(calculateIntercityFuelNeeded('motor_bekas', 75), 1.50);
+    assert.strictEqual(calculateIntercityFuelNeeded('mobil', 30), 2.00);
+    assert.strictEqual(calculateIntercityFuelNeeded('mobil', 75), 5.00);
+    assert.strictEqual(calculateIntercityFuelNeeded('mobil_sport', 75), 6.00);
+
+    // C. Verifikasi validator keberangkatan (/travel): Sepeda, SIM, BBM, Energy, & Supir Mobil
+    const travelPlayerBase = {
+        ...samplePlayer,
+        current_city: 'kota_sentral',
+        traveling_until: 0,
+        hospital_until: 0,
+        sleeping_until: 0,
+        energy: 80,
+        hunger: 80,
+        thirst: 80,
+        cash: 200000,
+        bank: 0
+    };
+
+    const rejBicycle = validateTravelAttempt({
+        player: travelPlayerBase,
+        equippedVehicleRow: { vehicle_id: 'sepeda', fuel_liters: 0 },
+        invRows: [],
+        toCityId: 'kota_barat',
+        now: nowTs
+    });
+    assert.strictEqual(rejBicycle.ok, false);
+    assert.strictEqual(rejBicycle.error, 'BICYCLE_NOT_ALLOWED');
+
+    const rejNoSimC = validateTravelAttempt({
+        player: travelPlayerBase,
+        equippedVehicleRow: { vehicle_id: 'motor_bekas', fuel_liters: 4.0 },
+        invRows: [],
+        toCityId: 'kota_barat',
+        now: nowTs
+    });
+    assert.strictEqual(rejNoSimC.ok, false);
+    assert.strictEqual(rejNoSimC.error, 'MISSING_LICENSE');
+
+    const rejLowFuel = validateTravelAttempt({
+        player: travelPlayerBase,
+        equippedVehicleRow: { vehicle_id: 'motor_bekas', fuel_liters: 0.2 },
+        invRows: [{ item_id: 'sim_c', quantity: 1 }],
+        toCityId: 'kota_barat',
+        now: nowTs
+    });
+    assert.strictEqual(rejLowFuel.ok, false);
+    assert.strictEqual(rejLowFuel.error, 'INSUFFICIENT_FUEL');
+
+    const rejLowEnergy = validateTravelAttempt({
+        player: { ...travelPlayerBase, energy: 10 },
+        equippedVehicleRow: { vehicle_id: 'motor_bekas', fuel_liters: 4.0 },
+        invRows: [{ item_id: 'sim_c', quantity: 1 }],
+        toCityId: 'kota_barat',
+        now: nowTs
+    });
+    assert.strictEqual(rejLowEnergy.ok, false);
+    assert.strictEqual(rejLowEnergy.error, 'INSUFFICIENT_ENERGY');
+
+    // Mobil + Sewa Supir sekali jalan: tidak wajib punya SIM A, stat vital utuh (0), bayar ongkos Rp 15.000
+    const okCarTripDriver = validateTravelAttempt({
+        player: { ...travelPlayerBase, energy: 5 }, // walau energy rendah tetap boleh disopiri!
+        equippedVehicleRow: { vehicle_id: 'mobil', fuel_liters: 10.0, driver_hired_until: 0 },
+        invRows: [], // tanpa sim_a
+        toCityId: 'kota_barat',
+        hireDriverTrip: true,
+        now: nowTs
+    });
+    assert.strictEqual(okCarTripDriver.ok, true);
+    assert.strictEqual(okCarTripDriver.effectiveHasDriver, true);
+    assert.strictEqual(okCarTripDriver.driverFeeToPay, 15000);
+    assert.deepStrictEqual(okCarTripDriver.vitalCost, { energy: 0, hunger: 0, thirst: 0 });
+
+    // Mobil + Kontrak Supir Mingguan aktif: ongkos supir gratis (0)
+    const okCarWeeklyDriver = validateTravelAttempt({
+        player: travelPlayerBase,
+        equippedVehicleRow: { vehicle_id: 'mobil_sport', fuel_liters: 20.0, driver_hired_until: nowTs + 86400000 },
+        invRows: [],
+        toCityId: 'kota_timur',
+        hireDriverTrip: true,
+        now: nowTs
+    });
+    assert.strictEqual(okCarWeeklyDriver.ok, true);
+    assert.strictEqual(okCarWeeklyDriver.hasWeeklyContract, true);
+    assert.strictEqual(okCarWeeklyDriver.driverFeeToPay, 0);
+
+    // D. Verifikasi Lazy Settlement Kedatangan & Motel Transit (+60 Energy) di computeLazyVitals
+    const arrivedEval = computeLazyVitals({
+        ...travelPlayerBase,
+        current_city: 'kota_barat',
+        travel_origin: 'kota_barat',
+        travel_destination: 'kota_timur',
+        traveling_until: nowTs - 1000,
+        travel_has_driver: 1,
+        last_tick_at: nowTs
+    }, nowTs, []);
+    assert.strictEqual(arrivedEval.current_city, 'kota_timur', 'Lazy settlement wajib memindahkan current_city ke travel_destination saat tiba');
+    assert.strictEqual(arrivedEval.traveling_until, 0);
+    assert.strictEqual(arrivedEval.arrivedCity, 'kota_timur');
+
+    const motelWakeEval = computeLazyVitals({
+        ...travelPlayerBase,
+        current_city: 'kota_barat',
+        energy: 25,
+        sleeping_until: nowTs - 500,
+        last_tick_at: nowTs
+    }, nowTs, [{ buff_type: 'motel_sleep', multiplier: MOTEL_TRANSIT_CONFIG.energyBonus, expires_at: nowTs + 60000 }]);
+    assert.strictEqual(motelWakeEval.wokeUp, true);
+    assert.strictEqual(motelWakeEval.energy, 85, 'Bangun dari Motel Transit (+60 ⚡) dari 25 harus menjadi 85');
+
+    // E. Verifikasi Lockdown Perjalanan & Pembatasan Kota Pekerjaan
+    assert.strictEqual(isCommandAllowedDuringTravel('travel', false), true);
+    assert.strictEqual(isCommandAllowedDuringTravel('work', false), false);
+    assert.strictEqual(isCommandAllowedDuringTravel('consume', false), false, 'Menyetir sendiri tidak boleh /consume');
+    assert.strictEqual(isCommandAllowedDuringTravel('consume', true), true, 'Penumpang dengan supir boleh /consume');
+    assert.strictEqual(isCommandAllowedDuringTravel('profile', true), true);
+    assert.strictEqual(isCommandAllowedDuringTravel('wardrobe', true), true);
+    assert.strictEqual(isCommandAllowedDuringTravel('inventory', true), true);
+    assert.strictEqual(isCommandAllowedDuringTravel('hp', true), true, 'Hook masa depan hp harus diizinkan saat pakai supir');
+    assert.strictEqual(isCommandAllowedDuringTravel('laptop', true), true, 'Hook masa depan laptop harus diizinkan saat pakai supir');
+    assert.strictEqual(isCommandAllowedDuringTravel('work', true), false, 'Penumpang dengan supir tetap tidak boleh /work');
+    assert.strictEqual(isCommandAllowedDuringTravel('mining', true), false);
+
+    assert.strictEqual(isJobAllowedInCity('buruh_tambang', 'kota_barat'), true);
+    assert.strictEqual(isJobAllowedInCity('buruh_tambang', 'kota_sentral'), false);
+    assert.strictEqual(isJobAllowedInCity('petani_sayur', 'kota_timur'), true);
+    assert.strictEqual(isJobAllowedInCity('programmer', 'kota_sentral'), true);
+    assert.strictEqual(isJobAllowedInCity('programmer', 'kota_timur'), false);
+    assert.strictEqual(isJobAllowedInCity('ojek_online', 'kota_barat'), true);
+    assert.strictEqual(isJobAllowedInCity('ojek_online', 'kota_timur'), true);
+
+    // F. Verifikasi Panel V2 (/travel stasioner, /travel transit aktif, Intercept, City Gate, & /sleep Motel Transit)
+    const travelStationaryPanel = buildTravelPanel({
+        state: {
+            player: travelPlayerBase,
+            arrivedCity: null,
+            equipped: {
+                vehicle_id: 'mobil',
+                vehicle: getVehicle('mobil'),
+                fuel_liters: 30,
+                odometer_km: 120,
+                driver_hired_until: 0,
+                hasActiveDriverContract: false
+            },
+            invRows: [{ item_id: 'sim_a', quantity: 1 }]
+        },
+        selectedDestId: 'kota_timur',
+        hireDriverTrip: true,
+        now: nowTs
+    });
+
+    const travelInTransitPanel = buildTravelPanel({
+        state: {
+            player: {
+                ...travelPlayerBase,
+                current_city: 'kota_barat',
+                travel_origin: 'kota_barat',
+                travel_destination: 'kota_timur',
+                traveling_until: nowTs + 90_000,
+                travel_has_driver: 1
+            },
+            arrivedCity: null,
+            equipped: {
+                vehicle_id: 'mobil_sport',
+                vehicle: getVehicle('mobil_sport'),
+                fuel_liters: 40,
+                odometer_km: 500,
+                driver_hired_until: nowTs + 86400000,
+                hasActiveDriverContract: true
+            },
+            invRows: []
+        },
+        now: nowTs
+    });
+
+    const travelInterceptPanel = buildTravelStatusInterceptPanel({
+        player: {
+            ...travelPlayerBase,
+            travel_origin: 'kota_sentral',
+            travel_destination: 'kota_barat',
+            traveling_until: nowTs + 45_000,
+            travel_has_driver: 0
+        },
+        blockedCommand: 'work',
+        now: nowTs
+    });
+
+    const cityGateSamplePanel = buildCityGatePanel({
+        player: travelPlayerBase,
+        requiredCityId: 'kota_barat',
+        facilityTitle: 'Pertambangan & Galian (/mining)',
+        now: nowTs
+    });
+
+    const sleepAwayMotelPanel = buildSleepPanel({
+        state: {
+            player: { ...travelPlayerBase, current_city: 'kota_barat', energy: 40 },
+            propStatus: {
+                row: { ownership_type: 'rent', city_id: 'kota_sentral' },
+                isEvicted: false,
+                propertyCityId: 'kota_sentral',
+                effectiveTier: getPropertyTier('apartemen')
+            }
+        },
+        now: nowTs
+    });
+
+    for (const [pName, pObj] of [
+        ['travel (stationary)', travelStationaryPanel],
+        ['travel (in-transit)', travelInTransitPanel],
+        ['travel (lockdown intercept)', travelInterceptPanel],
+        ['city gate (/mining)', cityGateSamplePanel],
+        ['sleep (motel transit)', sleepAwayMotelPanel]
+    ]) {
+        assert((pObj.flags & 32768) === 32768, `Panel ${pName} wajib menggunakan MessageFlags.IsComponentsV2`);
+        const cCount = countV2Components(pObj);
+        const tLen = countV2DisplayableText(pObj);
+        assert(cCount <= 40, `Panel ${pName} melebihi batas 40 komponen (${cCount})`);
+        assert(tLen <= 4000, `Panel ${pName} melebihi batas 4000 karakter (${tLen})`);
+        const rawJson = JSON.stringify(pObj.components.map(c => c.toJSON()));
+        assert(!rawJson.includes('undefined'), `Panel ${pName} tidak boleh mengandung string "undefined"`);
+    }
+    console.log('✅ [23/23] Sistem Multi-Kota Linear, /travel, BBM & Durasi, Supir Mobil, Lockdown Perjalanan, City Gate & Motel Transit terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (23/23 PASSED)!');
     process.exit(0);
 }
 

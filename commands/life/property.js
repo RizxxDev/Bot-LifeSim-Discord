@@ -13,6 +13,7 @@ const {
     getAllPropertyTiers,
     calculateMonthlyPbb
 } = require('../../data/properties');
+const { getCity } = require('../../data/cities');
 const { COLORS, formatLp, formatDuration } = require('../../utils/uiBuilder');
 const {
     buildPanel,
@@ -52,6 +53,9 @@ function buildPropertyPanel({
 
     const activeTier = selectedTierId ? getPropertyTier(selectedTierId) : null;
 
+    const playerCity = getCity(p.current_city);
+    const propCity = getCity(status.propertyCityId);
+
     const billingLines = [];
     if (!row || status.isEvicted) {
         billingLines.push('• Status Kontrak: **Tunawisma (Tanpa Tagihan Aktif)**');
@@ -60,6 +64,7 @@ function buildPropertyPanel({
         }
     } else if (row.ownership_type === 'rent') {
         const remMs = Math.max(0, Number(row.next_billing_at) - now);
+        billingLines.push(`• Lokasi Kota   : ${propCity.emoji} **${propCity.name}**${propCity.id !== playerCity.id ? ` *(Kamu sedang di ${playerCity.shortName})*` : ''}`);
         billingLines.push(`• Tipe Hunian   : **Sewa Mingguan (${formatLp(cur.rentPerWeek)}/mgg)**`);
         billingLines.push(`• Jatuh Tempo   : **<t:${Math.floor(Number(row.next_billing_at) / 1000)}:R>** (${formatDuration(remMs)})`);
         if (status.inGracePeriod) {
@@ -68,6 +73,7 @@ function buildPropertyPanel({
         }
     } else {
         const pbb = calculateMonthlyPbb(cur);
+        billingLines.push(`• Lokasi Kota   : ${propCity.emoji} **${propCity.name}**${propCity.id !== playerCity.id ? ` *(Kamu sedang di ${playerCity.shortName})*` : ''}`);
         billingLines.push(`• Tipe Hunian   : **Milik Pribadi (Lunas)**`);
         billingLines.push(`• PBB Bulanan   : **${formatLp(pbb)}/bulan** (Jatuh tempo <t:${Math.floor(Number(row.next_billing_at) / 1000)}:R>)`);
     }

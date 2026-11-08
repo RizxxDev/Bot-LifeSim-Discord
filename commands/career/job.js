@@ -6,6 +6,7 @@ const { JOBS, PROMOTION_RANKS, getJob, getRankForShifts, getNextRank } = require
 const { meetsEducationRequirement, getEducation } = require('../../data/education');
 const { getItem } = require('../../data/items');
 const { getVehicle } = require('../../data/vehicles');
+const { getCity } = require('../../data/cities');
 const { COLORS, formatLp, formatDuration } = require('../../utils/uiBuilder');
 const {
     buildPanel,
@@ -133,10 +134,16 @@ function buildJobPanel({
             reqLines.push(`${status.histOk ? '✅' : '❌'} Riwayat Medis: **Perawat ${done}/${activeJob.reqJobHistory.shifts} shift**`);
         }
 
+        const jobCity = activeJob.cityId ? getCity(activeJob.cityId) : null;
+        const locLine = jobCity
+            ? `• 📍 Lokasi Kerja: ${jobCity.emoji} **${jobCity.name}** *(Wajib berada di kota ini saat \`/work\`)*`
+            : `• 📍 Lokasi Kerja: 🌐 **Semua Kota** *(Bebas bekerja di kota mana saja)*`;
+
         blocks.push(
             [
                 `📋 **Detail Profesi: ${activeJob.emoji} ${activeJob.name} (Tier ${activeJob.tier})**`,
                 `_${activeJob.description}_`,
+                locLine,
                 `• ⚡ Biaya per Shift: **${activeJob.energyCost} Energy · 8 Hunger · 10 Thirst**`,
                 `• 📊 Riwayatmu di Profesi Ini: **${myShifts} shift (${myRank.name})**`
             ].join('\n'),
@@ -150,8 +157,9 @@ function buildJobPanel({
                 const st = checkJobUnlockStatus(state, j);
                 const myShifts = historyMap.get(j.id) || 0;
                 const rank = getRankForShifts(myShifts);
+                const cityTag = j.cityId ? ` · 📍${getCity(j.cityId).emoji}` : '';
                 const isCur = p.current_job === j.id ? ' 👈' : '';
-                return `${st.unlocked ? '✅' : '🔒'} ${j.emoji} **${j.name}** — **${formatLp(j.baseSalary)}/shift** · *${st.reqSummary}* (${myShifts} shift · ${rank.name})${isCur}`;
+                return `${st.unlocked ? '✅' : '🔒'} ${j.emoji} **${j.name}** — **${formatLp(j.baseSalary)}/shift** · *${st.reqSummary}*${cityTag} (${myShifts} shift · ${rank.name})${isCur}`;
             });
             return `**🏢 Tier ${tier}**\n${lines.join('\n')}`;
         });
@@ -164,11 +172,12 @@ function buildJobPanel({
             placeholder: '💼 Pilih profesi untuk melihat detail & melamar...',
             options: JOBS.map(j => {
                 const st = checkJobUnlockStatus(state, j);
+                const locPrefix = j.cityId ? `[${getCity(j.cityId).shortName}] ` : '';
                 return {
-                    label: `${j.name} (Tier ${j.tier} — ${formatLp(j.baseSalary)}/shift)`,
+                    label: `${j.name} (Tier ${j.tier} — ${formatLp(j.baseSalary)}/shift)`.slice(0, 100),
                     value: j.id,
                     emoji: st.unlocked ? j.emoji : '🔒',
-                    description: `Syarat: ${st.reqSummary}`.slice(0, 95),
+                    description: `${locPrefix}Syarat: ${st.reqSummary}`.slice(0, 95),
                     default: activeJob ? activeJob.id === j.id : false
                 };
             })

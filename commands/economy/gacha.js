@@ -15,6 +15,7 @@ const {
     executeGachaPull
 } = require('../../services/gachaService');
 const { getItem } = require('../../data/items');
+const { getCity } = require('../../data/cities');
 const { formatLp } = require('../../utils/uiBuilder');
 const { buildPanel, btn, select } = require('../../utils/panelBuilder');
 
@@ -70,8 +71,11 @@ function buildGachaPanel({
     const cost1Lp = Math.max(0, 1 - Math.min(1, availableTickets)) * tier.priceLp;
     const cost10Lp = Math.max(0, 10 - Math.min(10, availableTickets)) * tier.priceLp;
     const bagHasSpace = slotsUsed < maxSlots;
-    const canPull1 = bagHasSpace && totalFunds >= cost1Lp;
-    const canPull10 = bagHasSpace && totalFunds >= cost10Lp;
+    const currentCity = getCity(p.current_city);
+    const isCentralExclusiveTier = tier.id === 'mall' || tier.id === 'sultan';
+    const cityAllowed = !isCentralExclusiveTier || currentCity.id === 'kota_sentral';
+    const canPull1 = cityAllowed && bagHasSpace && totalFunds >= cost1Lp;
+    const canPull10 = cityAllowed && bagHasSpace && totalFunds >= cost10Lp;
 
     const blocks = [
         [
@@ -155,6 +159,9 @@ function buildGachaPanel({
         }
     }
 
+    if (!cityAllowed) {
+        blocks.push(`🏙️ **Mesin Eksklusif Metropolis Sentral:** **${tier.emoji} ${tier.name}** hanya beroperasi di pusat perbelanjaan **🏛️ Metropolis Sentral** *(Lokasimu: ${currentCity.emoji} ${currentCity.shortName})*. Kamu tetap bisa memutar **🪙 Kapsul Warung** di sini atau gunakan \`/travel\` ke Metropolis Sentral!`);
+    }
     if (!bagHasSpace) {
         blocks.push(`⚠️ **Tas Penuh (${slotsUsed}/${maxSlots} slot):** Kosongkan minimal 1 slot tas lewat \`/sell\`, \`/consume\`, atau \`/storage\` sebelum memutar mesin gacha!`);
     }
@@ -163,17 +170,18 @@ function buildGachaPanel({
         placeholder: '🎰 Pilih Mesin Kapsul / Mystery Box Gacha...',
         options: getAllGachaTiers().map(t => {
             const tCount = Number(ticketCounts?.[t.ticketItemId] || 0);
+            const locNote = (t.id === 'mall' || t.id === 'sultan') ? '[Sentral] ' : '[Semua Kota] ';
             return {
                 label: `${t.name} (${formatLp(t.priceLp)} / Putar)`.slice(0, 100),
                 value: `${t.id}|${mode}`,
                 emoji: t.emoji,
-                description: `Tiketmu: ×${tCount} — ${t.description}`.slice(0, 100),
+                description: `${locNote}Tiket: ×${tCount} — ${t.description}`.slice(0, 100),
                 default: t.id === tier.id
             };
         })
     }, now);
 
-    const actionRow = new ActionRowBuilder().addComponents(
+    const actionButtons = [
         btn('gacha', 'pull1', ownerId, {
             label: availableTickets >= 1 ? `Putar 1× (Pakai Tiket)` : `Putar 1× (${formatLp(tier.priceLp)})`,
             emoji: '🎰',
@@ -193,7 +201,21 @@ function buildGachaPanel({
             emoji: mode === 'rates' ? '🎰' : '📋',
             style: ButtonStyle.Secondary,
             arg: `${tier.id}|${mode === 'rates' ? 'machine' : 'rates'}`
-        }, now),
+        }, now)
+    ];
+
+    if (!cityAllowed) {
+        actionButtons.push(
+            btn('travel', 'pick_dest_btn', ownerId, {
+                label: 'Ke Sentral',
+                emoji: '🚗',
+                style: ButtonStyle.Primary,
+                arg: 'kota_sentral'
+            }, now)
+        );
+    }
+
+    actionButtons.push(
         btn('gacha', 'home', ownerId, {
             label: 'Segarkan',
             emoji: '🔄',
@@ -201,6 +223,8 @@ function buildGachaPanel({
             arg: `${tier.id}|${mode}`
         }, now)
     );
+
+    const actionRow = new ActionRowBuilder().addComponents(actionButtons.slice(0, 5));
 
     return buildPanel({
         mod: 'gacha',
@@ -222,10 +246,29 @@ async function handlePullInteraction(interaction, tierId, pullCount) {
 
     const pullRes = await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, userId, now, true);
+        const curCityId = synced.player.current_city || 'kota_sentral';
+        if ((tierId === 'mall' || tierId === 'sultan') && curCityId !== 'kota_sentral') {
+            return { error: 'WRONG_CITY' };
+        }
         return await executeGachaPull(conn, synced.player, tierId, pullCount, now);
     });
 
     const state = await fetchGachaState(userId, now);
+
+    if (pullRes.error === 'WRONG_CITY') {
+        return await interaction.update(
+            buildGachaPanel({
+                state,
+                tierId,
+                mode: 'machine',
+                banner: {
+                    type: 'warning',
+                    text: '🏙️ Mesin Mystery Box Mall & Brankas Sultan hanya tersedia di **🏛️ Metropolis Sentral**! Gunakan `/travel` terlebih dahulu.'
+                },
+                now
+            })
+        );
+    }
 
     if (pullRes.error === 'BAG_FULL') {
         return await interaction.update(

@@ -6,13 +6,16 @@ const {
     buyVehicleCash,
     equipVehicle,
     refuelVehicle,
-    serviceVehicle
+    serviceVehicle,
+    hireWeeklyDriver
 } = require('../../services/vehicleService');
 const {
     FUEL_PRICE_PER_LITER,
     getAllVehicles,
-    getVehicle
+    getVehicle,
+    calculateIntercityFuelNeeded
 } = require('../../data/vehicles');
+const { WEEKLY_DRIVER_CONTRACT_COST } = require('../../data/cities');
 const { COLORS, formatLp } = require('../../utils/uiBuilder');
 const {
     buildPanel,
@@ -21,7 +24,7 @@ const {
     confirmView
 } = require('../../utils/panelBuilder');
 
-function formatVehicleRowStatus(vRow) {
+function formatVehicleRowStatus(vRow, now = Date.now()) {
     const v = vRow.vehicle;
     if (!v) return `• Kendaraan tidak dikenal (${vRow.vehicle_id})`;
 
@@ -35,17 +38,28 @@ function formatVehicleRowStatus(vRow) {
         ? `⚠️ **WAJIB SERVIS!** (${kmSinceService}/${v.serviceIntervalKm} km · Bonus -50% & 10% risiko mogok)`
         : `🔧 Servis: **${kmSinceService} / ${v.serviceIntervalKm} km** *(Biaya servis: ${formatLp(v.serviceCost)})*`;
 
-    return [
+    const lines = [
         `${v.emoji} **${v.name}** — ${activeBadge}`,
         `   └ 🛣️ Odometer: **${vRow.odometer_km.toFixed(1)} km** · ${fuelText}`,
         `   └ ${serviceStatus}`
-    ].join('\n');
+    ];
+
+    if (v.supportsDriver) {
+        const hasContract = Number(vRow.driver_hired_until || 0) > now;
+        lines.push(
+            hasContract
+                ? `   └ 👨‍✈️ Supir Pribadi: 🟢 **Kontrak Aktif** *(Berakhir <t:${Math.floor(Number(vRow.driver_hired_until) / 1000)}:R>)*`
+                : `   └ 👨‍✈️ Supir Pribadi: ⚪ *Belum Dikontrak* *(Kontrak 7 hari: ${formatLp(WEEKLY_DRIVER_CONTRACT_COST)})*`
+        );
+    }
+
+    return lines.join('\n');
 }
 
 async function fetchVehicleState(discordId, now = Date.now()) {
     return await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, false);
-        const owned = await getPlayerVehicles(conn, discordId, false);
+        const owned = await getPlayerVehicles(conn, discordId, false, now);
         return { player: synced.player, owned };
     });
 }
@@ -67,7 +81,7 @@ function buildVehiclePanel({
     const activeOwnedRow = activeVeh ? ownedMap.get(activeVeh.id) || null : null;
 
     const garageLines = owned.length > 0
-        ? owned.map(formatVehicleRowStatus).join('\n\n')
+        ? owned.map(r => formatVehicleRowStatus(r, now)).join('\n\n')
         : '⚪ *Garasimu masih kosong. Pilih kendaraan di bawah untuk membeli tunai atau cicil di `/credit`.*';
 
     const blocks = [
@@ -78,6 +92,10 @@ function buildVehiclePanel({
     ];
 
     if (activeVeh) {
+        const fuel30km = calculateIntercityFuelNeeded(activeVeh, 30);
+        const travelSpec = activeVeh.canIntercityTravel
+            ? `✅ Bisa \`/travel\` (**${fuel30km.toFixed(2)} L** / 30 km${activeVeh.supportsDriver ? ' · 👨‍✈️ Mendukung Jasa Supir' : ''})`
+            : '❌ Tidak boleh masuk jalan tol antar-kota (`/travel`)';
         const fuelSpec = activeVeh.tankCapacity > 0
             ? `Tangki **${activeVeh.tankCapacity} L** (Kerja: ${activeVeh.fuelPerShift} L · Lokasi Jauh: ${activeVeh.fuelPerTrip} L)`
             : 'Tanpa BBM (Tenaga Kayuh)';
@@ -92,6 +110,7 @@ function buildVehiclePanel({
                 `🔎 **Spesifikasi Kendaraan: ${activeVeh.emoji} ${activeVeh.name}** — ${ownBadge}`,
                 `• 💰 ${activeVeh.gachaExclusive ? 'Nilai Taksiran Aset' : 'Harga Dealer'} : **${formatLp(activeVeh.buyPrice)}**`,
                 `• ⛽ Konsumsi BBM : ${fuelSpec}`,
+                `• 🗺️ Antar-Kota   : ${travelSpec}`,
                 `• 🔧 Servis Rutin : Tiap **${activeVeh.serviceIntervalKm} km** (**${formatLp(activeVeh.serviceCost)}**)`,
                 `• ✨ Manfaat      : ${activeVeh.description}`
             ].join('\n')
@@ -163,6 +182,19 @@ function buildVehiclePanel({
                     arg: activeVeh.id
                 }, now)
             );
+            if (activeVeh.supportsDriver) {
+                const hasContract = Number(activeOwnedRow.driver_hired_until || 0) > now;
+                actionButtons.push(
+                    btn('vehicle', 'hire_driver_prompt', ownerId, {
+                        label: hasContract
+                            ? `Perpanjang Supir 7h (${formatLp(WEEKLY_DRIVER_CONTRACT_COST)})`
+                            : `Kontrak Supir 7h (${formatLp(WEEKLY_DRIVER_CONTRACT_COST)})`,
+                        emoji: '👨‍✈️',
+                        style: ButtonStyle.Primary,
+                        arg: activeVeh.id
+                    }, now)
+                );
+            }
         } else if (!activeVeh.gachaExclusive) {
             actionButtons.push(
                 btn('vehicle', 'buy_prompt', ownerId, {
@@ -234,7 +266,61 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchVehicleState(interaction.user.id, now);
-                return await interaction.update(buildVehiclePanel({ state, now }));
+                return await interaction.update({ ...buildVehiclePanel({ state, now }), attachments: [] });
+            },
+            async hire_driver_prompt(interaction, parsed) {
+                const now = Date.now();
+                const vehId = parsed.arg || 'mobil';
+                const veh = getVehicle(vehId);
+                const state = await fetchVehicleState(interaction.user.id, now);
+
+                return await interaction.update(
+                    confirmView({
+                        mod: 'vehicle',
+                        confirmAction: 'hire_driver_confirm',
+                        cancelAction: 'home',
+                        ownerId: interaction.user.id,
+                        title: `👨‍✈️ Kontrak Supir Pribadi Mingguan (${veh ? veh.name : vehId})`,
+                        description: [
+                            `Kamu akan merekrut / memperpanjang **Supir Pribadi** untuk **${veh ? `${veh.emoji} ${veh.name}` : vehId}** selama **7 hari**:`,
+                            `• Biaya Kontrak Mingguan: **${formatLp(WEEKLY_DRIVER_CONTRACT_COST)} / 7 hari**\n• Keuntungan: Bebas ongkos supir di setiap perjalanan \`/travel\`, **0 pengurangan Energy/Hunger/Thirst**, serta bebas membuka \`/consume\`, \`/profile\`, \`/wardrobe\`, dan \`/inventory\` selama di jalan!`,
+                            'Lanjutkan kontrak supir pribadi ini?'
+                        ],
+                        confirmLabel: `Ya, Kontrak (${formatLp(WEEKLY_DRIVER_CONTRACT_COST)})`,
+                        confirmStyle: ButtonStyle.Primary,
+                        arg: veh ? veh.id : vehId,
+                        player: state.player,
+                        now
+                    })
+                );
+            },
+            async hire_driver_confirm(interaction, parsed) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const vehId = parsed.arg || 'mobil';
+                const res = await withTransaction(async (conn) => {
+                    const synced = await syncPlayerVitals(conn, userId, now, true);
+                    return await hireWeeklyDriver(conn, synced.player, vehId, now);
+                });
+
+                const state = await fetchVehicleState(userId, now);
+                let banner = null;
+                if (res.ok) {
+                    const untilUnix = Math.floor(res.driverHiredUntil / 1000);
+                    banner = {
+                        type: 'success',
+                        text: `👨‍✈️ Supir Pribadi resmi dikontrak untuk **${res.vehicle.emoji} ${res.vehicle.name}** seharga **${formatLp(res.cost)}** (Aktif hingga <t:${untilUnix}:f>)!`
+                    };
+                } else if (res.error === 'INSUFFICIENT_FUNDS') {
+                    banner = {
+                        type: 'danger',
+                        text: `Saldo Cash + Bank (${formatLp(res.totalFunds)}) tidak cukup untuk membayar kontrak supir **${formatLp(res.required)}**.`
+                    };
+                } else {
+                    banner = { type: 'warning', text: 'Gagal mengontrak supir untuk kendaraan ini.' };
+                }
+
+                return await interaction.update(buildVehiclePanel({ state, selectedVehicleId: vehId, banner, now }));
             },
             async catalog(interaction) {
                 const now = Date.now();

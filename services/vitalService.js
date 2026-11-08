@@ -11,13 +11,34 @@ function computeLazyVitals(playerRow, now = Date.now(), activeBuffs = [], proper
     let health = Number(playerRow.health);
     let sleepingUntil = Number(playerRow.sleeping_until || 0);
     let hospitalUntil = Number(playerRow.hospital_until || 0);
+    let currentCity = playerRow.current_city || 'kota_sentral';
+    let travelingUntil = Number(playerRow.traveling_until || 0);
+    let travelOrigin = playerRow.travel_origin || null;
+    let travelDestination = playerRow.travel_destination || null;
+    let travelHasDriver = Number(playerRow.travel_has_driver || 0);
     const lastTickAt = Number(playerRow.last_tick_at || now);
 
     let wokeUp = false;
     let discharged = false;
+    let arrivedCity = null;
 
-    const sleepBonus = propertyTierObj?.sleepEnergyBonus || VITALS.SLEEP_ENERGY_BONUS;
+    const motelBuff = activeBuffs.find(b => b.buff_type === 'motel_sleep');
+    const sleepBonus = motelBuff
+        ? Number(motelBuff.multiplier || 60)
+        : (propertyTierObj?.sleepEnergyBonus || VITALS.SLEEP_ENERGY_BONUS);
     const passiveRegenBonus = Number(propertyTierObj?.passiveEnergyRegenBonus || 0);
+
+    // 0. Cek tiba di kota tujuan (Travel Arrival)
+    if (travelingUntil > 0 && now >= travelingUntil) {
+        if (travelDestination) {
+            currentCity = travelDestination;
+            arrivedCity = travelDestination;
+        }
+        travelingUntil = 0;
+        travelOrigin = null;
+        travelDestination = null;
+        travelHasDriver = 0;
+    }
 
     // 1. Cek selesai tidur
     if (sleepingUntil > 0 && now >= sleepingUntil) {
@@ -68,11 +89,17 @@ function computeLazyVitals(playerRow, now = Date.now(), activeBuffs = [], proper
         hunger: Math.round(hunger * 100) / 100,
         thirst: Math.round(thirst * 100) / 100,
         health: Math.round(health * 100) / 100,
+        current_city: currentCity,
+        traveling_until: travelingUntil,
+        travel_origin: travelOrigin,
+        travel_destination: travelDestination,
+        travel_has_driver: travelHasDriver,
         sleeping_until: sleepingUntil,
         hospital_until: hospitalUntil,
         last_tick_at: now,
         wokeUp,
-        discharged
+        discharged,
+        arrivedCity
     };
 }
 
@@ -125,10 +152,14 @@ async function syncPlayerVitals(conn, discordId, now = Date.now(), forUpdate = t
         [discordId, now]
     );
     const [propRows] = await conn.execute(
-        `SELECT property_tier, is_evicted FROM player_properties WHERE discord_id = ? LIMIT 1`,
+        `SELECT property_tier, city_id, is_evicted FROM player_properties WHERE discord_id = ? LIMIT 1`,
         [discordId]
     );
-    const activePropTier = (propRows.length > 0 && Number(propRows[0].is_evicted) === 0)
+    const effectiveCity = (Number(player.traveling_until || 0) > 0 && now >= Number(player.traveling_until) && player.travel_destination)
+        ? player.travel_destination
+        : (player.current_city || 'kota_sentral');
+    const propInSameCity = propRows.length > 0 && (propRows[0].city_id || 'kota_sentral') === effectiveCity;
+    const activePropTier = (propRows.length > 0 && Number(propRows[0].is_evicted) === 0 && propInSameCity)
         ? getPropertyTier(propRows[0].property_tier)
         : getPropertyTier('tunawisma');
 
@@ -137,6 +168,11 @@ async function syncPlayerVitals(conn, discordId, now = Date.now(), forUpdate = t
     player.hunger = lazy.hunger;
     player.thirst = lazy.thirst;
     player.health = lazy.health;
+    player.current_city = lazy.current_city;
+    player.traveling_until = lazy.traveling_until;
+    player.travel_origin = lazy.travel_origin;
+    player.travel_destination = lazy.travel_destination;
+    player.travel_has_driver = lazy.travel_has_driver;
     player.sleeping_until = lazy.sleeping_until;
     player.hospital_until = lazy.hospital_until;
     player.last_tick_at = lazy.last_tick_at;
@@ -159,9 +195,17 @@ async function syncPlayerVitals(conn, discordId, now = Date.now(), forUpdate = t
         }
     }
 
+    if (lazy.wokeUp && buffRows.some(b => b.buff_type === 'motel_sleep')) {
+        await conn.execute(
+            `DELETE FROM player_buffs WHERE discord_id = ? AND buff_type = 'motel_sleep'`,
+            [discordId]
+        );
+    }
+
     await conn.execute(
         `UPDATE players
          SET cash = ?, bank = ?, energy = ?, hunger = ?, thirst = ?, health = ?,
+             current_city = ?, traveling_until = ?, travel_origin = ?, travel_destination = ?, travel_has_driver = ?,
              sleeping_until = ?, hospital_until = ?, last_tick_at = ?
          WHERE discord_id = ?`,
         [
@@ -171,6 +215,11 @@ async function syncPlayerVitals(conn, discordId, now = Date.now(), forUpdate = t
             player.hunger,
             player.thirst,
             player.health,
+            player.current_city,
+            player.traveling_until,
+            player.travel_origin,
+            player.travel_destination,
+            player.travel_has_driver,
             player.sleeping_until,
             player.hospital_until,
             player.last_tick_at,
@@ -184,6 +233,7 @@ async function syncPlayerVitals(conn, discordId, now = Date.now(), forUpdate = t
         events: {
             wokeUp: lazy.wokeUp,
             discharged: lazy.discharged,
+            arrivedCity: lazy.arrivedCity,
             hospitalized
         }
     };
@@ -205,6 +255,15 @@ function applyHospitalToPlayerObj(player, now = Date.now()) {
  * Mengecek apakah player memenuhi syarat stat vital untuk melakukan aktivitas.
  */
 function checkActivityEligibility(player, cost, activityType = 'general', now = Date.now()) {
+    if (Number(player.traveling_until || 0) > now) {
+        return {
+            allowed: false,
+            code: 'TRAVELING',
+            remainingMs: Number(player.traveling_until) - now,
+            message: 'Kamu masih sedang dalam **perjalanan antar-kota** (`/travel`). Tunggu sampai tiba di tujuan!'
+        };
+    }
+
     if (Number(player.hospital_until) > now) {
         return {
             allowed: false,

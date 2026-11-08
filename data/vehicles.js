@@ -20,6 +20,10 @@ const VEHICLES = [
         emoji: '🚲',
         buyPrice: 1500000,
         canCredit: false,
+        canIntercityTravel: false,
+        supportsDriver: false,
+        reqLicenseItem: null,
+        fuelPerKm: 0,
         tankCapacity: 0,
         fuelPerShift: 0,
         fuelPerTrip: 0,
@@ -38,6 +42,10 @@ const VEHICLES = [
         emoji: '🛵',
         buyPrice: 6000000,
         canCredit: false,
+        canIntercityTravel: true,
+        supportsDriver: false,
+        reqLicenseItem: 'sim_c',
+        fuelPerKm: 0.02,
         tankCapacity: 4,
         fuelPerShift: 0.3,
         fuelPerTrip: 0.1,
@@ -57,6 +65,10 @@ const VEHICLES = [
         emoji: '🏍️',
         buyPrice: 22000000,
         canCredit: true,
+        canIntercityTravel: true,
+        supportsDriver: false,
+        reqLicenseItem: 'sim_c',
+        fuelPerKm: 1 / 60,
         tankCapacity: 5,
         fuelPerShift: 0.25,
         fuelPerTrip: 0.08,
@@ -76,6 +88,10 @@ const VEHICLES = [
         emoji: '🚗',
         buyPrice: 150000000,
         canCredit: true,
+        canIntercityTravel: true,
+        supportsDriver: true,
+        reqLicenseItem: 'sim_a',
+        fuelPerKm: 1 / 15,
         tankCapacity: 40,
         fuelPerShift: 1.0,
         fuelPerTrip: 0.3,
@@ -97,6 +113,10 @@ const VEHICLES = [
         buyPrice: 15000000,
         canCredit: false,
         gachaExclusive: true,
+        canIntercityTravel: true,
+        supportsDriver: false,
+        reqLicenseItem: 'sim_c',
+        fuelPerKm: 0.01,
         tankCapacity: 4.5,
         fuelPerShift: 0.15,
         fuelPerTrip: 0.05,
@@ -117,6 +137,10 @@ const VEHICLES = [
         buyPrice: 350000000,
         canCredit: false,
         gachaExclusive: true,
+        canIntercityTravel: true,
+        supportsDriver: true,
+        reqLicenseItem: 'sim_a',
+        fuelPerKm: 0.08,
         tankCapacity: 50,
         fuelPerShift: 1.2,
         fuelPerTrip: 0.35,
@@ -147,6 +171,12 @@ function isFarLocation(locationId) {
     return FAR_LOCATION_IDS.includes(String(locationId || '').toLowerCase());
 }
 
+function calculateIntercityFuelNeeded(vehicleOrId, distanceKm) {
+    const v = typeof vehicleOrId === 'string' ? getVehicle(vehicleOrId) : vehicleOrId;
+    if (!v || !v.canIntercityTravel || Number(v.fuelPerKm || 0) <= 0) return 0;
+    return Number((Math.max(0, Number(distanceKm || 0)) * Number(v.fuelPerKm)).toFixed(2));
+}
+
 module.exports = {
     FUEL_PRICE_PER_LITER,
     SHIFT_DISTANCE_KM,
@@ -157,5 +187,6 @@ module.exports = {
     VEHICLES,
     getVehicle,
     getAllVehicles,
-    isFarLocation
+    isFarLocation,
+    calculateIntercityFuelNeeded
 };
