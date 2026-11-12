@@ -180,16 +180,9 @@ function buildAchievementsPanel({
         );
     }
 
-    actionButtons.push(
-        btn('achievements', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary,
-            arg: stateArg
-        }, now)
-    );
-
-    rows.push(new ActionRowBuilder().addComponents(actionButtons));
+    if (actionButtons.length > 0) {
+        rows.push(new ActionRowBuilder().addComponents(actionButtons));
+    }
 
     return buildPanel({
         mod: 'achievements',

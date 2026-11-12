@@ -14,6 +14,7 @@ const {
     numberModal,
     parseModalNumber
 } = require('../../utils/panelBuilder');
+const { notifyPlayerStateChanged } = require('../../services/autoUpdateService');
 
 function meetsPayAccountRequirements(player, now = Date.now()) {
     const ageMs = now - Number(player.created_at || now);
@@ -99,17 +100,16 @@ function buildPayPanel({
                 disabled: maxTransferable < 1000
             }, now)
         );
+        rows.push(
+            new ActionRowBuilder().addComponents(
+                btn('pay', 'home', ownerId, {
+                    label: 'Batal / Ganti Penerima',
+                    emoji: '↩️',
+                    style: ButtonStyle.Secondary
+                }, now)
+            )
+        );
     }
-
-    rows.push(
-        new ActionRowBuilder().addComponents(
-            btn('pay', 'home', ownerId, {
-                label: 'Reset / Segarkan',
-                emoji: '🔄',
-                style: ButtonStyle.Secondary
-            }, now)
-        )
-    );
 
     return buildPanel({
         mod: 'pay',
@@ -320,6 +320,7 @@ module.exports = {
                         addDailyPayTotal(senderId, 'sent', amount, now),
                         addDailyPayTotal(targetId, 'recv', amount, now)
                     ]);
+                    notifyPlayerStateChanged(targetId);
                     banner = {
                         type: 'success',
                         text: `💸 Berhasil mengirim **${formatLp(amount)}** ke **${res.receiver.username}** (<@${targetId}>)! Pajak 5%: **${formatLp(tax)}**.`

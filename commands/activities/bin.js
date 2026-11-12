@@ -17,6 +17,19 @@ const { getItem } = require('../../data/items');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, formatDuration } = require('../../utils/uiBuilder');
 const { buildPanel, btn } = require('../../utils/panelBuilder');
+const { scheduleAutoUpdate, cancelAutoUpdate } = require('../../services/autoUpdateService');
+
+function scheduleBinCooldown(userId, interaction, remCd, foundLoot = null, banner = null) {
+    if (remCd > 0) {
+        scheduleAutoUpdate(`bin:${userId}`, interaction, remCd + 500, async () => {
+            const now = Date.now();
+            const freshState = await fetchBinState(userId, now);
+            return buildBinPanel({ state: freshState, foundLoot, banner, now });
+        });
+    } else {
+        cancelAutoUpdate(`bin:${userId}`);
+    }
+}
 
 /**
  * Tabel Loot Tempat Sampah Kota (/bin):
@@ -236,11 +249,6 @@ function buildBinPanel({
             label: 'Makan Cepat',
             emoji: '🍴',
             style: ButtonStyle.Secondary
-        }, now),
-        btn('bin', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 
@@ -265,7 +273,7 @@ async function handleBinSearch(interaction, rollFn = Math.random) {
     const remCd = await getCooldownRemaining(userId, 'bin', query);
     if (remCd > 0) {
         const state = await fetchBinState(userId, now);
-        return await interaction.update(
+        const res = await interaction.update(
             buildBinPanel({
                 state,
                 banner: {
@@ -275,6 +283,8 @@ async function handleBinSearch(interaction, rollFn = Math.random) {
                 now
             })
         );
+        scheduleBinCooldown(userId, interaction, state.remCd);
+        return res;
     }
 
     let outcome = null;
@@ -335,17 +345,21 @@ async function handleBinSearch(interaction, rollFn = Math.random) {
         ? ` · 🎟️ Bonus: **+1× ${gachaTicketDrop.item.emoji} ${gachaTicketDrop.item.name}**!`
         : '';
 
-    return await interaction.update(
+    const bannerObj = {
+        type: 'success',
+        text: `🔍 Kamu menemukan **${loot.qty}× ${loot.item.emoji} ${loot.item.name}** dari tempat sampah! (-⚡${ACTIVITY_COSTS.bin.energy} Energy)${evNotice}${ticketNotice}`
+    };
+
+    const res = await interaction.update(
         buildBinPanel({
             state,
             foundLoot: loot,
-            banner: {
-                type: 'success',
-                text: `🔍 Kamu menemukan **${loot.qty}× ${loot.item.emoji} ${loot.item.name}** dari tempat sampah! (-⚡${ACTIVITY_COSTS.bin.energy} Energy)${evNotice}${ticketNotice}`
-            },
+            banner: bannerObj,
             now
         })
     );
+    scheduleBinCooldown(userId, interaction, state.remCd, loot, bannerObj);
+    return res;
 }
 
 module.exports = {
@@ -359,7 +373,9 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchBinState(interaction.user.id, now);
-        return await interaction.reply(buildBinPanel({ state, now }));
+        const res = await interaction.reply(buildBinPanel({ state, now }));
+        scheduleBinCooldown(interaction.user.id, interaction, state.remCd);
+        return res;
     },
 
     panel: {
@@ -367,7 +383,9 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchBinState(interaction.user.id, now);
-                return await interaction.update(buildBinPanel({ state, now }));
+                const res = await interaction.update(buildBinPanel({ state, now }));
+                scheduleBinCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             },
             async search(interaction) {
                 return await handleBinSearch(interaction);
@@ -385,7 +403,9 @@ module.exports = {
                         type: 'warning',
                         text: 'Tidak ada barang rongsokan di tasmu yang bisa dijual saat ini.'
                     };
-                return await interaction.update(buildBinPanel({ state, banner, now }));
+                const out = await interaction.update(buildBinPanel({ state, banner, now }));
+                scheduleBinCooldown(interaction.user.id, interaction, state.remCd);
+                return out;
             },
             async quick_meal(interaction) {
                 const now = Date.now();
@@ -394,7 +414,9 @@ module.exports = {
                 const banner = meal.consumedSummary?.length > 0
                     ? { type: 'success', text: `🍴 Mengonsumsi bekal cepat: **${meal.consumedSummary.join(', ')}**!` }
                     : { type: 'info', text: 'Kondisi tubuhmu sudah kenyang atau tidak ada makanan/minuman di tas.' };
-                return await interaction.update(buildBinPanel({ state, banner, now }));
+                const out = await interaction.update(buildBinPanel({ state, banner, now }));
+                scheduleBinCooldown(interaction.user.id, interaction, state.remCd);
+                return out;
             }
         }
     },

@@ -168,12 +168,6 @@ function buildProfilePanel({ ownerId, data, banner = null, now = Date.now() }) {
                 label: 'Peta Kota',
                 emoji: '🗺️',
                 style: ButtonStyle.Secondary
-            }, now),
-            btn('profile', 'refresh', ownerId, {
-                label: 'Segarkan',
-                emoji: '🔄',
-                style: ButtonStyle.Secondary,
-                arg: p.discord_id
             }, now)
         )
     ];

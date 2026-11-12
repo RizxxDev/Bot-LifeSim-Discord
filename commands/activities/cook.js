@@ -30,6 +30,35 @@ const {
     btn,
     select
 } = require('../../utils/panelBuilder');
+const { scheduleAutoUpdate, cancelAutoUpdate } = require('../../services/autoUpdateService');
+
+function scheduleCookAutoUpdate(userId, interaction, state, selectedRecipeId = null) {
+    const now = Date.now();
+    const pending = (state.queues || [])
+        .map(q => Number(q.finishes_at || 0))
+        .filter(fin => fin > now);
+    if (pending.length === 0) {
+        cancelAutoUpdate(`cook:${userId}`);
+        return;
+    }
+    const nextFinishAt = Math.min(...pending);
+    const delayMs = Math.max(500, (nextFinishAt - now) + 500);
+    scheduleAutoUpdate(`cook:${userId}`, interaction, delayMs, async () => {
+        const readyNow = Date.now();
+        const freshState = await fetchCookState(userId, readyNow);
+        scheduleCookAutoUpdate(userId, interaction, freshState, selectedRecipeId);
+        return buildCookPanel({
+            state: freshState,
+            mode: 'kitchen',
+            selectedRecipeId,
+            banner: {
+                type: 'success',
+                text: '🍽️ **Masakan di tungku sudah matang!** Klik tombol **🍽️ Ambil Matang** untuk memindahkan ke tasmu.'
+            },
+            now: readyNow
+        });
+    });
+}
 
 function formatIngredientsList(recipe, portions = 1) {
     return recipe.ingredients
@@ -287,7 +316,9 @@ async function handleCookQuickCollect(interaction) {
     });
 
     const state = await fetchCookState(userId, now);
-    return await interaction.update(buildCookPanel({ state, mode: 'kitchen', banner, now }));
+    const res = await interaction.update(buildCookPanel({ state, mode: 'kitchen', banner, now }));
+    scheduleCookAutoUpdate(userId, interaction, state);
+    return res;
 }
 
 module.exports = {
@@ -300,7 +331,9 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchCookState(interaction.user.id, now);
-        return await interaction.reply(buildCookPanel({ state, mode: 'kitchen', now }));
+        const res = await interaction.reply(buildCookPanel({ state, mode: 'kitchen', now }));
+        scheduleCookAutoUpdate(interaction.user.id, interaction, state);
+        return res;
     },
 
     panel: {
@@ -308,11 +341,14 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchCookState(interaction.user.id, now);
-                return await interaction.update(buildCookPanel({ state, mode: 'kitchen', now }));
+                const res = await interaction.update(buildCookPanel({ state, mode: 'kitchen', now }));
+                scheduleCookAutoUpdate(interaction.user.id, interaction, state);
+                return res;
             },
             async book(interaction) {
                 const now = Date.now();
                 const state = await fetchCookState(interaction.user.id, now);
+                cancelAutoUpdate(`cook:${interaction.user.id}`);
                 return await interaction.update(buildCookPanel({ state, mode: 'recipes', now }));
             },
             async start(interaction, parsed) {
@@ -340,7 +376,7 @@ module.exports = {
                     };
                 }
 
-                return await interaction.update(
+                const out = await interaction.update(
                     buildCookPanel({
                         state,
                         mode: 'kitchen',
@@ -349,6 +385,8 @@ module.exports = {
                         now
                     })
                 );
+                scheduleCookAutoUpdate(userId, interaction, state, recipeId);
+                return out;
             },
             async collect(interaction) {
                 return await handleCookQuickCollect(interaction);
@@ -359,7 +397,7 @@ module.exports = {
                 const now = Date.now();
                 const recipeId = interaction.values[0] || 'nasi_putih';
                 const state = await fetchCookState(interaction.user.id, now);
-                return await interaction.update(
+                const out = await interaction.update(
                     buildCookPanel({
                         state,
                         mode: 'kitchen',
@@ -367,10 +405,13 @@ module.exports = {
                         now
                     })
                 );
+                scheduleCookAutoUpdate(interaction.user.id, interaction, state, recipeId);
+                return out;
             }
         }
     },
 
+    fetchCookState,
     buildCookPanel,
     handleCookQuickCollect
 };

@@ -194,12 +194,6 @@ function buildWardrobePanel({ ownerId, state, selectedSlot = 'top', banner = nul
             label: 'Kartu Profil',
             emoji: '🪪',
             style: ButtonStyle.Primary
-        }, now),
-        btn('wardrobe', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary,
-            arg: slotMeta.id
         }, now)
     );
 

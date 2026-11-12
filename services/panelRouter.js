@@ -9,8 +9,25 @@ const {
 const { COLORS, buildV2Card } = require('../utils/uiBuilder');
 const { parseId } = require('../utils/panelId');
 const { buildExpiredPanel } = require('../utils/panelBuilder');
+const { trackInteractionPanel, notifyPlayerStateChanged } = require('./autoUpdateService');
 
 const registry = new Map();
+
+const READ_ONLY_MODS = new Set(['help', 'leaderboard', 'cooldowns', 'profile']);
+const READ_ONLY_ACTIONS = new Set([
+    'home', 'me', 'refresh', 'page', 'cat', 'tab', 'list', 'book', 'filter',
+    'slot', 'loc', 'bait', 'seed', 'recipe', 'pick_dest', 'user',
+    'mode_fert', 'mode_expand', 'rent_prompt', 'buy_prompt',
+    'inspect_user', 'open_wardrobe', 'open_butik'
+]);
+
+function isReadOnlyPanelInteraction(mod, action) {
+    if (READ_ONLY_MODS.has(mod)) return true;
+    const act = String(action || '');
+    if (READ_ONLY_ACTIONS.has(act)) return true;
+    if (act.endsWith('_modal') || act.endsWith('_prompt')) return true;
+    return false;
+}
 
 /**
  * Mendaftarkan handler panel untuk modul command tertentu.
@@ -164,6 +181,12 @@ async function dispatch(interaction, client, now = Date.now()) {
 
     try {
         await handler(interaction, parsed, client);
+        if (!entry.skipRegistrationCheck) {
+            trackInteractionPanel(interaction.user.id, parsed.mod, interaction, Date.now());
+            if (!isReadOnlyPanelInteraction(parsed.mod, parsed.action)) {
+                notifyPlayerStateChanged(interaction.user.id, parsed.mod);
+            }
+        }
     } finally {
         await releaseUserLock(interaction.user.id, lockToken);
     }

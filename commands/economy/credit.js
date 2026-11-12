@@ -151,15 +151,9 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
         );
     }
 
-    actionBtns.push(
-        btn('credit', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
-        }, now)
-    );
-
-    rows.push(new ActionRowBuilder().addComponents(actionBtns.slice(0, 5)));
+    if (actionBtns.length > 0) {
+        rows.push(new ActionRowBuilder().addComponents(actionBtns.slice(0, 5)));
+    }
 
     const hasArrears = activeCredits.some(c => c.missed_weeks > 0);
     return buildPanel({

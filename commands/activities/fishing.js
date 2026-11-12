@@ -24,11 +24,24 @@ const { getItem } = require('../../data/items');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, formatDuration, buildV2Card } = require('../../utils/uiBuilder');
 const { buildPanel, btn, select } = require('../../utils/panelBuilder');
+const { scheduleAutoUpdate, cancelAutoUpdate, setPanelMinigameLock } = require('../../services/autoUpdateService');
 
 const BAIT_IDS = ['umpan_cacing', 'umpan_udang', 'umpan_pro'];
 
 function sleepMs(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function scheduleFishingCooldown(userId, interaction, remCd) {
+    if (remCd > 0) {
+        scheduleAutoUpdate(`fishing:${userId}`, interaction, remCd + 500, async () => {
+            const now = Date.now();
+            const freshState = await fetchFishingState(userId, now);
+            return buildFishingPrepPanel(freshState, null, now);
+        });
+    } else {
+        cancelAutoUpdate(`fishing:${userId}`);
+    }
 }
 
 async function fetchFishingState(discordId, now = Date.now()) {
@@ -173,11 +186,6 @@ function buildFishingRows(ownerId, state, now = Date.now()) {
             emoji: '💰',
             style: ButtonStyle.Secondary,
             disabled: fishInBagCount <= 0
-        }, now),
-        btn('fishing', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 
@@ -209,10 +217,16 @@ function buildFishingPrepPanel(state, banner = null, now = Date.now()) {
         ];
 
         const gateRow = new ActionRowBuilder().addComponents(
-            btn('fishing', 'home', ownerId, {
-                label: 'Cek Ulang Tas',
-                emoji: '🔄',
-                style: ButtonStyle.Primary
+            btn('shop', 'page', ownerId, {
+                label: 'Toko Perkakas (/shop)',
+                emoji: '🔧',
+                style: ButtonStyle.Primary,
+                arg: 'perkakas:1'
+            }, now),
+            btn('bin', 'home', ownerId, {
+                label: 'Cari Modal (/bin)',
+                emoji: '🗑️',
+                style: ButtonStyle.Success
             }, now),
             btn('fishing', 'sell_fish', ownerId, {
                 label: `Jual Ikan (${state.fishInBagCount || 0})`,
@@ -301,12 +315,14 @@ async function runFishingCast(interaction, now = Date.now()) {
     const remCd = await getCooldownRemaining(discordId, 'fishing', query);
     if (remCd > 0) {
         const state = await fetchFishingState(discordId, now);
-        return await interaction.update(
+        const res = await interaction.update(
             buildFishingPrepPanel(state, {
                 type: 'warning',
                 text: `Air masih beriak! Kamu bisa melempar kail lagi <t:${Math.floor((now + remCd) / 1000)}:R>.`
             }, now)
         );
+        scheduleFishingCooldown(discordId, interaction, state.remCd);
+        return res;
     }
 
     const cost = ACTIVITY_COSTS.fishing;
@@ -401,54 +417,63 @@ async function runFishingCast(interaction, now = Date.now()) {
 
     if (pre.error) {
         const state = await fetchFishingState(discordId, now);
-        return await interaction.update(buildFishingPrepPanel(state, { type: 'danger', text: pre.error }, now));
+        const res = await interaction.update(buildFishingPrepPanel(state, { type: 'danger', text: pre.error }, now));
+        scheduleFishingCooldown(discordId, interaction, state.remCd);
+        return res;
     }
 
-    await interaction.update(
-        buildV2Card({
-            accentColor: COLORS.ACT,
-            title: `${pre.location.emoji} Memancing di ${pre.location.name}...`,
-            blocks: [
-                `Kamu memasang **${pre.baitItem.emoji} ${pre.baitItem.name}** pada **${pre.rod.item.emoji} ${pre.rod.item.name}** dan melempar kail ke air...`,
-                '🌊 *Menunggu pelampung bergerak... Bersiaplah menekan tombol **🎣 Tarik!** saat muncul!*'
-            ]
-        })
-    );
-
-    const waitMs = 2000 + Math.floor(Math.random() * 2000);
-    await sleepMs(waitMs);
-
-    const nonce = `${discordId.slice(-4)}_${Date.now().toString(36)}`;
-    const pullBtnRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`fish_pull_${nonce}`)
-            .setLabel('Tarik!')
-            .setEmoji('🎣')
-            .setStyle(ButtonStyle.Success)
-    );
-
-    const promptMsg = await interaction.editReply(
-        buildV2Card({
-            accentColor: COLORS.WARNING,
-            title: `💦 STRIKE! Pelampung Tenggelam!`,
-            blocks: [
-                `Sesuatu menyambar umpanmu di **${pre.location.name}**!`,
-                '⚡ Klik tombol **🎣 Tarik!** di bawah dalam **6 detik**!'
-            ],
-            actionRows: [pullBtnRow]
-        })
-    );
+    cancelAutoUpdate(`fishing:${discordId}`);
+    setPanelMinigameLock(discordId, 'fishing', true);
 
     let pulledInTime = false;
     try {
-        const btnInt = await promptMsg.awaitMessageComponent({
-            filter: i => i.user.id === discordId && i.customId === `fish_pull_${nonce}`,
-            time: 6000
-        });
-        await btnInt.deferUpdate();
-        pulledInTime = true;
-    } catch {
-        pulledInTime = false;
+        await interaction.update(
+            buildV2Card({
+                accentColor: COLORS.ACT,
+                title: `${pre.location.emoji} Memancing di ${pre.location.name}...`,
+                blocks: [
+                    `Kamu memasang **${pre.baitItem.emoji} ${pre.baitItem.name}** pada **${pre.rod.item.emoji} ${pre.rod.item.name}** dan melempar kail ke air...`,
+                    '🌊 *Menunggu pelampung bergerak... Bersiaplah menekan tombol **🎣 Tarik!** saat muncul!*'
+                ]
+            })
+        );
+
+        const waitMs = 2000 + Math.floor(Math.random() * 2000);
+        await sleepMs(waitMs);
+
+        const nonce = `${discordId.slice(-4)}_${Date.now().toString(36)}`;
+        const pullBtnRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`fish_pull_${nonce}`)
+                .setLabel('Tarik!')
+                .setEmoji('🎣')
+                .setStyle(ButtonStyle.Success)
+        );
+
+        const promptMsg = await interaction.editReply(
+            buildV2Card({
+                accentColor: COLORS.WARNING,
+                title: `💦 STRIKE! Pelampung Tenggelam!`,
+                blocks: [
+                    `Sesuatu menyambar umpanmu di **${pre.location.name}**!`,
+                    '⚡ Klik tombol **🎣 Tarik!** di bawah dalam **6 detik**!'
+                ],
+                actionRows: [pullBtnRow]
+            })
+        );
+
+        try {
+            const btnInt = await promptMsg.awaitMessageComponent({
+                filter: i => i.user.id === discordId && i.customId === `fish_pull_${nonce}`,
+                time: 6000
+            });
+            await btnInt.deferUpdate();
+            pulledInTime = true;
+        } catch {
+            pulledInTime = false;
+        }
+    } finally {
+        setPanelMinigameLock(discordId, 'fishing', false);
     }
 
     const finishNow = Date.now();
@@ -609,11 +634,43 @@ async function runFishingCast(interaction, now = Date.now()) {
             notes.length > 0 ? notes.join('\n') : null
         ],
         rows: buildFishingRows(discordId, updatedState, finishNow),
-        footer: 'Pilih lokasi/umpan atau klik Segarkan setelah hitungan mundur selesai untuk melempar kail lagi.',
+        footer: 'Pilih lokasi/umpan setelah hitungan mundur selesai untuk melempar kail lagi.',
         now: finishNow
     });
 
     await interaction.editReply(resultPanel);
+
+    const remAfterFinish = Math.max(500, (now + cost.cooldownSec * 1000) - Date.now() + 500);
+    scheduleAutoUpdate(`fishing:${discordId}`, interaction, remAfterFinish, async () => {
+        const readyNow = Date.now();
+        const readyState = await fetchFishingState(discordId, readyNow);
+        if (!readyState.bestRod) {
+            return buildFishingPrepPanel(readyState, null, readyNow);
+        }
+        return buildPanel({
+            mod: 'fishing',
+            ownerId: discordId,
+            accentColor: pulledInTime ? COLORS.ACT : COLORS.WARNING,
+            title: `🎣 Hasil Memancing di ${pre.location.name}`,
+            player: readyState.player,
+            banner: {
+                type: pulledInTime ? 'success' : 'warning',
+                text: `Berhasil mengangkat **${outcome.loot.quantity}× ${outcome.caughtItem.emoji} ${outcome.caughtItem.name}** (${outcome.loot.rarityInfo.emoji} ${outcome.loot.rarityInfo.name})!`
+            },
+            blocks: [
+                [
+                    `• 💰 **Harga Dasar Pasar:** ${formatLp(outcome.caughtItem.sellPrice)} / ekor`,
+                    `• ✨ **Fishing EXP:** +${outcome.gainedXp} EXP *(Lv. ${outcome.newLvInfo.level} — ${outcome.newLvInfo.currentXp}/${outcome.newLvInfo.requiredXp})*`,
+                    `• 🎋 **Durability ${pre.rod.item.name}:** \`${outcome.remainingRodDur}/${pre.rod.item.maxDurability}\``,
+                    `• ⏳ **Lemparan Berikutnya:** ✅ **Siap Lempar Kail!**`
+                ].join('\n'),
+                notes.length > 0 ? notes.join('\n') : null
+            ],
+            rows: buildFishingRows(discordId, readyState, readyNow),
+            footer: 'Kail sudah siap! Klik 🎣 Lempar Kail untuk memancing lagi.',
+            now: readyNow
+        });
+    });
 }
 
 module.exports = {
@@ -627,7 +684,9 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchFishingState(interaction.user.id, now);
-        return await interaction.reply(buildFishingPrepPanel(state, null, now));
+        const res = await interaction.reply(buildFishingPrepPanel(state, null, now));
+        scheduleFishingCooldown(interaction.user.id, interaction, state.remCd);
+        return res;
     },
 
     panel: {
@@ -635,7 +694,9 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchFishingState(interaction.user.id, now);
-                return await interaction.update(buildFishingPrepPanel(state, null, now));
+                const res = await interaction.update(buildFishingPrepPanel(state, null, now));
+                scheduleFishingCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             },
             async cast(interaction) {
                 return await runFishingCast(interaction, Date.now());
@@ -647,7 +708,9 @@ module.exports = {
                 const banner = meal.consumedSummary.length > 0
                     ? { type: 'success', text: `Makan cepat berhasil: mengonsumsi **${meal.consumedSummary.join(', ')}**.` }
                     : { type: 'info', text: 'Kondisi tubuhmu sudah kenyang atau tidak ada makanan/minuman di tas.' };
-                return await interaction.update(buildFishingPrepPanel(state, banner, now));
+                const res = await interaction.update(buildFishingPrepPanel(state, banner, now));
+                scheduleFishingCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             },
             async sell_fish(interaction) {
                 const now = Date.now();
@@ -656,7 +719,9 @@ module.exports = {
                 const banner = res.ok
                     ? { type: 'success', text: `💰 Berhasil menjual **${res.totalItemsSold} tangkapan** ke Pasar Ikan seharga **+${formatLp(res.grandTotal)}**!` }
                     : { type: 'warning', text: 'Tidak ada ikan atau tangkapan di tasmu untuk dijual.' };
-                return await interaction.update(buildFishingPrepPanel(state, banner, now));
+                const out = await interaction.update(buildFishingPrepPanel(state, banner, now));
+                scheduleFishingCooldown(interaction.user.id, interaction, state.remCd);
+                return out;
             }
         },
         selects: {
@@ -665,17 +730,22 @@ module.exports = {
                 const locId = interaction.values[0] || 'sungai';
                 await query(`UPDATE players SET last_fishing_loc = ? WHERE discord_id = ?`, [locId, interaction.user.id]);
                 const state = await fetchFishingState(interaction.user.id, now);
-                return await interaction.update(buildFishingPrepPanel(state, null, now));
+                const res = await interaction.update(buildFishingPrepPanel(state, null, now));
+                scheduleFishingCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             },
             async bait(interaction) {
                 const now = Date.now();
                 const baitId = interaction.values[0] || 'umpan_cacing';
                 await query(`UPDATE players SET last_fishing_bait = ? WHERE discord_id = ?`, [baitId, interaction.user.id]);
                 const state = await fetchFishingState(interaction.user.id, now);
-                return await interaction.update(buildFishingPrepPanel(state, null, now));
+                const res = await interaction.update(buildFishingPrepPanel(state, null, now));
+                scheduleFishingCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             }
         }
     },
 
+    fetchFishingState,
     buildFishingPrepPanel
 };

@@ -9,6 +9,19 @@ const { EDUCATION_LEVELS, getEducation, getAvailableNextEducations } = require('
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, renderBar, formatDuration } = require('../../utils/uiBuilder');
 const { buildPanel, btn } = require('../../utils/panelBuilder');
+const { scheduleAutoUpdate, cancelAutoUpdate } = require('../../services/autoUpdateService');
+
+function scheduleStudyCooldown(userId, interaction, remCd) {
+    if (remCd > 0) {
+        scheduleAutoUpdate(`study:${userId}`, interaction, remCd + 500, async () => {
+            const now = Date.now();
+            const freshState = await fetchStudyState(userId, now);
+            return buildStudyPanel(freshState, null, now);
+        });
+    } else {
+        cancelAutoUpdate(`study:${userId}`);
+    }
+}
 
 async function fetchStudyState(discordId, now = Date.now()) {
     const remCd = await getCooldownRemaining(discordId, 'study', query);
@@ -124,11 +137,6 @@ function buildStudyPanel(state, banner = null, now = Date.now()) {
             label: 'Makan Cepat',
             emoji: '🍴',
             style: ButtonStyle.Primary
-        }, now),
-        btn('study', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 
@@ -249,7 +257,9 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchStudyState(interaction.user.id, now);
-        return await interaction.reply(buildStudyPanel(state, null, now));
+        const res = await interaction.reply(buildStudyPanel(state, null, now));
+        scheduleStudyCooldown(interaction.user.id, interaction, state.remCd);
+        return res;
     },
 
     panel: {
@@ -257,7 +267,9 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchStudyState(interaction.user.id, now);
-                return await interaction.update(buildStudyPanel(state, null, now));
+                const res = await interaction.update(buildStudyPanel(state, null, now));
+                scheduleStudyCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             },
             async attend(interaction, parsed) {
                 const now = Date.now();
@@ -288,7 +300,9 @@ module.exports = {
                     };
                 }
 
-                return await interaction.update(buildStudyPanel(state, banner, now));
+                const out = await interaction.update(buildStudyPanel(state, banner, now));
+                scheduleStudyCooldown(interaction.user.id, interaction, state.remCd);
+                return out;
             },
             async quick_meal(interaction) {
                 const now = Date.now();
@@ -297,8 +311,13 @@ module.exports = {
                 const banner = meal.consumedSummary.length > 0
                     ? { type: 'success', text: `Makan cepat berhasil: mengonsumsi **${meal.consumedSummary.join(', ')}**.` }
                     : { type: 'info', text: 'Kondisi tubuhmu sudah kenyang atau tidak ada makanan/minuman di tas.' };
-                return await interaction.update(buildStudyPanel(state, banner, now));
+                const out = await interaction.update(buildStudyPanel(state, banner, now));
+                scheduleStudyCooldown(interaction.user.id, interaction, state.remCd);
+                return out;
             }
         }
-    }
+    },
+
+    fetchStudyState,
+    buildStudyPanel
 };

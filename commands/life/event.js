@@ -84,16 +84,6 @@ function buildEventPanel({
                 calendarLines.join('\n')
             ].join('\n')
         );
-
-        rows.push(
-            new ActionRowBuilder().addComponents(
-                btn('event', 'home', ownerId, {
-                    label: 'Segarkan Cuaca & Event',
-                    emoji: '🔄',
-                    style: ButtonStyle.Secondary
-                }, now)
-            )
-        );
     } else {
         const { config, stateRow, lebaranThr } = active;
         const goal = config.communityGoal;
@@ -163,11 +153,6 @@ function buildEventPanel({
                 emoji: progress.goal_claimed ? '✅' : '🎁',
                 style: ButtonStyle.Success,
                 disabled: !canClaimGoal
-            }, now),
-            btn('event', 'home', ownerId, {
-                label: 'Segarkan',
-                emoji: '🔄',
-                style: ButtonStyle.Secondary
             }, now)
         );
 

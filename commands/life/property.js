@@ -169,15 +169,9 @@ function buildPropertyPanel({
         );
     }
 
-    btnComponents.push(
-        btn('property', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
-        }, now)
-    );
-
-    rows.push(new ActionRowBuilder().addComponents(btnComponents.slice(0, 5)));
+    if (btnComponents.length > 0) {
+        rows.push(new ActionRowBuilder().addComponents(btnComponents.slice(0, 5)));
+    }
 
     return buildPanel({
         mod: 'property',

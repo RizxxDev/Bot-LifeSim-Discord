@@ -61,11 +61,6 @@ function buildDailyPanel({ state, banner = null, now = Date.now() }) {
             emoji: alreadyClaimedToday ? '✅' : '🎁',
             style: ButtonStyle.Success,
             disabled: alreadyClaimedToday
-        }, now),
-        btn('daily', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 

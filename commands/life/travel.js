@@ -18,6 +18,7 @@ const {
     validateTravelAttempt,
     executeStartTravel
 } = require('../../services/cityService');
+const { scheduleAutoUpdate, cancelAutoUpdate } = require('../../services/autoUpdateService');
 const { COLORS, formatLp } = require('../../utils/uiBuilder');
 const { buildPanel, btn, select } = require('../../utils/panelBuilder');
 
@@ -114,20 +115,28 @@ function buildTravelPanel({
             ].join('\n')
         ];
 
-        const rowButtons = [
-            btn('travel', 'home', ownerId, {
-                label: 'Segarkan Status Ketibaan',
-                emoji: '🔄',
-                style: ButtonStyle.Primary
-            }, now)
-        ];
-
+        const rowButtons = [];
         if (hasDriver) {
             rowButtons.push(
+                btn('travel', 'noop', ownerId, {
+                    label: 'Disopiri Supir Pribadi',
+                    emoji: '👨‍✈️',
+                    style: ButtonStyle.Secondary,
+                    disabled: true
+                }, now),
                 btn('consume', 'home', ownerId, {
                     label: 'Makan / Minum',
                     emoji: '🍱',
                     style: ButtonStyle.Success
+                }, now)
+            );
+        } else {
+            rowButtons.push(
+                btn('travel', 'noop', ownerId, {
+                    label: 'Sedang Mengemudi...',
+                    emoji: '🚗',
+                    style: ButtonStyle.Secondary,
+                    disabled: true
                 }, now)
             );
         }
@@ -141,7 +150,7 @@ function buildTravelPanel({
             banner: effectiveBanner,
             blocks,
             rows: [new ActionRowBuilder().addComponents(rowButtons)],
-            footer: 'Klik Segarkan Status Ketibaan setelah hitung mundur selesai untuk langsung beraktivitas di kota baru.',
+            footer: 'Embed akan otomatis memperbarui tampilan saat kamu tiba di kota tujuan!',
             now
         });
     }
@@ -291,11 +300,6 @@ function buildTravelPanel({
             label: 'Garasi & BBM',
             emoji: '⛽',
             style: ButtonStyle.Secondary
-        }, now),
-        btn('travel', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 
@@ -325,7 +329,15 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchTravelState(interaction.user.id, now);
-        return await interaction.reply(buildTravelPanel({ state, now }));
+        const reply = await interaction.reply(buildTravelPanel({ state, now }));
+        if (Number(state.player.traveling_until || 0) > now) {
+            const remMs = Number(state.player.traveling_until) - now;
+            scheduleAutoUpdate(`travel:${interaction.user.id}`, interaction, remMs + 500, async () => {
+                const refreshedState = await fetchTravelState(interaction.user.id, Date.now());
+                return { ...buildTravelPanel({ state: refreshedState, now: Date.now() }), attachments: [] };
+            });
+        }
+        return reply;
     },
 
     panel: {
@@ -333,7 +345,17 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchTravelState(interaction.user.id, now);
-                return await interaction.update({ ...buildTravelPanel({ state, now }), attachments: [] });
+                const reply = await interaction.update({ ...buildTravelPanel({ state, now }), attachments: [] });
+                if (Number(state.player.traveling_until || 0) > now) {
+                    const remMs = Number(state.player.traveling_until) - now;
+                    scheduleAutoUpdate(`travel:${interaction.user.id}`, interaction, remMs + 500, async () => {
+                        const refreshedState = await fetchTravelState(interaction.user.id, Date.now());
+                        return { ...buildTravelPanel({ state: refreshedState, now: Date.now() }), attachments: [] };
+                    });
+                } else {
+                    cancelAutoUpdate(`travel:${interaction.user.id}`);
+                }
+                return reply;
             },
             async pick_dest_btn(interaction, parsed) {
                 const now = Date.now();
@@ -382,10 +404,20 @@ module.exports = {
                     text: `🚗 Berangkat menuju **${res.toCity.emoji} ${res.toCity.name}** sejauh **${res.route.distanceKm} km** menggunakan **${res.vehicle.emoji} ${res.vehicle.name}** (-${res.fuelNeeded.toFixed(2)} L BBM)${feeNote}!`
                 };
 
-                return await interaction.update({
+                const reply = await interaction.update({
                     ...buildTravelPanel({ state, banner, now }),
                     attachments: []
                 });
+
+                if (Number(state.player.traveling_until || 0) > now) {
+                    const remMs = Number(state.player.traveling_until) - now;
+                    scheduleAutoUpdate(`travel:${userId}`, interaction, remMs + 500, async () => {
+                        const refreshedState = await fetchTravelState(userId, Date.now());
+                        return { ...buildTravelPanel({ state: refreshedState, now: Date.now() }), attachments: [] };
+                    });
+                }
+
+                return reply;
             }
         },
         selects: {

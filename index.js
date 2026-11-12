@@ -5,6 +5,7 @@ const path = require('path');
 const { initDatabase } = require('./database/mariadb');
 const { initRedis } = require('./database/redis');
 const { registerPanel } = require('./services/panelRouter');
+const { registerPanelRenderer } = require('./services/autoUpdateService');
 
 const client = new Client({
     intents: [
@@ -38,6 +39,20 @@ function loadCommands(dir) {
                         command.lockTtl || 15,
                         Boolean(command.skipRegistrationCheck)
                     );
+                }
+                if (!command.isAdminCommand && !command.skipRegistrationCheck && typeof command.executeSlash === 'function') {
+                    registerPanelRenderer(command.name, async (userId) => {
+                        let captured = null;
+                        await command.executeSlash({
+                            user: { id: userId },
+                            isLiveSyncProbe: true,
+                            reply: async (payload) => {
+                                captured = payload;
+                                return payload;
+                            }
+                        });
+                        return captured;
+                    });
                 }
                 if (command.isAdminCommand) {
                     client.adminCommandData.push(command.data.toJSON());

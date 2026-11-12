@@ -6,6 +6,7 @@ const { debitPlayerFunds } = require('../../services/economyService');
 const { VITALS } = require('../../data/constants');
 const { getPropertyTier } = require('../../data/properties');
 const { MOTEL_TRANSIT_CONFIG, getCity } = require('../../data/cities');
+const { scheduleAutoUpdate, cancelAutoUpdate } = require('../../services/autoUpdateService');
 const { COLORS, formatLp, formatDuration } = require('../../utils/uiBuilder');
 const { buildPanel, btn } = require('../../utils/panelBuilder');
 
@@ -96,14 +97,6 @@ function buildSleepPanel({ state, banner = null, now = Date.now() }) {
         );
     }
 
-    actionButtons.push(
-        btn('sleep', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
-        }, now)
-    );
-
     const row = new ActionRowBuilder().addComponents(actionButtons);
 
     return buildPanel({
@@ -115,7 +108,7 @@ function buildSleepPanel({ state, banner = null, now = Date.now() }) {
         banner,
         blocks,
         rows: [row],
-        footer: 'Selama tidur berlangsung, kamu tidak dapat beraktivitas. Gunakan Motel Transit bila sedang merantau jauh dari hunianmu!',
+        footer: 'Selama tidur berlangsung, kamu tidak dapat beraktivitas. Tampilan akan otomatis memperbarui dirinya saat kamu bangun!',
         now
     });
 }
@@ -130,7 +123,19 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchSleepState(interaction.user.id, now);
-        return await interaction.reply(buildSleepPanel({ state, now }));
+        const reply = await interaction.reply(buildSleepPanel({ state, now }));
+        if (Number(state.player.sleeping_until || 0) > now) {
+            const remMs = Number(state.player.sleeping_until) - now;
+            scheduleAutoUpdate(`sleep:${interaction.user.id}`, interaction, remMs + 500, async () => {
+                const refreshed = await fetchSleepState(interaction.user.id, Date.now());
+                return buildSleepPanel({
+                    state: refreshed,
+                    banner: { type: 'success', text: '🛌 Kamu sudah bangun tidur! Energy telah pulih kembali.' },
+                    now: Date.now()
+                });
+            });
+        }
+        return reply;
     },
 
     panel: {
@@ -138,7 +143,21 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchSleepState(interaction.user.id, now);
-                return await interaction.update(buildSleepPanel({ state, now }));
+                const reply = await interaction.update(buildSleepPanel({ state, now }));
+                if (Number(state.player.sleeping_until || 0) > now) {
+                    const remMs = Number(state.player.sleeping_until) - now;
+                    scheduleAutoUpdate(`sleep:${interaction.user.id}`, interaction, remMs + 500, async () => {
+                        const refreshed = await fetchSleepState(interaction.user.id, Date.now());
+                        return buildSleepPanel({
+                            state: refreshed,
+                            banner: { type: 'success', text: '🛌 Kamu sudah bangun tidur! Energy telah pulih kembali.' },
+                            now: Date.now()
+                        });
+                    });
+                } else {
+                    cancelAutoUpdate(`sleep:${interaction.user.id}`);
+                }
+                return reply;
             },
             async start(interaction) {
                 const now = Date.now();
@@ -194,13 +213,27 @@ module.exports = {
                     banner = { type: 'warning', text: 'Kamu sedang tidak dapat memulai tidur saat ini.' };
                 }
 
-                return await interaction.update(
+                const reply = await interaction.update(
                     buildSleepPanel({
                         state: { player: res.player, propStatus: res.propStatus },
                         banner,
                         now
                     })
                 );
+
+                if (res.ok && res.wakeAt > now) {
+                    const remMs = res.wakeAt - now;
+                    scheduleAutoUpdate(`sleep:${userId}`, interaction, remMs + 500, async () => {
+                        const refreshed = await fetchSleepState(userId, Date.now());
+                        return buildSleepPanel({
+                            state: refreshed,
+                            banner: { type: 'success', text: '🛌 Kamu sudah bangun tidur! Energy telah pulih kembali.' },
+                            now: Date.now()
+                        });
+                    });
+                }
+
+                return reply;
             },
             async start_motel(interaction) {
                 const now = Date.now();
@@ -269,13 +302,27 @@ module.exports = {
                     banner = { type: 'warning', text: 'Kamu sedang tidak dapat menginap di Motel saat ini.' };
                 }
 
-                return await interaction.update(
+                const reply = await interaction.update(
                     buildSleepPanel({
                         state: { player: res.player, propStatus: res.propStatus },
                         banner,
                         now
                     })
                 );
+
+                if (res.ok && res.wakeAt > now) {
+                    const remMs = res.wakeAt - now;
+                    scheduleAutoUpdate(`sleep:${userId}`, interaction, remMs + 500, async () => {
+                        const refreshed = await fetchSleepState(userId, Date.now());
+                        return buildSleepPanel({
+                            state: refreshed,
+                            banner: { type: 'success', text: '🛌 Kamu sudah bangun tidur! Energy telah pulih kembali.' },
+                            now: Date.now()
+                        });
+                    });
+                }
+
+                return reply;
             }
         }
     },

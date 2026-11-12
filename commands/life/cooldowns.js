@@ -46,9 +46,14 @@ async function buildCooldownsPanel(discordId, now = Date.now()) {
     }
 
     const row = new ActionRowBuilder().addComponents(
-        btn('cooldowns', 'home', discordId, {
-            label: 'Segarkan Jadwal',
-            emoji: '🔄',
+        btn('profile', 'home', discordId, {
+            label: 'Profil Saya',
+            emoji: '🪪',
+            style: ButtonStyle.Primary
+        }, now),
+        btn('work', 'home', discordId, {
+            label: 'Bursa Kerja',
+            emoji: '💼',
             style: ButtonStyle.Secondary
         }, now)
     );

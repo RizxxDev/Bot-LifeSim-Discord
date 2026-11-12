@@ -40,6 +40,37 @@ const {
     select,
     confirmView
 } = require('../../utils/panelBuilder');
+const { scheduleAutoUpdate, cancelAutoUpdate } = require('../../services/autoUpdateService');
+
+function scheduleFarmAutoUpdate(userId, interaction, state) {
+    if ((state?.player?.current_city || 'kota_sentral') !== 'kota_timur') {
+        cancelAutoUpdate(`farm:${userId}`);
+        return;
+    }
+    const pendingMs = (state.plots || [])
+        .filter(pl => !pl.is_locked && (pl.phase === 1 || pl.phase === 2) && pl.watered === 1 && Number(pl.remainingPhaseMs || 0) > 0)
+        .map(pl => Number(pl.remainingPhaseMs));
+    if (pendingMs.length === 0) {
+        cancelAutoUpdate(`farm:${userId}`);
+        return;
+    }
+    const minRemMs = Math.min(...pendingMs);
+    const delayMs = Math.max(500, minRemMs + 500);
+    scheduleAutoUpdate(`farm:${userId}`, interaction, delayMs, async () => {
+        const readyNow = Date.now();
+        const freshState = await fetchFarmState(userId, readyNow);
+        scheduleFarmAutoUpdate(userId, interaction, freshState);
+        return buildFarmPanel({
+            state: freshState,
+            mode: 'view',
+            banner: {
+                type: 'info',
+                text: '🌱 **Fase pertumbuhan petak kebunmu baru saja diperbarui!** Periksa petak yang butuh disiram atau siap dipanen.'
+            },
+            now: readyNow
+        });
+    });
+}
 
 function formatPlotLine(plot, now = Date.now()) {
     const typeTag = plot.ownership_type === 'owned' ? '🏡 Milik' : '📑 Sewa';
@@ -357,7 +388,9 @@ async function handleFarmQuickAction(interaction, actionType) {
     });
 
     const state = await fetchFarmState(userId, now);
-    return await interaction.update(buildFarmPanel({ state, banner, now }));
+    const res = await interaction.update(buildFarmPanel({ state, banner, now }));
+    scheduleFarmAutoUpdate(userId, interaction, state);
+    return res;
 }
 
 module.exports = {
@@ -370,7 +403,9 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchFarmState(interaction.user.id, now);
-        return await interaction.reply(buildFarmPanel({ state, mode: 'view', now }));
+        const res = await interaction.reply(buildFarmPanel({ state, mode: 'view', now }));
+        scheduleFarmAutoUpdate(interaction.user.id, interaction, state);
+        return res;
     },
 
     panel: {
@@ -378,16 +413,20 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchFarmState(interaction.user.id, now);
-                return await interaction.update(buildFarmPanel({ state, mode: 'view', now }));
+                const res = await interaction.update(buildFarmPanel({ state, mode: 'view', now }));
+                scheduleFarmAutoUpdate(interaction.user.id, interaction, state);
+                return res;
             },
             async mode_fert(interaction) {
                 const now = Date.now();
                 const state = await fetchFarmState(interaction.user.id, now);
+                cancelAutoUpdate(`farm:${interaction.user.id}`);
                 return await interaction.update(buildFarmPanel({ state, mode: 'fertilize', now }));
             },
             async mode_expand(interaction) {
                 const now = Date.now();
                 const state = await fetchFarmState(interaction.user.id, now);
+                cancelAutoUpdate(`farm:${interaction.user.id}`);
                 return await interaction.update(buildFarmPanel({ state, mode: 'expand', now }));
             },
             async plant_all(interaction) {
@@ -477,7 +516,9 @@ module.exports = {
                 const banner = res.ok
                     ? { type: 'success', text: `✅ Berhasil menyewa **Petak #${res.plotNumber}** seharga **${formatLp(res.cost)}/minggu**!` }
                     : { type: 'danger', text: `Gagal menyewa petak: pastikan uang tunai (Cash) mencukupi.` };
-                return await interaction.update(buildFarmPanel({ state, mode: 'view', banner, now }));
+                const out = await interaction.update(buildFarmPanel({ state, mode: 'view', banner, now }));
+                scheduleFarmAutoUpdate(userId, interaction, state);
+                return out;
             },
             async buy_prompt(interaction) {
                 const now = Date.now();
@@ -514,7 +555,9 @@ module.exports = {
                 const banner = res.ok
                     ? { type: 'success', text: `🏡 Selamat! **Petak Permanen #${res.plotNumber}** resmi dibeli seharga **${formatLp(res.cost)}**!` }
                     : { type: 'danger', text: `Gagal membeli lahan: pastikan uang tunai (Cash) mencukupi.` };
-                return await interaction.update(buildFarmPanel({ state, mode: 'view', banner, now }));
+                const out = await interaction.update(buildFarmPanel({ state, mode: 'view', banner, now }));
+                scheduleFarmAutoUpdate(userId, interaction, state);
+                return out;
             }
         },
         selects: {
@@ -523,11 +566,14 @@ module.exports = {
                 const cropId = interaction.values[0] || 'bayam';
                 await query(`UPDATE players SET last_farm_crop = ? WHERE discord_id = ?`, [cropId, interaction.user.id]);
                 const state = await fetchFarmState(interaction.user.id, now);
-                return await interaction.update(buildFarmPanel({ state, mode: 'view', now }));
+                const out = await interaction.update(buildFarmPanel({ state, mode: 'view', now }));
+                scheduleFarmAutoUpdate(interaction.user.id, interaction, state);
+                return out;
             }
         }
     },
 
+    fetchFarmState,
     buildFarmPanel,
     handleFarmQuickAction
 };

@@ -19,11 +19,6 @@ function buildStartPanel(player, now = Date.now()) {
             label: 'Lowongan Kerja (/job)',
             emoji: '💼',
             style: ButtonStyle.Success
-        }, now),
-        btn('start', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 

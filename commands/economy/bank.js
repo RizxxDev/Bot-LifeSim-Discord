@@ -65,11 +65,6 @@ function buildBankPanel(player, mode = 'home', banner = null, now = Date.now()) 
                     emoji: '📤',
                     style: ButtonStyle.Primary,
                     disabled: bank <= 0
-                }, now),
-                btn('bank', 'home', ownerId, {
-                    label: 'Segarkan',
-                    emoji: '🔄',
-                    style: ButtonStyle.Secondary
                 }, now)
             )
         );

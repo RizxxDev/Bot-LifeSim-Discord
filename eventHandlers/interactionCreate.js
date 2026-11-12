@@ -20,6 +20,7 @@ const { buildHelpCategoryPayload } = require('../commands/onboarding/help');
 const { fetchJobState, buildJobPanel } = require('../commands/career/job');
 const { COLORS, buildV2Card } = require('../utils/uiBuilder');
 const panelRouter = require('../services/panelRouter');
+const { trackInteractionPanel } = require('../services/autoUpdateService');
 
 module.exports = {
     name: 'interactionCreate',
@@ -102,6 +103,9 @@ module.exports = {
 
                 try {
                     await command.executeSlash(interaction);
+                    if (!command.isAdminCommand && !command.skipRegistrationCheck) {
+                        trackInteractionPanel(userId, command.name, interaction, Date.now());
+                    }
                 } finally {
                     await releaseUserLock(userId, lockToken);
                 }

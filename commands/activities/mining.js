@@ -23,9 +23,22 @@ const { getItem } = require('../../data/items');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, formatDuration, buildV2Card } = require('../../utils/uiBuilder');
 const { buildPanel, btn, select } = require('../../utils/panelBuilder');
+const { scheduleAutoUpdate, cancelAutoUpdate, setPanelMinigameLock } = require('../../services/autoUpdateService');
 
 function sleepMs(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function scheduleMiningCooldown(userId, interaction, remCd) {
+    if (remCd > 0) {
+        scheduleAutoUpdate(`mining:${userId}`, interaction, remCd + 500, async () => {
+            const now = Date.now();
+            const freshState = await fetchMiningState(userId, now);
+            return buildMiningPrepPanel(freshState, null, now);
+        });
+    } else {
+        cancelAutoUpdate(`mining:${userId}`);
+    }
 }
 
 async function fetchMiningState(discordId, now = Date.now()) {
@@ -116,11 +129,6 @@ function buildMiningRows(ownerId, state, now = Date.now()) {
             emoji: '💰',
             style: ButtonStyle.Secondary,
             disabled: mineralInBagCount <= 0
-        }, now),
-        btn('mining', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 
@@ -159,10 +167,16 @@ function buildMiningPrepPanel(state, banner = null, now = Date.now()) {
         ];
 
         const gateRow = new ActionRowBuilder().addComponents(
-            btn('mining', 'home', ownerId, {
-                label: 'Cek Ulang Tas',
-                emoji: '🔄',
-                style: ButtonStyle.Primary
+            btn('shop', 'page', ownerId, {
+                label: 'Toko Perkakas (/shop)',
+                emoji: '🔧',
+                style: ButtonStyle.Primary,
+                arg: 'perkakas:1'
+            }, now),
+            btn('bin', 'home', ownerId, {
+                label: 'Cari Modal (/bin)',
+                emoji: '🗑️',
+                style: ButtonStyle.Success
             }, now),
             btn('mining', 'sell_mineral', ownerId, {
                 label: `Jual Mineral (${state.mineralInBagCount || 0})`,
@@ -240,12 +254,14 @@ async function runMiningSwing(interaction, now = Date.now()) {
     const remCd = await getCooldownRemaining(discordId, 'mining', query);
     if (remCd > 0) {
         const state = await fetchMiningState(discordId, now);
-        return await interaction.update(
+        const res = await interaction.update(
             buildMiningPrepPanel(state, {
                 type: 'warning',
                 text: `Debu tambang masih tebal! Kamu bisa menambang lagi <t:${Math.floor((now + remCd) / 1000)}:R>.`
             }, now)
         );
+        scheduleMiningCooldown(discordId, interaction, state.remCd);
+        return res;
     }
 
     const cost = ACTIVITY_COSTS.mining;
@@ -300,54 +316,63 @@ async function runMiningSwing(interaction, now = Date.now()) {
 
     if (pre.error) {
         const state = await fetchMiningState(discordId, now);
-        return await interaction.update(buildMiningPrepPanel(state, { type: 'danger', text: pre.error }, now));
+        const res = await interaction.update(buildMiningPrepPanel(state, { type: 'danger', text: pre.error }, now));
+        scheduleMiningCooldown(discordId, interaction, state.remCd);
+        return res;
     }
 
-    await interaction.update(
-        buildV2Card({
-            accentColor: COLORS.ACT,
-            title: `${pre.location.emoji} Menambang di ${pre.location.name}...`,
-            blocks: [
-                `Kamu mengamati retakan dinding batuan menggunakan **${pre.pickaxe.item.emoji} ${pre.pickaxe.item.name}**...`,
-                '🔦 *Bersiaplah menekan tombol **⛏️ Ayunkan!** saat titik lemah batuan terlihat!*'
-            ]
-        })
-    );
-
-    const waitMs = 2000 + Math.floor(Math.random() * 2000);
-    await sleepMs(waitMs);
-
-    const nonce = `${discordId.slice(-4)}_${Date.now().toString(36)}`;
-    const swingRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`mine_swing_${nonce}`)
-            .setLabel('Ayunkan!')
-            .setEmoji('⛏️')
-            .setStyle(ButtonStyle.Success)
-    );
-
-    const promptMsg = await interaction.editReply(
-        buildV2Card({
-            accentColor: COLORS.WARNING,
-            title: `✨ Urat Mineral Terlihat!`,
-            blocks: [
-                `Celah batuan di **${pre.location.name}** terbuka!`,
-                '⚡ Klik tombol **⛏️ Ayunkan!** di bawah dalam **6 detik**!'
-            ],
-            actionRows: [swingRow]
-        })
-    );
+    cancelAutoUpdate(`mining:${discordId}`);
+    setPanelMinigameLock(discordId, 'mining', true);
 
     let swungInTime = false;
     try {
-        const btnInt = await promptMsg.awaitMessageComponent({
-            filter: i => i.user.id === discordId && i.customId === `mine_swing_${nonce}`,
-            time: 6000
-        });
-        await btnInt.deferUpdate();
-        swungInTime = true;
-    } catch {
-        swungInTime = false;
+        await interaction.update(
+            buildV2Card({
+                accentColor: COLORS.ACT,
+                title: `${pre.location.emoji} Menambang di ${pre.location.name}...`,
+                blocks: [
+                    `Kamu mengamati retakan dinding batuan menggunakan **${pre.pickaxe.item.emoji} ${pre.pickaxe.item.name}**...`,
+                    '🔦 *Bersiaplah menekan tombol **⛏️ Ayunkan!** saat titik lemah batuan terlihat!*'
+                ]
+            })
+        );
+
+        const waitMs = 2000 + Math.floor(Math.random() * 2000);
+        await sleepMs(waitMs);
+
+        const nonce = `${discordId.slice(-4)}_${Date.now().toString(36)}`;
+        const swingRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mine_swing_${nonce}`)
+                .setLabel('Ayunkan!')
+                .setEmoji('⛏️')
+                .setStyle(ButtonStyle.Success)
+        );
+
+        const promptMsg = await interaction.editReply(
+            buildV2Card({
+                accentColor: COLORS.WARNING,
+                title: `✨ Urat Mineral Terlihat!`,
+                blocks: [
+                    `Celah batuan di **${pre.location.name}** terbuka!`,
+                    '⚡ Klik tombol **⛏️ Ayunkan!** di bawah dalam **6 detik**!'
+                ],
+                actionRows: [swingRow]
+            })
+        );
+
+        try {
+            const btnInt = await promptMsg.awaitMessageComponent({
+                filter: i => i.user.id === discordId && i.customId === `mine_swing_${nonce}`,
+                time: 6000
+            });
+            await btnInt.deferUpdate();
+            swungInTime = true;
+        } catch {
+            swungInTime = false;
+        }
+    } finally {
+        setPanelMinigameLock(discordId, 'mining', false);
     }
 
     const finishNow = Date.now();
@@ -519,11 +544,43 @@ async function runMiningSwing(interaction, now = Date.now()) {
             notes.length > 0 ? notes.join('\n') : null
         ],
         rows: buildMiningRows(discordId, updatedState, finishNow),
-        footer: 'Pilih lokasi atau klik Segarkan setelah hitungan mundur selesai untuk menambang lagi.',
+        footer: 'Pilih lokasi setelah hitungan mundur selesai untuk menambang lagi.',
         now: finishNow
     });
 
     await interaction.editReply(resultPanel);
+
+    const remAfterFinish = Math.max(500, (now + cost.cooldownSec * 1000) - Date.now() + 500);
+    scheduleAutoUpdate(`mining:${discordId}`, interaction, remAfterFinish, async () => {
+        const readyNow = Date.now();
+        const readyState = await fetchMiningState(discordId, readyNow);
+        if ((readyState.player.current_city || 'kota_sentral') !== 'kota_barat' || !readyState.bestPickaxe) {
+            return buildMiningPrepPanel(readyState, null, readyNow);
+        }
+        return buildPanel({
+            mod: 'mining',
+            ownerId: discordId,
+            accentColor: outcome.accidentDamage > 0 ? COLORS.WARNING : COLORS.ACT,
+            title: `⛏️ Hasil Tambang di ${pre.location.name}`,
+            player: readyState.player,
+            banner: {
+                type: swungInTime && outcome.accidentDamage === 0 ? 'success' : 'warning',
+                text: `Berhasil menggali **${outcome.loot.quantity}× ${outcome.minedItem.emoji} ${outcome.minedItem.name}** (${outcome.loot.rarityInfo.emoji} ${outcome.loot.rarityInfo.name})!`
+            },
+            blocks: [
+                [
+                    `• 💰 **Harga Dasar Pengepul:** ${formatLp(outcome.minedItem.sellPrice)} / unit`,
+                    `• ✨ **Mining EXP:** +${outcome.gainedXp} EXP *(Lv. ${outcome.newLvInfo.level} — ${outcome.newLvInfo.currentXp}/${outcome.newLvInfo.requiredXp})*`,
+                    `• ⛏️ **Durability ${pre.pickaxe.item.name}:** \`${outcome.remainingPickDur}/${pre.pickaxe.item.maxDurability}\``,
+                    `• ⏳ **Ayunan Berikutnya:** ✅ **Siap Menambang!**`
+                ].join('\n'),
+                notes.length > 0 ? notes.join('\n') : null
+            ],
+            rows: buildMiningRows(discordId, readyState, readyNow),
+            footer: 'Beliung sudah siap! Klik ⛏️ Ayunkan Beliung untuk menambang lagi.',
+            now: readyNow
+        });
+    });
 }
 
 module.exports = {
@@ -537,7 +594,9 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchMiningState(interaction.user.id, now);
-        return await interaction.reply(buildMiningPrepPanel(state, null, now));
+        const res = await interaction.reply(buildMiningPrepPanel(state, null, now));
+        scheduleMiningCooldown(interaction.user.id, interaction, state.remCd);
+        return res;
     },
 
     panel: {
@@ -545,7 +604,9 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchMiningState(interaction.user.id, now);
-                return await interaction.update(buildMiningPrepPanel(state, null, now));
+                const res = await interaction.update(buildMiningPrepPanel(state, null, now));
+                scheduleMiningCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             },
             async swing(interaction) {
                 return await runMiningSwing(interaction, Date.now());
@@ -557,7 +618,9 @@ module.exports = {
                 const banner = meal.consumedSummary.length > 0
                     ? { type: 'success', text: `Makan cepat berhasil: mengonsumsi **${meal.consumedSummary.join(', ')}**.` }
                     : { type: 'info', text: 'Kondisi tubuhmu sudah kenyang atau tidak ada makanan/minuman di tas.' };
-                return await interaction.update(buildMiningPrepPanel(state, banner, now));
+                const res = await interaction.update(buildMiningPrepPanel(state, banner, now));
+                scheduleMiningCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             },
             async sell_mineral(interaction) {
                 const now = Date.now();
@@ -566,7 +629,9 @@ module.exports = {
                 const banner = res.ok
                     ? { type: 'success', text: `💰 Berhasil menjual **${res.totalItemsSold} mineral** ke Pengepul seharga **+${formatLp(res.grandTotal)}**!` }
                     : { type: 'warning', text: 'Tidak ada mineral tambang di tasmu untuk dijual.' };
-                return await interaction.update(buildMiningPrepPanel(state, banner, now));
+                const out = await interaction.update(buildMiningPrepPanel(state, banner, now));
+                scheduleMiningCooldown(interaction.user.id, interaction, state.remCd);
+                return out;
             }
         },
         selects: {
@@ -575,10 +640,13 @@ module.exports = {
                 const locId = interaction.values[0] || 'tambang_batu';
                 await query(`UPDATE players SET last_mining_loc = ? WHERE discord_id = ?`, [locId, interaction.user.id]);
                 const state = await fetchMiningState(interaction.user.id, now);
-                return await interaction.update(buildMiningPrepPanel(state, null, now));
+                const res = await interaction.update(buildMiningPrepPanel(state, null, now));
+                scheduleMiningCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             }
         }
     },
 
+    fetchMiningState,
     buildMiningPrepPanel
 };

@@ -1510,9 +1510,113 @@ async function runTests() {
         const rawJson = JSON.stringify(pObj.components.map(c => c.toJSON()));
         assert(!rawJson.includes('undefined'), `Panel ${pName} tidak boleh mengandung string "undefined"`);
     }
-    console.log('✅ [23/23] Sistem Multi-Kota Linear, /travel, BBM & Durasi, Supir Mobil, Lockdown Perjalanan, City Gate & Motel Transit terverifikasi.\n');
+    console.log('✅ [23/24] Sistem Multi-Kota Linear, /travel, BBM & Durasi, Supir Mobil, Lockdown Perjalanan, City Gate & Motel Transit terverifikasi.');
 
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (23/23 PASSED)!');
+    // ====================================================
+    // 24. TEST AUTO-UPDATE SERVICE, LIVE PANEL SYNC & PENGHAPUSAN TOMBOL SEGARKAN
+    // ====================================================
+    const {
+        scheduleAutoUpdate,
+        cancelAutoUpdate,
+        clearAllAutoUpdates,
+        getAutoUpdateEntry,
+        registerPanelRenderer,
+        trackInteractionPanel,
+        setPanelMinigameLock,
+        flushPlayerPanelSync,
+        getActivePanelEntry
+    } = require('../services/autoUpdateService');
+
+    // A. Pengujian lifecycle timer autoUpdateService
+    clearAllAutoUpdates();
+    let firstFired = false;
+    let replacedPayload = null;
+    const mockInteraction = {
+        editReply: async (p) => { replacedPayload = p; }
+    };
+
+    scheduleAutoUpdate('test:123', mockInteraction, 50, async () => {
+        firstFired = true;
+        return { updated: true };
+    });
+    assert.ok(getAutoUpdateEntry('test:123'), 'Timer harus terdaftar di autoUpdateService');
+
+    // Menjadwalkan ulang dengan key yang sama harus membatalkan timer lama
+    scheduleAutoUpdate('test:123', mockInteraction, 60, async () => {
+        return { replaced: true };
+    });
+    assert.ok(getAutoUpdateEntry('test:123'));
+
+    // Tunggu timer berjalan
+    await new Promise(resolve => setTimeout(resolve, 80));
+    assert.strictEqual(firstFired, false, 'Callback timer lama tidak boleh dieksekusi setelah diganti');
+    assert.deepStrictEqual(replacedPayload, { replaced: true }, 'Callback timer baru harus dieksekusi tepat waktu');
+    assert.strictEqual(getAutoUpdateEntry('test:123'), null, 'Entry harus otomatis dihapus setelah selesai');
+
+    // Pengujian pembatalan eksplisit
+    let cancelledFired = false;
+    scheduleAutoUpdate('test:cancel', mockInteraction, 100, async () => { cancelledFired = true; });
+    const cancelRes = cancelAutoUpdate('test:cancel');
+    assert.strictEqual(cancelRes, true, 'cancelAutoUpdate harus mengembalikan true');
+    assert.strictEqual(getAutoUpdateEntry('test:cancel'), null);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    assert.strictEqual(cancelledFired, false, 'Timer yang dibatalkan tidak boleh dieksekusi');
+
+    // B. Pengujian prioritas `message.edit()` (Bot Token permanen > 15 menit) di atas `editReply()`
+    let msgEditCalledWith = null;
+    let editReplyCalled = false;
+    const mockLongInteraction = {
+        fetchReply: async () => ({
+            id: 'msg_sleep_60m',
+            edit: async (p) => { msgEditCalledWith = p; }
+        }),
+        editReply: async () => { editReplyCalled = true; }
+    };
+    scheduleAutoUpdate('test:long_sleep', mockLongInteraction, 30, async () => ({ wokeUp: true }));
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.deepStrictEqual(msgEditCalledWith, { wokeUp: true }, 'Harus menggunakan message.edit() dari fetchReply() agar bebas batas 15 menit');
+    assert.strictEqual(editReplyCalled, false, 'Tidak boleh memanggil editReply() jika message.edit() tersedia');
+
+    // C. Pengujian Cross-Panel Live Sync & Minigame Lock Guard
+    clearAllAutoUpdates();
+    let syncedProfilePayload = null;
+    let syncedFishingPayload = null;
+    registerPanelRenderer('profile', async (uid) => ({ panel: 'profile', uid, cash: 250000 }));
+    registerPanelRenderer('fishing', async (uid) => ({ panel: 'fishing', uid }));
+    registerPanelRenderer('bank', async (uid) => ({ panel: 'bank', uid }));
+
+    const profileMsg = { id: 'msg_prof_1', edit: async (p) => { syncedProfilePayload = p; } };
+    const fishingMsg = { id: 'msg_fish_1', edit: async (p) => { syncedFishingPayload = p; } };
+    const bankMsg = { id: 'msg_bank_1', edit: async () => {} };
+
+    trackInteractionPanel('u_sync_1', 'profile', { message: profileMsg });
+    trackInteractionPanel('u_sync_1', 'fishing', { message: fishingMsg });
+    trackInteractionPanel('u_sync_1', 'bank', { message: bankMsg });
+    assert.ok(getActivePanelEntry('u_sync_1', 'profile'), 'Panel profile harus tercatat di activePanels');
+
+    // Kunci fishing karena sedang mini-game
+    setPanelMinigameLock('u_sync_1', 'fishing', true);
+    await flushPlayerPanelSync('u_sync_1', 'bank');
+
+    assert.deepStrictEqual(syncedProfilePayload, { panel: 'profile', uid: 'u_sync_1', cash: 250000 }, 'Panel /profile yang terbuka harus otomatis di-edit saat state berubah di /bank');
+    assert.strictEqual(syncedFishingPayload, null, 'Panel /fishing yang sedang minigameLocked tidak boleh ditimpa');
+
+    setPanelMinigameLock('u_sync_1', 'fishing', false);
+    await flushPlayerPanelSync('u_sync_1', 'bank');
+    assert.deepStrictEqual(syncedFishingPayload, { panel: 'fishing', uid: 'u_sync_1' }, 'Panel /fishing harus ikut tersinkronisasi setelah minigame selesai');
+    clearAllAutoUpdates();
+
+    // D. Verifikasi bahwa tidak ada lagi tombol 'Segarkan' atau 'Cek Ulang Tas' di SELURUH 32 command (termasuk /admin)
+    for (const f of cmdFiles) {
+        const fileContent = fs.readFileSync(f, 'utf8');
+        const matchRefresh = fileContent.match(/label:\s*['"]Segarkan\b[^'"]*['"]/i);
+        assert(!matchRefresh, `Berkas ${f} masih mengandung tombol dengan label Segarkan: ${matchRefresh ? matchRefresh[0] : ''}`);
+        const matchCekUlang = fileContent.match(/label:\s*['"]Cek Ulang Tas['"]/i);
+        assert(!matchCekUlang, `Berkas ${f} masih mengandung tombol dengan label Cek Ulang Tas`);
+    }
+    console.log('✅ [24/24] Auto-Update Service (Bot Token message.edit, Cross-Panel Live Sync, & 0 Tombol Segarkan di 32 Command) terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (24/24 PASSED)!');
     process.exit(0);
 }
 

@@ -215,15 +215,6 @@ function buildGachaPanel({
         );
     }
 
-    actionButtons.push(
-        btn('gacha', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary,
-            arg: `${tier.id}|${mode}`
-        }, now)
-    );
-
     const actionRow = new ActionRowBuilder().addComponents(actionButtons.slice(0, 5));
 
     return buildPanel({

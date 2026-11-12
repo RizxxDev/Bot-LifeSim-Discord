@@ -20,6 +20,19 @@ const { getCity } = require('../../data/cities');
 const { ACTIVITY_COSTS } = require('../../data/constants');
 const { COLORS, formatLp, formatDuration, buildV2Card } = require('../../utils/uiBuilder');
 const { buildPanel, btn } = require('../../utils/panelBuilder');
+const { scheduleAutoUpdate, cancelAutoUpdate, setPanelMinigameLock } = require('../../services/autoUpdateService');
+
+function scheduleWorkCooldown(userId, interaction, remCd) {
+    if (remCd > 0) {
+        scheduleAutoUpdate(`work:${userId}`, interaction, remCd + 500, async () => {
+            const now = Date.now();
+            const freshState = await fetchWorkPrepState(userId, now);
+            return buildWorkPrepPanel(freshState, null, now);
+        });
+    } else {
+        cancelAutoUpdate(`work:${userId}`);
+    }
+}
 
 async function fetchWorkPrepState(discordId, now = Date.now()) {
     const remCd = await getCooldownRemaining(discordId, 'work', query);
@@ -143,11 +156,6 @@ function buildWorkPrepPanel(state, banner = null, now = Date.now()) {
             label: 'Makan Cepat',
             emoji: '🍴',
             style: ButtonStyle.Primary
-        }, now),
-        btn('work', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 
@@ -176,7 +184,9 @@ async function runWorkShift(interaction, now = Date.now()) {
             type: 'warning',
             text: `Kamu masih dalam waktu istirahat shift! Siap bekerja kembali <t:${Math.floor((now + remCd) / 1000)}:R>.`
         }, now);
-        return interaction.isMessageComponent() ? await interaction.update(payload) : await interaction.reply(payload);
+        const res = interaction.isMessageComponent() ? await interaction.update(payload) : await interaction.reply(payload);
+        scheduleWorkCooldown(discordId, interaction, state.remCd);
+        return res;
     }
 
     const preCheck = await withTransaction(async (conn) => {
@@ -220,7 +230,9 @@ async function runWorkShift(interaction, now = Date.now()) {
                 ? `Profesi ini hanya dapat dikerjakan di **${preCheck.requiredCity.emoji} ${preCheck.requiredCity.name}**! Gunakan \`/travel\`.`
                 : preCheck.elig.message;
         const payload = buildWorkPrepPanel(state, { type: 'danger', text: msg }, now);
-        return interaction.isMessageComponent() ? await interaction.update(payload) : await interaction.reply(payload);
+        const res = interaction.isMessageComponent() ? await interaction.update(payload) : await interaction.reply(payload);
+        scheduleWorkCooldown(discordId, interaction, state.remCd);
+        return res;
     }
 
     const { job, cost, elig } = preCheck;
@@ -238,26 +250,33 @@ async function runWorkShift(interaction, now = Date.now()) {
         actionRows: [mgRow]
     });
 
-    let replyMsg;
-    if (interaction.isMessageComponent()) {
-        await interaction.update(mgPayload);
-        replyMsg = interaction.message;
-    } else {
-        await interaction.reply(mgPayload);
-        replyMsg = await interaction.fetchReply();
-    }
+    cancelAutoUpdate(`work:${discordId}`);
+    setPanelMinigameLock(discordId, 'work', true);
 
     let chosenIndex = null;
     try {
-        const btnInt = await replyMsg.awaitMessageComponent({
-            filter: i => i.user.id === discordId && i.customId.startsWith(`work_mg_${nonce}_`),
-            time: 30000
-        });
-        await btnInt.deferUpdate();
-        const parts = btnInt.customId.split('_');
-        chosenIndex = Number(parts[parts.length - 1]);
-    } catch {
-        chosenIndex = null;
+        let replyMsg;
+        if (interaction.isMessageComponent()) {
+            await interaction.update(mgPayload);
+            replyMsg = interaction.message;
+        } else {
+            await interaction.reply(mgPayload);
+            replyMsg = await interaction.fetchReply();
+        }
+
+        try {
+            const btnInt = await replyMsg.awaitMessageComponent({
+                filter: i => i.user.id === discordId && i.customId.startsWith(`work_mg_${nonce}_`),
+                time: 30000
+            });
+            await btnInt.deferUpdate();
+            const parts = btnInt.customId.split('_');
+            chosenIndex = Number(parts[parts.length - 1]);
+        } catch {
+            chosenIndex = null;
+        }
+    } finally {
+        setPanelMinigameLock(discordId, 'work', false);
     }
 
     const isCorrect = chosenIndex !== null && Boolean(minigame.options[chosenIndex]?.isCorrect);
@@ -458,6 +477,9 @@ async function runWorkShift(interaction, now = Date.now()) {
     });
 
     await interaction.editReply(resultPanel);
+
+    const remAfterFinish = Math.max(500, (now + cost.cooldownSec * 1000) - Date.now() + 500);
+    scheduleWorkCooldown(discordId, interaction, remAfterFinish);
 }
 
 module.exports = {
@@ -471,7 +493,9 @@ module.exports = {
     async executeSlash(interaction) {
         const now = Date.now();
         const state = await fetchWorkPrepState(interaction.user.id, now);
-        return await interaction.reply(buildWorkPrepPanel(state, null, now));
+        const res = await interaction.reply(buildWorkPrepPanel(state, null, now));
+        scheduleWorkCooldown(interaction.user.id, interaction, state.remCd);
+        return res;
     },
 
     panel: {
@@ -479,7 +503,9 @@ module.exports = {
             async home(interaction) {
                 const now = Date.now();
                 const state = await fetchWorkPrepState(interaction.user.id, now);
-                return await interaction.update(buildWorkPrepPanel(state, null, now));
+                const res = await interaction.update(buildWorkPrepPanel(state, null, now));
+                scheduleWorkCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             },
             async start(interaction) {
                 return await runWorkShift(interaction, Date.now());
@@ -491,8 +517,13 @@ module.exports = {
                 const banner = meal.consumedSummary.length > 0
                     ? { type: 'success', text: `Makan cepat berhasil: mengonsumsi **${meal.consumedSummary.join(', ')}**.` }
                     : { type: 'info', text: 'Kondisi tubuhmu sudah kenyang atau tidak ada makanan/minuman di tas.' };
-                return await interaction.update(buildWorkPrepPanel(state, banner, now));
+                const res = await interaction.update(buildWorkPrepPanel(state, banner, now));
+                scheduleWorkCooldown(interaction.user.id, interaction, state.remCd);
+                return res;
             }
         }
-    }
+    },
+
+    fetchWorkPrepState,
+    buildWorkPrepPanel
 };

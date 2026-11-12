@@ -223,11 +223,6 @@ function buildVehiclePanel({
             label: 'Semua Katalog',
             emoji: '📋',
             style: ButtonStyle.Secondary
-        }, now),
-        btn('vehicle', 'home', ownerId, {
-            label: 'Segarkan',
-            emoji: '🔄',
-            style: ButtonStyle.Secondary
         }, now)
     );
 

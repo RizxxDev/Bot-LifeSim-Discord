@@ -32,6 +32,7 @@ const {
 const { getItem } = require('../../data/items');
 const { COLORS, formatLp, buildV2Card } = require('../../utils/uiBuilder');
 const { makeId } = require('../../utils/panelId');
+const { notifyPlayerStateChanged } = require('../../services/autoUpdateService');
 const {
     buildPanel,
     btn,
@@ -504,17 +505,6 @@ function buildAdminSusRadarPanelFromData({
         );
     }
 
-    rows.push(
-        new ActionRowBuilder().addComponents(
-            btn('admin', 'tab', ownerId, {
-                label: 'Segarkan Radar Sus',
-                emoji: '🔄',
-                style: ButtonStyle.Secondary,
-                arg: 'sus_refresh'
-            }, now)
-        )
-    );
-
     return buildPanel({
         mod: 'admin',
         ownerId,
@@ -798,6 +788,7 @@ module.exports = {
                 const now = Date.now();
                 const targetId = parsed.arg || '';
                 await clearPlayerWarnings(targetId, interaction.user.id, now);
+                notifyPlayerStateChanged(targetId);
                 return await interaction.update(
                     await buildAdminPlayerPanel(
                         interaction.user.id,
@@ -825,6 +816,7 @@ module.exports = {
                         now
                     );
                 }
+                notifyPlayerStateChanged(targetId);
                 return await interaction.update(
                     await buildAdminPlayerPanel(
                         interaction.user.id,
@@ -908,6 +900,7 @@ module.exports = {
                         )
                     );
                 }
+                notifyPlayerStateChanged(targetId);
                 return await interaction.update(
                     await buildAdminPlayerPanel(
                         interaction.user.id,
@@ -1082,6 +1075,7 @@ module.exports = {
                         [targetId, parsedNum.value, nextCash + Number(rows[0].bank || 0), JSON.stringify({ adminId: interaction.user.id }), now]
                     );
                 });
+                notifyPlayerStateChanged(targetId);
 
                 return await respondOrUpdate(
                     interaction,
@@ -1120,6 +1114,7 @@ module.exports = {
                         );
                     }
                 });
+                notifyPlayerStateChanged(targetId);
 
                 return await respondOrUpdate(
                     interaction,
@@ -1152,6 +1147,7 @@ module.exports = {
                 }
 
                 await withTransaction(conn => addItem(conn, targetId, it.id, qty, now));
+                notifyPlayerStateChanged(targetId);
                 return await respondOrUpdate(
                     interaction,
                     await buildAdminPlayerPanel(
@@ -1174,6 +1170,7 @@ module.exports = {
                     reason,
                     now
                 });
+                notifyPlayerStateChanged(targetId);
 
                 const dmInfo = res.dmSent
                     ? '📩 Pesan DM terkirim.'
