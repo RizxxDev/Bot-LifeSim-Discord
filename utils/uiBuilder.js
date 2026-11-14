@@ -3,6 +3,8 @@ const {
     SectionBuilder,
     TextDisplayBuilder,
     ThumbnailBuilder,
+    MediaGalleryBuilder,
+    MediaGalleryItemBuilder,
     SeparatorBuilder,
     SeparatorSpacingSize,
     ActionRowBuilder,
@@ -57,11 +59,28 @@ function formatVitalsCompact(player) {
 }
 
 /**
+ * Mengonversi objek `{ url, description?, spoiler? }` menjadi MediaGalleryItemBuilder.
+ */
+function toMediaGalleryItem(item) {
+    if (item instanceof MediaGalleryItemBuilder) {
+        return item;
+    }
+    const galleryItem = new MediaGalleryItemBuilder().setURL(String(item.url));
+    if (item.description) {
+        galleryItem.setDescription(String(item.description).slice(0, 1024));
+    }
+    if (item.spoiler !== undefined) {
+        galleryItem.setSpoiler(Boolean(item.spoiler));
+    }
+    return galleryItem;
+}
+
+/**
  * Membangun payload pesan berbasis Discord Components V2 (ContainerBuilder).
  * @param {object} options
  * @param {number} [options.accentColor]
  * @param {string} [options.title]
- * @param {Array<string|{text: string, button?: ButtonBuilder}>} [options.blocks]
+ * @param {Array<string|{text: string, button?: ButtonBuilder}|{image: object}|{gallery: Array<object>}>} [options.blocks]
  * @param {Array<ActionRowBuilder>} [options.actionRows]
  * @param {string} [options.footer]
  * @param {boolean} [options.ephemeral]
@@ -90,10 +109,23 @@ function buildV2Card({
         if (!block) return;
         if (typeof block === 'string') {
             container.addTextDisplayComponents(new TextDisplayBuilder().setContent(block));
+        } else if (block instanceof MediaGalleryBuilder) {
+            container.addMediaGalleryComponents(block);
         } else if (block.divider) {
             container.addSeparatorComponents(
                 new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small)
             );
+        } else if (block.image && block.image.url) {
+            const gallery = new MediaGalleryBuilder().addItems(toMediaGalleryItem(block.image));
+            container.addMediaGalleryComponents(gallery);
+        } else if (Array.isArray(block.gallery) && block.gallery.length > 0) {
+            const validItems = block.gallery
+                .filter(item => item && (item instanceof MediaGalleryItemBuilder || item.url))
+                .slice(0, 10);
+            if (validItems.length > 0) {
+                const gallery = new MediaGalleryBuilder().addItems(...validItems.map(toMediaGalleryItem));
+                container.addMediaGalleryComponents(gallery);
+            }
         } else if ((block.text || Array.isArray(block.texts)) && block.thumbnail) {
             const textItems = Array.isArray(block.texts)
                 ? block.texts.filter(Boolean).slice(0, 3)

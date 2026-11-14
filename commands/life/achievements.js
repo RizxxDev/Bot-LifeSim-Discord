@@ -314,5 +314,6 @@ module.exports = {
         }
     },
 
+    fetchAchievementsState,
     buildAchievementsPanel
 };

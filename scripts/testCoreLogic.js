@@ -437,7 +437,7 @@ async function runTests() {
     // 19. TEST BATCH 1 UI REVAMP: PANEL ID, BUILDER & ROUTER
     // ====================================================
     const { makeId, parseId, PANEL_TTL_MS } = require('../utils/panelId');
-    const { buildPanel, formatMiniHud, paginate } = require('../utils/panelBuilder');
+    const { buildPanel, paginate } = require('../utils/panelBuilder');
     const { registerPanel, dispatch, clearRegistry } = require('../services/panelRouter');
 
     const nowTs = 1_750_000_000_000;
@@ -463,8 +463,6 @@ async function runTests() {
         thirst: 80,
         health: 100
     };
-    const hud = formatMiniHud(samplePlayer);
-    assert(hud.includes('Tester') && hud.includes('Sultan'), 'Mini-HUD harus menampilkan username & gelar');
     const samplePanel = buildPanel({
         mod: 'bank',
         ownerId: '123456789',
@@ -475,6 +473,11 @@ async function runTests() {
         now: nowTs
     });
     assert((samplePanel.flags & 32768) === 32768, 'Panel wajib menggunakan Discord Components V2');
+    const sampleJson = samplePanel.components[0].toJSON();
+    const sampleRaw = JSON.stringify(sampleJson);
+    assert(!sampleRaw.includes('Tester') && !sampleRaw.includes('Sultan'), 'Mini-HUD wajib dihapus dari semua panel');
+    assert.strictEqual(sampleJson.components[0].content, '## Uji Panel', 'Judul panel tetap berada di posisi paling atas');
+    assert.strictEqual(sampleJson.components[1].type, 14, 'Pemisah tipis wajib tetap ada tepat di bawah judul panel');
 
     // Uji Ownership Guard & Expiry Guard pada panelRouter
     clearRegistry();
@@ -1614,9 +1617,241 @@ async function runTests() {
         const matchCekUlang = fileContent.match(/label:\s*['"]Cek Ulang Tas['"]/i);
         assert(!matchCekUlang, `Berkas ${f} masih mengandung tombol dengan label Cek Ulang Tas`);
     }
-    console.log('✅ [24/24] Auto-Update Service (Bot Token message.edit, Cross-Panel Live Sync, & 0 Tombol Segarkan di 32 Command) terverifikasi.\n');
+    console.log('✅ [24/25] Auto-Update Service (Bot Token message.edit, Cross-Panel Live Sync, & 0 Tombol Segarkan di 32 Command) terverifikasi.');
 
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (24/24 PASSED)!');
+    // ====================================================
+    // 25. TEST REDESIGN /PROFILE: MEDIA GALLERY, HIDE HUD, CANVAS BANNER 800x280, 2 TAB & MODE INSPEKSI
+    // ====================================================
+    const { assertComponentLimit } = require('../utils/panelBuilder');
+    const { getHighestEquippedRarity } = require('../services/avatarService');
+    const {
+        BANNER_WIDTH,
+        BANNER_HEIGHT,
+        CITY_THEMES,
+        stripEmojiForCanvas,
+        clearProfileBannerCache,
+        generateProfileBannerBuffer,
+        buildProfileBannerAttachment
+    } = require('../services/profileBannerService');
+
+    assert.strictEqual(typeof getHighestEquippedRarity, 'function', 'getHighestEquippedRarity wajib di-export dari avatarService');
+    assert.strictEqual(getHighestEquippedRarity(sultanOutfit), 'legendary');
+    assert.strictEqual(stripEmojiForCanvas('👑 Sultan Raya'), 'Sultan Raya');
+
+    // A. MediaGalleryBuilder & penghapusan Mini-HUD global pada uiBuilder/panelBuilder
+    const mediaV2 = buildV2Card({
+        accentColor: COLORS.PRIMARY,
+        blocks: [
+            { image: { url: 'attachment://hero.png', description: 'Hero Banner', spoiler: false } },
+            { gallery: [{ url: 'attachment://a.png' }, { url: 'attachment://b.png', description: 'B' }] }
+        ]
+    });
+    const mediaV2Json = mediaV2.components[0].toJSON();
+    const galleryBlocks = mediaV2Json.components.filter(c => c.type === 12);
+    assert.strictEqual(galleryBlocks.length, 2, 'buildV2Card wajib menghasilkan MediaGallery (type 12) untuk image & gallery');
+    assert.strictEqual(galleryBlocks[0].items[0].media.url, 'attachment://hero.png');
+    assert.strictEqual(galleryBlocks[1].items.length, 2);
+
+    assert.strictEqual(countV2Components({ blocks: [{ image: { url: 'attachment://hero.png' } }] }), 3);
+    assert.strictEqual(countV2Components({ blocks: [{ gallery: [{ url: 'attachment://a.png' }, { url: 'attachment://b.png' }] }] }), 4);
+
+    assert.throws(
+        () => assertComponentLimit({ blocks: [{ image: { url: 'attachment://undefined.png' } }] }),
+        /undefined/,
+        'assertComponentLimit wajib menolak "undefined" pada image.url'
+    );
+    assert.throws(
+        () => assertComponentLimit({ blocks: [{ gallery: [{ url: 'attachment://ok.png', description: 'foo undefined bar' }] }] }),
+        /undefined/,
+        'assertComponentLimit wajib menolak "undefined" pada gallery description'
+    );
+
+    const panelWithPlayer = buildPanel({
+        mod: 'test',
+        ownerId: samplePlayer.discord_id,
+        title: 'Panel Uji',
+        player: samplePlayer,
+        blocks: ['Isi'],
+        now: nowTs
+    });
+    const panelConfirm = require('../utils/panelBuilder').confirmView({
+        mod: 'test',
+        confirmAction: 'yes',
+        ownerId: samplePlayer.discord_id,
+        title: 'Konfirmasi Uji',
+        description: 'Yakin?',
+        player: samplePlayer,
+        now: nowTs
+    });
+    const panelWithPlayerJson = panelWithPlayer.components[0].toJSON();
+    assert(!JSON.stringify(panelWithPlayerJson).includes('Tester'), 'buildPanel wajib menghilangkan Mini-HUD di semua command');
+    assert.strictEqual(panelWithPlayerJson.components[1].type, 14, 'Separator di bawah judul panel wajib dipertahankan');
+    assert(!JSON.stringify(panelConfirm.components[0].toJSON()).includes('Tester'), 'confirmView wajib ikut menghilangkan Mini-HUD');
+
+    // B. Wide Identity Banner 800x280 Canvas & Tema Kota Dinamis + Cache LRU
+    clearProfileBannerCache();
+    const profilePlayerBase = {
+        ...samplePlayer,
+        current_city: 'kota_barat',
+        current_job: 'buruh_tambang',
+        education_level: 'SMA',
+        backpack_tier: 1,
+        fishing_xp: 25,
+        mining_xp: 60,
+        farming_xp: 0,
+        cooking_xp: 0,
+        max_slots: 20,
+        total_shifts: 40,
+        daily_streak: 7,
+        created_at: nowTs - 15 * 86400000,
+        hospital_until: 0,
+        sleeping_until: 0,
+        traveling_until: 0
+    };
+    const bannerBarat = await buildProfileBannerAttachment({
+        player: profilePlayerBase,
+        jobShifts: 40,
+        wardrobe: sampleWardrobeState
+    }, nowTs);
+    assert.strictEqual(bannerBarat.buffer.subarray(0, 4).toString('hex'), '89504e47', 'Banner profil harus berupa PNG valid');
+    assert.strictEqual(bannerBarat.buffer.readUInt32BE(16), BANNER_WIDTH, 'Lebar PNG banner wajib 800 px');
+    assert.strictEqual(bannerBarat.buffer.readUInt32BE(20), BANNER_HEIGHT, 'Tinggi PNG banner wajib 280 px');
+    assert(bannerBarat.url.startsWith('attachment://profile_'), 'URL banner wajib memakai format attachment://profile_<hash>.png');
+    assert.strictEqual(bannerBarat.cityTheme.containerColor, CITY_THEMES.kota_barat.containerColor);
+
+    const cachedBannerBuf = await generateProfileBannerBuffer({
+        player: profilePlayerBase,
+        jobShifts: 40,
+        wardrobe: sampleWardrobeState
+    }, nowTs);
+    assert.strictEqual(cachedBannerBuf, bannerBarat.buffer, 'Cache LRU banner harus mengembalikan buffer identik');
+
+    const bannerSentral = await buildProfileBannerAttachment({
+        player: { ...profilePlayerBase, current_city: 'kota_sentral' },
+        jobShifts: 40,
+        wardrobe: sampleWardrobeState
+    }, nowTs);
+    const bannerTimur = await buildProfileBannerAttachment({
+        player: { ...profilePlayerBase, current_city: 'kota_timur' },
+        jobShifts: 40,
+        wardrobe: sampleWardrobeState
+    }, nowTs);
+    assert.notStrictEqual(bannerBarat.fileName, bannerSentral.fileName, 'Perpindahan kota harus menghasilkan hash banner baru');
+    assert.notStrictEqual(bannerSentral.fileName, bannerTimur.fileName, 'Setiap kota harus menghasilkan hash banner unik');
+    assert.strictEqual(bannerSentral.cityTheme.containerColor, 0x6366F1);
+    assert.strictEqual(bannerTimur.cityTheme.containerColor, 0x10B981);
+
+    // C. Panel /profile Mode Tab Life, Tab Progress, & Mode Inspeksi Warga Lain
+    const fullProfileData = {
+        player: profilePlayerBase,
+        buffs: [],
+        slotsUsed: 5,
+        propStatus: { effectiveTier: getPropertyTier('kos'), propertyCityId: 'kota_barat', row: { ownership_type: 'rent' } },
+        equippedVehicle: null,
+        jobShifts: 40,
+        achEval: { unlockedCount: 4, totalCount: 27, claimableCount: 2 },
+        gachaStats: { total_pulls: 10, jackpot_count: 1 },
+        wardrobe: sampleWardrobeState,
+        bannerImage: bannerBarat,
+        collections: ['ikan_nila']
+    };
+
+    const profileTabLife = buildProfilePanel({
+        ownerId: profilePlayerBase.discord_id,
+        targetId: profilePlayerBase.discord_id,
+        data: fullProfileData,
+        page: 'life',
+        now: nowTs
+    });
+    const profileTabProgress = buildProfilePanel({
+        ownerId: profilePlayerBase.discord_id,
+        targetId: profilePlayerBase.discord_id,
+        data: fullProfileData,
+        page: 'progress',
+        now: nowTs
+    });
+
+    const targetIdOther = '999888777666555444';
+    const targetPlayerOther = {
+        ...profilePlayerBase,
+        discord_id: targetIdOther,
+        username: 'Warga_Lain',
+        current_city: 'kota_timur'
+    };
+    const bannerOther = await buildProfileBannerAttachment({
+        player: targetPlayerOther,
+        jobShifts: 40,
+        wardrobe: sampleWardrobeState
+    }, nowTs);
+    const profileInspectOther = buildProfilePanel({
+        ownerId: profilePlayerBase.discord_id,
+        targetId: targetIdOther,
+        data: { ...fullProfileData, player: targetPlayerOther, bannerImage: bannerOther },
+        page: 'life',
+        banner: { type: 'info', text: 'Menampilkan profil **Warga_Lain**.' },
+        now: nowTs
+    });
+
+    // Verifikasi struktur khusus masing-masing mode
+    const lifeJson = profileTabLife.components[0].toJSON();
+    assert.strictEqual(lifeJson.accent_color, CITY_THEMES.kota_barat.containerColor);
+    const lifeStr = JSON.stringify(lifeJson);
+    assert(lifeStr.includes(bannerBarat.url), 'Tab life wajib memuat bannerImage di MediaGallery');
+    assert(lifeStr.includes('RINCIAN KEUANGAN') && lifeStr.includes('Cash') && lifeStr.includes('Bank'), 'Tab life wajib memuat Cash & Bank');
+    assert(!lifeStr.includes('❤️ **100**'), 'Panel /profile tidak boleh menyisipkan Mini-HUD duplikat');
+    assert(lifeStr.includes(`profile:refresh:${profilePlayerBase.discord_id}:`) && lifeStr.includes(`:life|${profilePlayerBase.discord_id}`), 'Refresh harus menyimpan page|targetId');
+    assert(lifeStr.includes('open_achievements'), 'Tombol Prestasi wajib muncul saat ada hadiah siap klaim');
+
+    const progressStr = JSON.stringify(profileTabProgress.components[0].toJSON());
+    assert(progressStr.includes('LEVEL & PENGALAMAN') && progressStr.includes('Fishing') && progressStr.includes('Cooking'));
+    assert(progressStr.includes(`:progress|${profilePlayerBase.discord_id}`), 'Refresh di tab progress harus menyimpan progress|targetId');
+
+    const inspectJson = profileInspectOther.components[0].toJSON();
+    const inspectStr = JSON.stringify(inspectJson);
+    assert.strictEqual(inspectJson.accent_color, CITY_THEMES.kota_timur.containerColor);
+    assert(inspectStr.includes('profile:me:'), 'Mode inspeksi warga lain wajib menampilkan tombol Profil Saya (me)');
+    assert(inspectStr.includes('profile:open_pay:') && inspectStr.includes(`:${targetIdOther}`), 'Mode inspeksi wajib menampilkan tombol Transfer Lp dengan arg targetId');
+    assert(!inspectStr.includes('open_wardrobe'), 'Mode inspeksi warga lain tidak boleh menampilkan tombol Outfit pribadi');
+    assert(inspectStr.includes('Cash') && inspectStr.includes('Bank'), 'Info Cash & Bank tetap terbuka saat inspeksi warga lain');
+
+    for (const [pName, pObj] of [
+        ['profile (tab life)', profileTabLife],
+        ['profile (tab progress)', profileTabProgress],
+        ['profile (inspect other)', profileInspectOther]
+    ]) {
+        assert((pObj.flags & 32768) === 32768, `Panel /${pName} wajib menggunakan MessageFlags.IsComponentsV2`);
+        assert.strictEqual(Array.isArray(pObj.files) && pObj.files.length, 1, `Panel /${pName} wajib menyertakan tepat 1 file attachment`);
+        const containerJson = pObj.components[0].toJSON();
+        const actionRows = containerJson.components.filter(c => c.type === 1);
+        assert(actionRows.length <= 5, `Panel /${pName} melebihi 5 ActionRow (${actionRows.length})`);
+        const cCount = countV2Components(pObj);
+        const tLen = countV2DisplayableText(pObj);
+        assert(cCount <= 40, `Panel /${pName} melebihi batas 40 komponen (${cCount})`);
+        assert(tLen <= 4000, `Panel /${pName} melebihi batas 4000 karakter (${tLen})`);
+        const rawJson = JSON.stringify(containerJson);
+        assert(!rawJson.includes('undefined'), `Panel /${pName} tidak boleh mengandung string "undefined"`);
+    }
+
+    // D. Verifikasi handler tombol /profile & export fungsi lintas-modul
+    const profileCmd = require('../commands/life/profile');
+    const wardrobeCmd = require('../commands/life/wardrobe');
+    const achievementsCmd = require('../commands/life/achievements');
+    const payCmd = require('../commands/economy/pay');
+
+    for (const btnName of ['home', 'summary', 'life', 'progress', 'me', 'refresh', 'open_wardrobe', 'open_achievements', 'open_pay']) {
+        assert.strictEqual(typeof profileCmd.panel.buttons[btnName], 'function', `Handler tombol profile.${btnName} wajib tersedia`);
+    }
+    assert.strictEqual(typeof profileCmd.panel.userSelects.inspect_user, 'function');
+    assert.strictEqual(typeof wardrobeCmd.fetchWardrobePanelData, 'function');
+    assert.strictEqual(typeof wardrobeCmd.buildWardrobePanel, 'function');
+    assert.strictEqual(typeof achievementsCmd.fetchAchievementsState, 'function');
+    assert.strictEqual(typeof achievementsCmd.buildAchievementsPanel, 'function');
+    assert.strictEqual(typeof payCmd.fetchPayState, 'function');
+    assert.strictEqual(typeof payCmd.buildPayPanel, 'function');
+
+    console.log('✅ [25/25] Redesign /profile (MediaGallery, Global Mini-HUD Removal, Banner Canvas 800x280, 2 Tab & Mode Inspeksi) terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (25/25 PASSED)!');
     process.exit(0);
 }
 

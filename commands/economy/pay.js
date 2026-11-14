@@ -404,5 +404,6 @@ module.exports = {
         }
     },
 
+    fetchPayState,
     buildPayPanel
 };

@@ -8,29 +8,13 @@ const {
     TextInputBuilder,
     TextInputStyle
 } = require('discord.js');
-const { COLORS, formatLp, buildV2Card } = require('./uiBuilder');
+const { COLORS, buildV2Card } = require('./uiBuilder');
 const { makeId } = require('./panelId');
 
 const MAX_V2_COMPONENTS = 40;
 const MAX_ACTION_ROWS = 5;
 const MAX_SELECT_OPTIONS = 25;
 const MAX_DISPLAYABLE_TEXT_LENGTH = 4000;
-
-/**
- * Merender header ringkas 2 baris (Mini-HUD) di bagian atas panel.
- */
-function formatMiniHud(player) {
-    if (!player) return null;
-    const titlePart = player.equipped_title ? ` · 🏷️ *${player.equipped_title}*` : '';
-    const line1 = `👤 **${player.username}**${titlePart} · 💵 **${formatLp(player.cash)}** · 🏦 **${formatLp(player.bank)}**`;
-    const line2 = [
-        `⚡ **${Math.round(Number(player.energy || 0))}**`,
-        `🍔 **${Math.round(Number(player.hunger || 0))}**`,
-        `💧 **${Math.round(Number(player.thirst || 0))}**`,
-        `❤️ **${Math.round(Number(player.health || 0))}**`
-    ].join(' · ');
-    return `${line1}\n${line2}`;
-}
 
 /**
  * Merender banner umpan balik hasil aksi (sukses, peringatan, error, info) di bagian atas panel.
@@ -272,10 +256,45 @@ function pageRow(mod, action, ownerId, opts = {}, now = Date.now()) {
     return new ActionRowBuilder().addComponents(components);
 }
 
+function countBuiltV2NodeComponents(node) {
+    if (!node) return 0;
+    const json = typeof node.toJSON === 'function' ? node.toJSON() : node;
+    let count = 1;
+    if (Array.isArray(json.components)) {
+        for (const child of json.components) {
+            count += countBuiltV2NodeComponents(child);
+        }
+    }
+    if (json.accessory) {
+        count += countBuiltV2NodeComponents(json.accessory);
+    }
+    if (Array.isArray(json.items)) {
+        count += json.items.length;
+    }
+    return count;
+}
+
+function countBuiltV2NodeText(node) {
+    if (!node) return 0;
+    const json = typeof node.toJSON === 'function' ? node.toJSON() : node;
+    let len = typeof json.content === 'string' ? json.content.length : 0;
+    if (Array.isArray(json.components)) {
+        for (const child of json.components) {
+            len += countBuiltV2NodeText(child);
+        }
+    }
+    return len;
+}
+
 /**
  * Memvalidasi batas komponen Discord Components V2 (<= 40 komponen total, <= 5 ActionRow).
  */
-function countV2Components({ title, blocks = [], actionRows = [], footer }) {
+function countV2Components(payloadMeta = {}) {
+    if (!Array.isArray(payloadMeta.blocks) && Array.isArray(payloadMeta.components)) {
+        return payloadMeta.components.reduce((sum, node) => sum + countBuiltV2NodeComponents(node), 0);
+    }
+
+    const { title, blocks = [], actionRows = [], footer } = payloadMeta;
     let count = 1; // ContainerBuilder
     if (title) count += 2; // TextDisplay + Separator
 
@@ -285,6 +304,14 @@ function countV2Components({ title, blocks = [], actionRows = [], footer }) {
             count += 1;
         } else if (b.divider) {
             count += 1;
+        } else if (b.image && b.image.url) {
+            count += 2; // MediaGallery + 1 MediaGalleryItem
+        } else if (Array.isArray(b.gallery) && b.gallery.length > 0) {
+            const validLen = Math.min(10, b.gallery.filter(item => item && (item.url || item.data?.media?.url)).length);
+            if (validLen > 0) count += 1 + validLen; // MediaGallery + N items
+        } else if (Array.isArray(b.items) || Array.isArray(b.data?.items)) {
+            const itemCount = (b.items || b.data?.items || []).length;
+            count += 1 + itemCount;
         } else if ((b.text || Array.isArray(b.texts)) && b.thumbnail) {
             const tLen = Array.isArray(b.texts) ? b.texts.filter(Boolean).slice(0, 3).length : 1;
             count += 2 + tLen; // Section + TextDisplays + ThumbnailAccessory
@@ -317,7 +344,12 @@ function countV2Components({ title, blocks = [], actionRows = [], footer }) {
 /**
  * Menghitung total panjang karakter seluruh TextDisplay dalam satu payload Components V2 (batas Discord <= 4000 karakter).
  */
-function countV2DisplayableText({ title, blocks = [], footer }) {
+function countV2DisplayableText(payloadMeta = {}) {
+    if (!Array.isArray(payloadMeta.blocks) && Array.isArray(payloadMeta.components)) {
+        return payloadMeta.components.reduce((sum, node) => sum + countBuiltV2NodeText(node), 0);
+    }
+
+    const { title, blocks = [], footer } = payloadMeta;
     let totalChars = 0;
     if (title) {
         totalChars += (`## ${title}`).length;
@@ -378,6 +410,22 @@ function assertComponentLimit(payloadMeta) {
             checkNoUndefined(b.thumbnail.url, 'block.thumbnail.url');
             checkNoUndefined(b.thumbnail.description, 'block.thumbnail.description');
         }
+        if (b?.image) {
+            if (b.image.url === undefined) {
+                throw new Error('block.image.url tidak boleh undefined.');
+            }
+            checkNoUndefined(b.image.url, 'block.image.url');
+            checkNoUndefined(b.image.description, 'block.image.description');
+        }
+        if (Array.isArray(b?.gallery)) {
+            for (const item of b.gallery) {
+                if (item && item.url === undefined && !item.data?.media?.url) {
+                    throw new Error('block.gallery item url tidak boleh undefined.');
+                }
+                checkNoUndefined(item?.url || item?.data?.media?.url, 'block.gallery.url');
+                checkNoUndefined(item?.description || item?.data?.description, 'block.gallery.description');
+            }
+        }
         const cid = b?.button?.data?.custom_id;
         if (cid) {
             if (seenCustomIds.has(cid)) {
@@ -408,14 +456,13 @@ function assertComponentLimit(payloadMeta) {
 }
 
 /**
- * Membangun panel interaktif tunggal dengan Mini-HUD, Notification Banner, dan validasi komponen.
+ * Membangun panel interaktif tunggal dengan header judul, Notification Banner, dan validasi komponen.
  */
 function buildPanel({
     mod = 'panel',
     ownerId = '0',
     accentColor = COLORS.PRIMARY,
     title = null,
-    player = null,
     banner = null,
     blocks = [],
     rows = [],
@@ -426,11 +473,6 @@ function buildPanel({
     now = Date.now()
 }) {
     const finalBlocks = [];
-
-    const hudText = formatMiniHud(player);
-    if (hudText) {
-        finalBlocks.push({ text: hudText, separatorAfter: true });
-    }
 
     const bannerText = formatBanner(banner);
     if (bannerText) {
@@ -511,7 +553,6 @@ function confirmView({
     confirmStyle = ButtonStyle.Danger,
     arg = '',
     cancelArg = '',
-    player = null,
     banner = null,
     accentColor = COLORS.WARNING,
     footer = null,
@@ -537,7 +578,6 @@ function confirmView({
         ownerId,
         accentColor,
         title,
-        player,
         banner,
         blocks: Array.isArray(description) ? description : [description],
         rows: [row],
@@ -647,7 +687,6 @@ module.exports = {
     MAX_ACTION_ROWS,
     MAX_SELECT_OPTIONS,
     MAX_DISPLAYABLE_TEXT_LENGTH,
-    formatMiniHud,
     formatBanner,
     btn,
     select,

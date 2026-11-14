@@ -430,6 +430,7 @@ async function setEquippedClothingSlot(conn, discordId, slotId, clothingIdOrNull
 module.exports = {
     normalizeEquippedOutfit,
     buildOutfitSignature,
+    getHighestEquippedRarity,
     generateAvatarBuffer,
     buildAvatarAttachment,
     clearAvatarCache,
