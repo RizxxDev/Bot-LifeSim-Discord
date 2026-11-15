@@ -1,6 +1,7 @@
 const { CROPS } = require('./crops');
 const { RECIPES } = require('./recipes');
 const { getShopClothes } = require('./clothes');
+const { FURNITURE_CATALOG } = require('./furniture');
 
 const SHOPS = [
     { id: 'warung', name: 'Warung & Minimarket', emoji: '🏪', description: 'Kebutuhan makan dan minum sehari-hari dengan harga terjangkau.' },
@@ -11,6 +12,8 @@ const SHOPS = [
     { id: 'elektronik', name: 'Toko Elektronik', emoji: '💻', description: 'Perangkat kerja penunjang karir profesional.' },
     { id: 'layanan', name: 'Kantor Layanan Publik', emoji: '📄', description: 'Pembuatan SIM, surat izin melaut, dan dokumen resmi.' },
     { id: 'busana', name: 'Butik & Distro Busana', emoji: '👕', description: 'Pakaian kasual, gaya rambut, sepatu, topi, & aksesoris untuk karakter chibimu (/wardrobe).' },
+    { id: 'material', name: 'Toko Bangunan & Material', emoji: '🧱', description: 'Bahan bangunan siap pakai (papan, bata, semen, beton, baja, kaca, marmer, utilitas) untuk /bangun.' },
+    { id: 'furnitur', name: 'Toko Furnitur & Dekorasi Rumah', emoji: '🛋️', description: 'Perabotan nyata (1×1, 1×2, 2×2): kasur, kulkas, freezer, kompor, etalase usaha & mesin workshop.' },
     { id: 'prestise', name: 'Butik Prestise', emoji: '👑', description: 'Gelar dan koleksi eksklusif penanda status warga.' }
 ];
 
@@ -399,6 +402,64 @@ const ITEMS = [
         stackSize: 1,
         maxDurability: 200,
         description: 'Mengurangi risiko kecelakaan tambang sebesar 70% dan wajib untuk tambang dalam (Durability 200).'
+    },
+    {
+        id: 'kapak_tangan',
+        name: 'Kapak Kayu Pemula',
+        emoji: '🪓',
+        shop: 'perkakas',
+        tags: ['tool', 'axe'],
+        toolTier: 1,
+        buyPrice: 45000,
+        sellPrice: 0,
+        stackSize: 1,
+        maxDurability: 100,
+        rarityBonus: 0.00,
+        lockedPrice: true,
+        description: 'Kapak ringan untuk menebang kayu & bambu di Hutan Lembah Hijau (/gather, Durability 100).'
+    },
+    {
+        id: 'kapak_besi',
+        name: 'Kapak Tebang Besi',
+        emoji: '⚒️',
+        shop: 'perkakas',
+        tags: ['tool', 'axe'],
+        toolTier: 2,
+        buyPrice: 280000,
+        sellPrice: 0,
+        stackSize: 1,
+        maxDurability: 220,
+        rarityBonus: 0.25,
+        description: 'Kapak besi tajam untuk Hutan Kayu Keras Lv.8+ (+25% peluang kayu ekstra, Durability 220).'
+    },
+    {
+        id: 'gergaji_mesin',
+        name: 'Gergaji Mesin Pro',
+        emoji: '🪚',
+        shop: 'perkakas',
+        tags: ['tool', 'axe'],
+        toolTier: 3,
+        buyPrice: 1200000,
+        sellPrice: 0,
+        stackSize: 1,
+        maxDurability: 350,
+        rarityBonus: 0.55,
+        description: 'Chainsaw bertenaga tinggi untuk tebang cepat (+55% bonus hasil /gather, Durability 350).'
+    },
+    {
+        id: 'sekop_baja',
+        name: 'Sekop Gali Baja',
+        emoji: '🏗️',
+        shop: 'perkakas',
+        tags: ['tool', 'shovel'],
+        toolTier: 1,
+        buyPrice: 55000,
+        sellPrice: 0,
+        stackSize: 1,
+        maxDurability: 140,
+        rarityBonus: 0.10,
+        lockedPrice: true,
+        description: 'Sekop kuat untuk menggali tanah liat & pasir sungai bahan bangunan (/gather, Durability 140).'
     },
 
     // ==========================================
@@ -1504,6 +1565,204 @@ for (const c of getShopClothes()) {
         sellPrice: 0,
         stackSize: 0,
         description: c.description
+    });
+}
+
+// Bahan mentah (/gather) & material bangunan jadi (/build, Toko Bangunan & Material)
+const BUILDING_MATERIAL_ITEMS = [
+    {
+        id: 'kayu_bulat',
+        name: 'Kayu Gelondongan',
+        emoji: '🪵',
+        shop: 'material',
+        tags: ['gather', 'building_material', 'raw_material'],
+        rarity: 'common',
+        buyPrice: 7500,
+        sellPrice: 2200,
+        baseSupplyThreshold: 300,
+        stackSize: 50,
+        description: 'Kayu gelondongan hasil tebangan /gather di Lembah Hijau atau diolah jadi papan.'
+    },
+    {
+        id: 'bambu',
+        name: 'Bambu Konstruksi',
+        emoji: '🎋',
+        shop: 'material',
+        tags: ['gather', 'building_material', 'raw_material'],
+        rarity: 'common',
+        buyPrice: 4500,
+        sellPrice: 1200,
+        baseSupplyThreshold: 350,
+        stackSize: 50,
+        description: 'Batang bambu serbaguna untuk struktur pemula dan pagar.'
+    },
+    {
+        id: 'tanah_liat',
+        name: 'Tanah Liat Merah',
+        emoji: '🟫',
+        shop: 'material',
+        tags: ['gather', 'building_material', 'raw_material'],
+        rarity: 'common',
+        buyPrice: 4000,
+        sellPrice: 1100,
+        baseSupplyThreshold: 350,
+        stackSize: 50,
+        description: 'Lempung bahan baku pembakaran Batu Bata di Kiln.'
+    },
+    {
+        id: 'pasir_bangunan',
+        name: 'Pasir Sungai Bangunan',
+        emoji: '🏖️',
+        shop: 'material',
+        tags: ['gather', 'building_material', 'raw_material'],
+        rarity: 'common',
+        buyPrice: 4200,
+        sellPrice: 1200,
+        baseSupplyThreshold: 350,
+        stackSize: 50,
+        description: 'Pasir silika bersih untuk adukan semen, panel beton, dan kaca.'
+    },
+    {
+        id: 'papan_kayu',
+        name: 'Papan Kayu Olahan',
+        emoji: '🪵',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'common',
+        buyPrice: 16000,
+        sellPrice: 5200,
+        baseSupplyThreshold: 200,
+        stackSize: 50,
+        description: 'Papan kayu gergajian untuk dinding, atap, lantai, dan furnitur.'
+    },
+    {
+        id: 'batu_bata',
+        name: 'Batu Bata Merah',
+        emoji: '🧱',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'common',
+        buyPrice: 20000,
+        sellPrice: 6500,
+        baseSupplyThreshold: 200,
+        stackSize: 50,
+        description: 'Batu bata bakar kokoh untuk struktur bangunan hingga 3 lantai.'
+    },
+    {
+        id: 'semen',
+        name: 'Semen Sak Konstruksi',
+        emoji: '🩶',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'uncommon',
+        buyPrice: 25000,
+        sellPrice: 8000,
+        baseSupplyThreshold: 180,
+        stackSize: 50,
+        description: 'Semen konstruksi untuk adukan dinding bata, pondasi, dan beton.'
+    },
+    {
+        id: 'beton_cor',
+        name: 'Panel Beton Bertulang',
+        emoji: '🏗️',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'uncommon',
+        buyPrice: 65000,
+        sellPrice: 21000,
+        baseSupplyThreshold: 120,
+        stackSize: 50,
+        description: 'Panel beton cetak kokoh untuk basement dan gedung hingga 4 lantai.'
+    },
+    {
+        id: 'rangka_baja',
+        name: 'Rangka Baja Struktural',
+        emoji: '🔩',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'rare',
+        buyPrice: 95000,
+        sellPrice: 32000,
+        baseSupplyThreshold: 90,
+        stackSize: 50,
+        description: 'Baja H-beam kekuatan tinggi untuk gedung 5 lantai, pabrik, dan freezer.'
+    },
+    {
+        id: 'kaca_panel',
+        name: 'Panel Kaca Tempered',
+        emoji: '🪟',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'rare',
+        buyPrice: 125000,
+        sellPrice: 42000,
+        baseSupplyThreshold: 80,
+        stackSize: 50,
+        description: 'Kaca tempered bening untuk kafe, greenhouse, etalase, dan rooftop.'
+    },
+    {
+        id: 'marmer',
+        name: 'Lempeng Marmer Mewah',
+        emoji: '🏛️',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'epic',
+        buyPrice: 240000,
+        sellPrice: 82000,
+        baseSupplyThreshold: 40,
+        stackSize: 50,
+        description: 'Finishing marmer elegan peningkat Comfort & Prestise properti mewah.'
+    },
+    {
+        id: 'kit_utilitas',
+        name: 'Kit Listrik & Pipa Air',
+        emoji: '⚡',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'rare',
+        buyPrice: 145000,
+        sellPrice: 48000,
+        baseSupplyThreshold: 70,
+        stackSize: 50,
+        description: 'Modul kabel & pipa wajib untuk Kulkas, Freezer, Dapur Pro, AC, dan Mesin Workshop.'
+    },
+    {
+        id: 'seng_daur',
+        name: 'Pelat Seng & Papan Daur Ulang',
+        emoji: '♻️',
+        shop: 'material',
+        tags: ['building_material', 'processed_material'],
+        rarity: 'common',
+        buyPrice: 18000,
+        sellPrice: 5500,
+        baseSupplyThreshold: 150,
+        stackSize: 50,
+        description: 'Material atap & dinding ekonomis hasil daur ulang sampah besi dan kardus.'
+    }
+];
+
+for (const matItem of BUILDING_MATERIAL_ITEMS) {
+    ITEMS.push(matItem);
+}
+
+for (const fSpec of FURNITURE_CATALOG) {
+    ITEMS.push({
+        id: fSpec.id,
+        name: fSpec.name,
+        emoji: fSpec.emoji,
+        shop: 'furnitur',
+        tags: ['furniture', fSpec.category, fSpec.environment],
+        rarity: fSpec.buyPrice >= 2500000 ? 'rare' : fSpec.buyPrice >= 1000000 ? 'uncommon' : 'common',
+        buyPrice: fSpec.buyPrice,
+        sellPrice: Math.round(fSpec.buyPrice * 0.35),
+        stackSize: 10,
+        furnitureMeta: {
+            width: fSpec.width,
+            height: fSpec.height,
+            environment: fSpec.environment,
+            category: fSpec.category
+        },
+        description: `[${fSpec.width}×${fSpec.height} · ${fSpec.environment === 'indoor' ? 'Indoor' : fSpec.environment === 'outdoor' ? 'Outdoor' : 'Bebas'}] ${fSpec.description}`
     });
 }
 

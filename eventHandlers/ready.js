@@ -8,7 +8,7 @@ module.exports = {
         console.log(`✅ Logged in as ${client.user.tag}`);
         client.user.setActivity('Life Simulation · /start | /help', { type: ActivityType.Playing });
 
-        startMaintenanceScheduler();
+        startMaintenanceScheduler(client);
 
         const publicCommands = client.slashCommandData || [];
         const adminCommands = client.adminCommandData || [];

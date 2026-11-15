@@ -4,6 +4,7 @@ const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
 const { getPlayerInventory, calculateSlotsUsed } = require('../../services/inventoryService');
 const { getPlayerPropertyStatus } = require('../../services/propertyService');
+const { getPlayerLands, getLandCells, computeLandStats } = require('../../services/landService');
 const { getEquippedVehicle } = require('../../services/vehicleService');
 const { evaluatePlayerAchievements } = require('../../services/achievementService');
 const { getPlayerGachaStats } = require('../../services/gachaService');
@@ -19,7 +20,7 @@ const { getEducation } = require('../../data/education');
 const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
 const { getBackpackByTier } = require('../../data/backpacks');
 const { getLevelInfoFromXp } = require('../../data/locations');
-const { getCity } = require('../../data/cities');
+const { getCity, getCityZoning } = require('../../data/cities');
 const { ITEMS } = require('../../data/items');
 const { formatLp, renderBar, formatDuration } = require('../../utils/uiBuilder');
 const { buildPanel, btn, userSelect } = require('../../utils/panelBuilder');
@@ -53,6 +54,12 @@ async function fetchProfileData(targetId, now = Date.now()) {
         const invRows = await getPlayerInventory(conn, targetId, false, 'bag', now);
         const slotsUsed = calculateSlotsUsed(invRows);
         const propStatus = await getPlayerPropertyStatus(conn, targetId, synced.player.max_slots, now, false);
+        const lands = await getPlayerLands(conn, targetId, null, false);
+        let totalLandAppraisal = 0;
+        for (const l of lands) {
+            const cells = await getLandCells(conn, l.id, 'active');
+            totalLandAppraisal += computeLandStats(cells, l, getCityZoning(l.city_id)).totalAppraisalValue;
+        }
         const equippedVehicle = await getEquippedVehicle(conn, targetId, false);
 
         let jobShifts = 0;
@@ -77,6 +84,8 @@ async function fetchProfileData(targetId, now = Date.now()) {
             buffs: synced.buffs,
             slotsUsed,
             propStatus,
+            landCount: lands.length,
+            totalLandAppraisal,
             equippedVehicle,
             jobShifts,
             achEval,
@@ -283,6 +292,7 @@ function buildProfilePanel({
     const mineLv = getLevelInfoFromXp(p.mining_xp);
     const farmLv = getLevelInfoFromXp(p.farming_xp || 0);
     const cookLv = getLevelInfoFromXp(p.cooking_xp || 0);
+    const gatherLv = getLevelInfoFromXp(p.gathering_xp || 0);
 
     const fishCollected = collections.filter(id => {
         const item = ITEMS.find(entry => entry.id === id);
@@ -301,9 +311,11 @@ function buildProfilePanel({
 
     const propertyCity = getCity(propStatus?.propertyCityId);
     const effTier = propStatus?.effectiveTier;
+    const displayPropName = propStatus?.customName || effTier?.name || 'Tunawisma';
+    const isOwnedLocal = propStatus?.ownershipType === 'owned' || propStatus?.row?.ownership_type === 'owned';
     const propertyLabel = !effTier || effTier.id === 'tunawisma'
         ? `${effTier?.emoji || '🏚️'} ${effTier?.name || 'Tunawisma'}`
-        : `${effTier.emoji} ${effTier.name} · ${propStatus?.row?.ownership_type === 'owned' ? 'Milik pribadi' : 'Sewa'} · ${propertyCity.shortName}`;
+        : `${effTier.emoji} ${displayPropName} · ${isOwnedLocal ? 'Milik pribadi' : 'Sewa'} · ${propertyCity.shortName}`;
 
     const vehicleLabel = equippedVehicle?.vehicle
         ? `${equippedVehicle.vehicle.emoji} ${equippedVehicle.vehicle.name} · ${Number(equippedVehicle.odometer_km || 0).toFixed(0)} km${equippedVehicle.vehicle.tankCapacity > 0 ? ` · ⛽ ${Number(equippedVehicle.fuel_liters || 0).toFixed(1)} L` : ''}`
@@ -342,7 +354,10 @@ function buildProfilePanel({
         [
             '**📍 LOKASI & HUNIAN**',
             `Kota saat ini: **${cityLabel}**`,
-            `Tempat tinggal: **${propertyLabel}**`
+            `Tempat tinggal: **${propertyLabel}**`,
+            ...(Number(data.landCount || 0) > 0
+                ? [`Aset Properti: **${data.landCount} kavling** *(NJOP Total ${formatLp(data.totalLandAppraisal || 0)})*`]
+                : [])
         ].join('\n'),
         [
             '**💼 KARIER & PENDIDIKAN**',
@@ -365,7 +380,8 @@ function buildProfilePanel({
             buildSkillProgressLine('🎣', 'Fishing', fishLv),
             buildSkillProgressLine('⛏️', 'Mining', mineLv),
             buildSkillProgressLine('🌾', 'Farming', farmLv),
-            buildSkillProgressLine('🍳', 'Cooking', cookLv)
+            buildSkillProgressLine('🍳', 'Cooking', cookLv),
+            buildSkillProgressLine('🌲', 'Gathering', gatherLv)
         ].join('\n\n'),
         [
             '**🎒 TAS & ENSIKLOPEDIA**',

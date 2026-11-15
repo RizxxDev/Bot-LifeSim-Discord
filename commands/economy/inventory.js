@@ -123,13 +123,26 @@ function buildInventoryPanel({
     }
 
     if (storageRows.length > 0 || propStatus.effectiveTier.id !== 'tunawisma' || propStatus.hasCoolerBox) {
-        const countLoc = loc => calculateSlotsUsed(storageRows.filter(r => r.storage_location === loc));
+        const activeLandId = propStatus.landId ? Number(propStatus.landId) : null;
+        const localRows = storageRows.filter(r =>
+            r.storage_location === 'coolerbox' ||
+            (activeLandId !== null ? Number(r.land_id) === activeLandId : (r.land_id === null || r.land_id === undefined))
+        );
+        const remoteRows = storageRows.filter(r =>
+            ['kulkas', 'freezer', 'gudang'].includes(r.storage_location) &&
+            Number(r.land_id || 0) !== Number(activeLandId || 0)
+        );
+        const countLoc = loc => calculateSlotsUsed(localRows.filter(r => r.storage_location === loc));
         const cap = propStatus.capacities;
         const storageSummary = [];
         if (cap.coolerbox > 0 || countLoc('coolerbox') > 0) storageSummary.push(`🧊 Cooler Box: \`${countLoc('coolerbox')}/${cap.coolerbox}\``);
         if (cap.kulkas > 0 || countLoc('kulkas') > 0) storageSummary.push(`❄️ Kulkas: \`${countLoc('kulkas')}/${cap.kulkas}\``);
         if (cap.freezer > 0 || countLoc('freezer') > 0) storageSummary.push(`🧊 Freezer: \`${countLoc('freezer')}/${cap.freezer}\``);
         if (cap.gudang > 0 || countLoc('gudang') > 0) storageSummary.push(`📦 Gudang: \`${countLoc('gudang')}/${cap.gudang}\``);
+        if (remoteRows.length > 0) {
+            const remoteQty = remoteRows.reduce((s, r) => s + Number(r.quantity || 0), 0);
+            storageSummary.push(`🌍 Properti/Kota Lain: **${remoteQty} item**`);
+        }
         if (storageSummary.length > 0) {
             blocks.push(`**🏠 Penyimpanan Lain (\`/storage\`):** ${storageSummary.join(' · ')}`);
         }

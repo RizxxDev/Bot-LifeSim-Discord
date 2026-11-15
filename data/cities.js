@@ -32,8 +32,18 @@ const CITIES = [
         highlights: [
             '⛏️ Ekspedisi Pertambangan (`/mining` — Batu, Tembaga, Emas, Berlian)',
             '🌊 Dermaga Laut Lepas (`/fishing` spot Laut Lepas)',
+            '🏭 Zona Industri Properti (Workshop -20%, Gudang +20%)',
             '⚓ Profesi Lokal: **Nelayan Samudra** & **Buruh Tambang**'
-        ]
+        ],
+        propertyZoning: {
+            landBasePrice: 15000000,
+            businessTrafficMult: 0.95,
+            warehouseBonus: 1.20,
+            workshopCostMult: 0.80,
+            expandCostMult: 1.0,
+            farmYieldMult: 1.0,
+            zoningLabel: 'Zona Industri & Logistik (Workshop -20%, Gudang +20%)'
+        }
     },
     {
         id: 'kota_sentral',
@@ -48,9 +58,19 @@ const CITIES = [
         highlights: [
             '🎓 Kampus & Akademi Pendidikan (`/study` — SMP s/d S2)',
             '💳 Kantor Pusat Pembiayaan & Kredit (`/credit`)',
+            '🏪 Zona Komersial Elit (+35% Traffic NPC Usaha & Sewa Tinggi)',
             '🎰 Mystery Box Mall & Brankas Sultan (`/gacha`)',
             '💼 Profesi Eksekutif, Kantor, Medis Spesialis & Akademik'
-        ]
+        ],
+        propertyZoning: {
+            landBasePrice: 35000000,
+            businessTrafficMult: 1.35,
+            warehouseBonus: 1.00,
+            workshopCostMult: 1.00,
+            expandCostMult: 1.15,
+            farmYieldMult: 1.0,
+            zoningLabel: 'Zona Komersial & Hunian Elit (+35% Traffic NPC & Sewa Tinggi)'
+        }
     },
     {
         id: 'kota_timur',
@@ -64,9 +84,20 @@ const CITIES = [
         description: 'Wilayah timur berudara sejuk dengan hamparan tanah subur untuk pertanian serta perairan Danau Hijau yang kaya ikan air tawar.',
         highlights: [
             '🌾 Lahan Perkebunan & Pertanian (`/farm`)',
+            '🪓 Hutan Kayu, Bambu & Galian Tanah Liat/Pasir (`/gather`)',
+            '🏡 Zona Agropolitan (Tanah Termurah, Expand -25%, Bonus Panen)',
             '🛶 Spot Memancing Danau Hijau (`/fishing` spot Danau)',
             '🧑‍🌾 Profesi Lokal: **Petani Sayur** & **Mandor Kebun**'
-        ]
+        ],
+        propertyZoning: {
+            landBasePrice: 8000000,
+            businessTrafficMult: 0.85,
+            warehouseBonus: 1.05,
+            workshopCostMult: 0.90,
+            expandCostMult: 0.75,
+            farmYieldMult: 1.10,
+            zoningLabel: 'Zona Agropolitan & Lahan Luas (Tanah Terjangkau, Expand -25%)'
+        }
     }
 ];
 
@@ -171,6 +202,11 @@ function isCommandAllowedDuringTravel(commandOrModName, hasDriver = false) {
     return false;
 }
 
+function getCityZoning(cityId) {
+    const city = getCity(cityId);
+    return city.propertyZoning || CITIES[1].propertyZoning;
+}
+
 module.exports = {
     DEFAULT_CITY_ID,
     TRAVEL_SECONDS_PER_KM,
@@ -182,6 +218,7 @@ module.exports = {
     DRIVER_ALLOWED_DURING_TRAVEL,
     getCity,
     getAllCities,
+    getCityZoning,
     calculateDriverTripFare,
     calculateTravelVitalCost,
     calculateCityRoute,

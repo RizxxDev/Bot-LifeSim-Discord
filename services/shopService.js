@@ -129,15 +129,19 @@ function buildShopPanel({
         }, now)
     ];
 
-    // Row 2: Pilih Barang di Toko Ini
+    // Row 2: Pilih Barang di Toko Ini (Discord Select Menu maks 25 opsi, pastikan item halaman aktif selalu masuk)
     if (allItems.length > 0) {
+        const startIdx = (safePage - 1) * ITEMS_PER_PAGE;
+        const maxOffset = Math.max(0, allItems.length - 25);
+        const windowStart = allItems.length <= 25 ? 0 : Math.min(startIdx, maxOffset);
+        const selectItems = allItems.slice(windowStart, windowStart + 25);
         rows.push(
             select('shop', 'item', ownerId, {
                 placeholder: '🛒 Pilih barang yang ingin dibeli...',
-                options: allItems.map(it => {
+                options: selectItems.map(it => {
                     const price = getEffectiveItemPrice(it, liveCfg);
                     return {
-                        label: `${it.name} — ${formatLp(price)}`,
+                        label: `${it.name} — ${formatLp(price)}`.slice(0, 100),
                         value: `${shop.id}:${safePage}:${it.id}`,
                         emoji: it.emoji,
                         description: it.description.slice(0, 95),

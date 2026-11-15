@@ -5,6 +5,11 @@ module.exports = {
         TIMEZONE_LABEL: 'WIB'
     },
 
+    FEATURE_FLAGS: {
+        // Nonaktifkan sementara fitur properti, kavling tanah, & konstruksi selama perombakan konsep gameplay
+        PROPERTY_UNDER_DEVELOPMENT: true
+    },
+
     STARTER_PACK: {
         cash: 0,
         items: [
@@ -45,6 +50,7 @@ module.exports = {
         study:       { energy: 15, hunger: 5, thirst: 6,  cooldownSec: 7200 },
         fishing:     { energy: 8,  hunger: 3, thirst: 4,  cooldownSec: 180  },
         mining:      { energy: 12, hunger: 5, thirst: 6,  cooldownSec: 300  },
+        gather:      { energy: 10, hunger: 4, thirst: 5,  cooldownSec: 240  },
         bin:         { energy: 1,  hunger: 0, thirst: 0,  cooldownSec: 5    }
     },
 
@@ -97,6 +103,11 @@ module.exports = {
             { maxCount: 30, multiplier: 1.0, trashBonus: 0 },
             { maxCount: 50, multiplier: 0.75, trashBonus: 0.10 },
             { maxCount: Infinity, multiplier: 0.50, trashBonus: 0.20 }
+        ],
+        gathering: [
+            { maxCount: 30, multiplier: 1.0, trashBonus: 0 },
+            { maxCount: 50, multiplier: 0.75, trashBonus: 0.05 },
+            { maxCount: Infinity, multiplier: 0.50, trashBonus: 0.10 }
         ]
     },
 

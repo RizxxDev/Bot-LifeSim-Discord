@@ -9,7 +9,8 @@ const {
 const { COLORS, buildV2Card } = require('../utils/uiBuilder');
 const { parseId } = require('../utils/panelId');
 const { buildExpiredPanel } = require('../utils/panelBuilder');
-const { trackInteractionPanel, notifyPlayerStateChanged } = require('./autoUpdateService');
+const { isPropertyModuleDisabled, buildPropertyUnderDevPanel } = require('../utils/featureFlags');
+const { trackInteractionPanel, notifyPlayerStateChanged, cancelAutoUpdate } = require('./autoUpdateService');
 
 const registry = new Map();
 
@@ -18,7 +19,13 @@ const READ_ONLY_ACTIONS = new Set([
     'home', 'me', 'refresh', 'page', 'cat', 'tab', 'list', 'book', 'filter',
     'slot', 'loc', 'bait', 'seed', 'recipe', 'pick_dest', 'user',
     'mode_fert', 'mode_expand', 'rent_prompt', 'buy_prompt',
-    'inspect_user', 'open_wardrobe', 'open_butik'
+    'inspect_user', 'open_wardrobe', 'open_butik',
+    'floor', 'toggle_mode', 'templates_view', 'meta_view', 'depot_view', 'switch_land',
+    'tab_buy_land', 'tab_npc', 'tab_biz_ws', 'tab_market',
+    'pick_land', 'buy_city', 'buy_tier', 'pick_npc', 'ws_recipe', 'market_pick', 'p2p_rent_pick',
+    'rot_cam', 'palette_mode', 'ascii_modal', 'dup_floor_modal', 'filter_dist', 'inspect_parcel',
+    'showcase_view', 'pbb_view', 'offers_view', 'cond_view', 'gallery_view', 'gallery_pick',
+    'gallery_city', 'offer_land_pick', 'offer_price_prompt', 'p2p_tab', 'map_tab', 'offers_tab', 'pbb_tab'
 ]);
 
 function isReadOnlyPanelInteraction(mod, action) {
@@ -144,6 +151,26 @@ async function dispatch(interaction, client, now = Date.now()) {
                 return true;
             }
         }
+    }
+
+    // 3.5. Gerbang Fitur Under Development (Properti, Tanah, Bangun)
+    if (isPropertyModuleDisabled(parsed.mod)) {
+        cancelAutoUpdate(`${parsed.mod}:${interaction.user.id}`);
+        const willUpdate = typeof interaction.update === 'function' && (
+            typeof interaction.isFromMessage !== 'function' || interaction.isFromMessage()
+        );
+        const payload = buildPropertyUnderDevPanel({
+            mod: parsed.mod,
+            ownerId: interaction.user.id,
+            ephemeral: !willUpdate,
+            now
+        });
+        if (willUpdate) {
+            await interaction.update({ ...payload, attachments: [] });
+        } else {
+            await interaction.reply(payload);
+        }
+        return true;
     }
 
     // 4. Cari Handler Sesuai Jenis Interaksi

@@ -612,12 +612,27 @@ async function resetPlayerAccount(targetId, adminId, now = Date.now()) {
             'player_event_progress',
             'player_gacha_stats',
             'player_clothes',
-            'player_equipped_clothes'
+            'player_equipped_clothes',
+            'construction_projects',
+            'workshop_queues',
+            'property_blueprints',
+            'player_lands'
         ];
+
+        await conn.execute(
+            `UPDATE city_land_parcels
+             SET status = 'available', owner_id = NULL, land_id = NULL, foreclosed_price = NULL, foreclosed_at = NULL
+             WHERE owner_id = ?`,
+            [targetId]
+        );
+        await conn.execute(`DELETE FROM land_trade_offers WHERE seller_id = ? OR buyer_id = ?`, [targetId, targetId]);
+        await conn.execute(`DELETE FROM property_likes WHERE liker_id = ?`, [targetId]);
 
         for (const tbl of childTables) {
             await conn.execute(`DELETE FROM ${tbl} WHERE discord_id = ?`, [targetId]);
         }
+        await conn.execute(`DELETE FROM property_leases WHERE tenant_id = ? OR owner_id = ?`, [targetId, targetId]);
+        await conn.execute(`DELETE FROM property_market_listings WHERE seller_id = ?`, [targetId]);
 
         await conn.execute(
             `UPDATE players SET

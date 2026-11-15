@@ -80,11 +80,25 @@ function formatFreshnessBadge(remainingMs, storageLocation = 'bag') {
 async function syncInventoryFreshness(conn, discordId, now = Date.now(), isEvicted = null) {
     let evictedFlag = Boolean(isEvicted);
     if (isEvicted === null) {
-        const [pRows] = await conn.execute(
-            `SELECT is_evicted FROM player_properties WHERE discord_id = ? LIMIT 1`,
+        const [landRows] = await conn.execute(
+            `SELECT id FROM player_lands WHERE discord_id = ? LIMIT 1`,
             [discordId]
         );
-        evictedFlag = pRows.length > 0 && Number(pRows[0].is_evicted) === 1;
+        if (landRows.length === 0) {
+            const [leaseRows] = await conn.execute(
+                `SELECT is_evicted FROM property_leases WHERE tenant_id = ? ORDER BY is_evicted ASC LIMIT 1`,
+                [discordId]
+            );
+            if (leaseRows.length > 0) {
+                evictedFlag = Number(leaseRows[0].is_evicted) === 1;
+            } else {
+                const [pRows] = await conn.execute(
+                    `SELECT is_evicted FROM player_properties WHERE discord_id = ? LIMIT 1`,
+                    [discordId]
+                );
+                evictedFlag = pRows.length > 0 && Number(pRows[0].is_evicted) === 1;
+            }
+        }
     }
 
     const [rows] = await conn.execute(
@@ -107,11 +121,13 @@ async function syncInventoryFreshness(conn, discordId, now = Date.now(), isEvict
             await conn.execute(`DELETE FROM player_inventory WHERE id = ?`, [row.id]);
 
             if (qty > 0) {
+                const rowLandId = row.land_id ?? null;
                 const [existingSpoiled] = await conn.execute(
                     `SELECT id FROM player_inventory
                      WHERE discord_id = ? AND item_id = 'bahan_basi' AND storage_location = ?
+                       AND (land_id = ? OR (? IS NULL AND land_id IS NULL))
                      LIMIT 1 FOR UPDATE`,
-                    [discordId, loc]
+                    [discordId, loc, rowLandId, rowLandId]
                 );
 
                 if (existingSpoiled.length > 0) {
@@ -122,9 +138,9 @@ async function syncInventoryFreshness(conn, discordId, now = Date.now(), isEvict
                 } else {
                     await conn.execute(
                         `INSERT INTO player_inventory
-                         (discord_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
-                         VALUES (?, 'bahan_basi', ?, NULL, ?, NULL, NULL, ?)`,
-                        [discordId, qty, loc, now]
+                         (discord_id, land_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
+                         VALUES (?, ?, 'bahan_basi', ?, NULL, ?, NULL, NULL, ?)`,
+                        [discordId, rowLandId, qty, loc, now]
                     );
                 }
 

@@ -9,6 +9,7 @@ const { getPlayerPropertyStatus } = require('../../services/propertyService');
 const { getPlayerInventory } = require('../../services/inventoryService');
 const {
     getActiveCookingQueues,
+    resolveEffectiveStoveInfo,
     startCookingBatch,
     collectFinishedCooking,
     resolveRecipeIngredientsFromBag
@@ -19,6 +20,7 @@ const {
     getPerfectCookChance
 } = require('../../data/recipes');
 const { getItem } = require('../../data/items');
+const { getCity } = require('../../data/cities');
 const { getLevelInfoFromXp } = require('../../data/locations');
 const {
     COLORS,
@@ -78,7 +80,7 @@ async function fetchCookState(discordId, now = Date.now()) {
     return await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, false);
         const p = synced.player;
-        const propStatus = await getPlayerPropertyStatus(conn, discordId, p.max_slots, now, false);
+        const propStatus = await getPlayerPropertyStatus(conn, discordId, p.max_slots, now, false, p.current_city || 'kota_sentral');
         const queues = await getActiveCookingQueues(conn, discordId, false);
         const invRows = await getPlayerInventory(conn, discordId, false, 'bag', now);
 
@@ -106,7 +108,7 @@ function buildCookPanel({
 }) {
     const { player: p, propStatus, queues, invRows, gasInBag, coalInBag } = state;
     const ownerId = p.discord_id;
-    const stoveSlots = Number(propStatus.capacities?.stove || 0);
+    const { stoveSlots, usingPublicStove } = resolveEffectiveStoveInfo(propStatus);
     const cookingInfo = getLevelInfoFromXp(p.cooking_xp || 0);
     const perfectPct = Math.round(getPerfectCookChance(cookingInfo.level) * 100);
 
@@ -116,11 +118,21 @@ function buildCookPanel({
         activeRecipe = allRecipes.find(r => cookingInfo.level >= r.minLevel && resolveRecipeIngredientsFromBag(invRows, r, 1).ok) || allRecipes[0];
     }
 
+    const curCity = getCity(propStatus.propertyCityId || p.current_city || 'kota_sentral');
+    const kitchenTitle = propStatus.customName || propStatus.effectiveTier.name;
+    const kitchenFurns = (propStatus.stats?.furnitureDetails || []).filter(d => Number(d.spec?.effects?.cookingSlots || 0) > 0);
+    const kitchenFurnLine = kitchenFurns.length > 0
+        ? `🍳 **Perabot Dapur:** ${kitchenFurns.slice(0, 3).map(d => `${d.spec.emoji} **${d.spec.name}**${d.room ? ` *(${d.room.customName})*` : ''}${d.isOutdoorPenalty ? ' *(⚠️ Outdoor -50%)*' : ''}`).join(', ')}`
+        : null;
+    const kitchenLocationLine = usingPublicStove
+        ? `🍲 **Dapur Umum (${curCity.emoji} ${curCity.shortName}):** Tungku Publik Sementara · 🔥 Tungku: **${queues.length}/${stoveSlots} Slot**`
+        : `🏠 **Dapur Lokal (${curCity.emoji} ${curCity.shortName}):** ${propStatus.effectiveTier.emoji} **${kitchenTitle}** · 🔥 Tungku: **${queues.length}/${stoveSlots} Slot**`;
     const headerLines = [
         `👨‍🍳 **Cooking Lv. ${cookingInfo.level}** (\`${cookingInfo.currentXp}/${cookingInfo.requiredXp} EXP\`) · 🌟 Peluang Masakan Sempurna: **${perfectPct}%**`,
-        `🏠 **Dapur Hunian:** ${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}** · 🔥 Tungku: **${queues.length}/${stoveSlots} Slot**`,
+        kitchenLocationLine,
+        kitchenFurnLine,
         `⛽ **Bahan Bakar:** **${Number(p.lpg_charges || 0)}x muatan LPG** *(Tas: ${gasInBag}× Tabung LPG · ${coalInBag}× Batu Bara)*`
-    ];
+    ].filter(Boolean);
 
     const blocks = [headerLines.join('\n')];
     const rows = [];
@@ -158,10 +170,17 @@ function buildCookPanel({
         );
     } else {
         // Status Tungku
-        if (stoveSlots <= 0) {
-            blocks.push('⚠️ **Belum Punya Dapur Aktif:** Sewa minimal **🛏️ Kamar Kos Sederhana** lewat `/property` untuk membuka tungku kompor.');
+        if (!usingPublicStove && propStatus.facilitiesLocked) {
+            const condLabel = propStatus.conditionMeta?.label || 'Terbengkalai/Roboh';
+            blocks.push(`🔒 **Dapur Terkunci (${condLabel}):** Bangunan lokalmu butuh perbaikan terlebih dahulu! Buka \`/property\` untuk **Renovasi Berat** / **Bersihkan Puing**, atau sewa Kos NPC sementara.`);
+        } else if (stoveSlots <= 0) {
+            blocks.push('⚠️ **Belum Punya Dapur Aktif di Kota Ini:** Bangun modul **Dapur** di `/bangun` atau sewa minimal **🛏️ Kamar Kos Sederhana** lewat `/property`.');
         } else if (queues.length === 0) {
-            blocks.push('🍳 **Status Tungku:** Seluruh tungku kompor sedang kosong dan siap digunakan.');
+            blocks.push(
+                usingPublicStove
+                    ? '🍲 **Status Tungku (Dapur Umum Kota):** 1 tungku publik tersedia gratis selama fitur `/property` & `/bangun` dalam pengembangan.'
+                    : '🍳 **Status Tungku:** Seluruh tungku kompor sedang kosong dan siap digunakan.'
+            );
         } else {
             const qLines = queues.map(q => {
                 const rec = getRecipe(q.recipe_id);

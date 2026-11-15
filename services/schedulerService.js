@@ -3,6 +3,8 @@ const { calculateMarginalWealthTax, getLiveEconomyConfig } = require('./economyS
 const { processDuePropertyBillings } = require('./propertyService');
 const { processDueFarmPlotBillings } = require('./farmService');
 const { processDueCreditInstallments } = require('./creditService');
+const { runScheduledBuildingConditionChecks } = require('./buildingConditionService');
+const { isPropertyUnderDevelopment } = require('../utils/featureFlags');
 const { BANK } = require('../data/constants');
 
 function getWibParts(ts = Date.now()) {
@@ -21,7 +23,7 @@ function getIsoWeekKey(ts = Date.now()) {
     return `${p.year}-M${p.month}-W${weekNum}`;
 }
 
-async function runPeriodicEconomyMaintenance(now = Date.now()) {
+async function runPeriodicEconomyMaintenance(now = Date.now(), client = null) {
     const parts = getWibParts(now);
 
     // 1. Pajak Kekayaan Mingguan (hari Senin)
@@ -105,17 +107,20 @@ async function runPeriodicEconomyMaintenance(now = Date.now()) {
         }
     }
 
-    // 3. Tagihan Sewa Properti Mingguan, Masa Tenggang 3 Hari, PBB Bulanan, Sewa Kebun Mingguan, & Kredit (Idempoten)
+    // 3. Tagihan Sewa Properti Mingguan, Masa Tenggang 3 Hari, PBB Bulanan, Penyitaan Kavling, Degradasi Bangunan, Sewa Kebun Mingguan, & Kredit (Idempoten)
     await withTransaction(async (conn) => {
-        await processDuePropertyBillings(conn, now);
+        if (!isPropertyUnderDevelopment()) {
+            await runScheduledBuildingConditionChecks(conn, now, client);
+            await processDuePropertyBillings(conn, now);
+        }
         await processDueFarmPlotBillings(conn, now);
         await processDueCreditInstallments(conn, now);
     });
 }
 
-function startMaintenanceScheduler() {
+function startMaintenanceScheduler(client = null) {
     const interval = setInterval(() => {
-        runPeriodicEconomyMaintenance(Date.now()).catch(err => {
+        runPeriodicEconomyMaintenance(Date.now(), client).catch(err => {
             console.error('[SCHEDULER ERROR]', err.message);
         });
     }, 3600 * 1000);

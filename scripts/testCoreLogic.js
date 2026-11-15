@@ -40,12 +40,24 @@ function collectCommandFiles(dir, list = []) {
 async function runTests() {
     console.log('🧪 Menjalankan pengujian unit logika inti (testCoreLogic.js)...\n');
 
-    // 1. Verifikasi seluruh 32 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
+    // 1. Verifikasi seluruh 35 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
     const cmdFiles = collectCommandFiles(path.join(__dirname, '..', 'commands'));
-    assert.strictEqual(cmdFiles.length, 32, `Harusnya tepat 32 command pasca penambahan /travel, ditemukan: ${cmdFiles.length}`);
+    assert.strictEqual(cmdFiles.length, 35, `Harusnya tepat 35 command pasca pembaruan /tanah & /bangun, ditemukan: ${cmdFiles.length}`);
     for (const file of cmdFiles) {
         const rawSrc = fs.readFileSync(file, 'utf8');
         assert(!rawSrc.includes('fetchReply: true'), `Command ${file} masih mengandung opsi deprecated fetchReply: true`);
+
+        const textInputRe = /new TextInputBuilder\(\)[^;]*?\.setLabel\(\s*(['"`])([^'"`\r\n]+)\1\s*\)/g;
+        let tiMatch;
+        while ((tiMatch = textInputRe.exec(rawSrc)) !== null) {
+            const labelTxt = tiMatch[2];
+            if (!labelTxt.includes('${')) {
+                assert(
+                    labelTxt.length <= 45,
+                    `Command ${file} memiliki TextInputBuilder.setLabel() > 45 karakter (${labelTxt.length}): ${labelTxt}`
+                );
+            }
+        }
 
         const cmd = require(file);
         assert(cmd.name, `Command di ${file} tidak punya name`);
@@ -60,7 +72,7 @@ async function runTests() {
     }
     const workCmd = require('../commands/career/work');
     assert(workCmd.lockTtl >= 45, 'Command /work harus punya lockTtl >= 45 detik');
-    console.log(`✅ [1/23] 32 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
+    console.log(`✅ [1/26] 35 Slash Commands (0 subcommand, 0 opsi, panel interaktif) berhasil dimuat & tervalidasi.`);
 
     // 2. Validasi Username & Blacklist
     assert.strictEqual(validateUsername('Budi_99').valid, true);
@@ -658,13 +670,17 @@ async function runTests() {
         selectedJobId: 'tukang_parkir',
         now: nowTs
     });
-    const propPanelSelected = buildPropertyPanel({
+    const propPanelSelected = await buildPropertyPanel({
         state: {
             player: samplePlayer,
+            lands: [],
+            maxLands: 3,
             status: {
                 row: null,
                 isEvicted: false,
                 inGracePeriod: false,
+                source: 'tunawisma',
+                customName: 'Tunawisma Lokal',
                 actualTier: getPropertyTier('tunawisma'),
                 effectiveTier: getPropertyTier('tunawisma'),
                 capacities: { bag: 20, kulkas: 0, freezer: 0, gudang: 0, stove: 0, coolerbox: 0 }
@@ -1609,7 +1625,7 @@ async function runTests() {
     assert.deepStrictEqual(syncedFishingPayload, { panel: 'fishing', uid: 'u_sync_1' }, 'Panel /fishing harus ikut tersinkronisasi setelah minigame selesai');
     clearAllAutoUpdates();
 
-    // D. Verifikasi bahwa tidak ada lagi tombol 'Segarkan' atau 'Cek Ulang Tas' di SELURUH 32 command (termasuk /admin)
+    // D. Verifikasi bahwa tidak ada lagi tombol 'Segarkan' atau 'Cek Ulang Tas' di SELURUH 35 command (termasuk /admin)
     for (const f of cmdFiles) {
         const fileContent = fs.readFileSync(f, 'utf8');
         const matchRefresh = fileContent.match(/label:\s*['"]Segarkan\b[^'"]*['"]/i);
@@ -1617,7 +1633,7 @@ async function runTests() {
         const matchCekUlang = fileContent.match(/label:\s*['"]Cek Ulang Tas['"]/i);
         assert(!matchCekUlang, `Berkas ${f} masih mengandung tombol dengan label Cek Ulang Tas`);
     }
-    console.log('✅ [24/25] Auto-Update Service (Bot Token message.edit, Cross-Panel Live Sync, & 0 Tombol Segarkan di 32 Command) terverifikasi.');
+    console.log('✅ [24/26] Auto-Update Service (Bot Token message.edit, Cross-Panel Live Sync, & 0 Tombol Segarkan di 35 Command) terverifikasi.');
 
     // ====================================================
     // 25. TEST REDESIGN /PROFILE: MEDIA GALLERY, HIDE HUD, CANVAS BANNER 800x280, 2 TAB & MODE INSPEKSI
@@ -1849,9 +1865,787 @@ async function runTests() {
     assert.strictEqual(typeof payCmd.fetchPayState, 'function');
     assert.strictEqual(typeof payCmd.buildPayPanel, 'function');
 
-    console.log('✅ [25/25] Redesign /profile (MediaGallery, Global Mini-HUD Removal, Banner Canvas 800x280, 2 Tab & Mode Inspeksi) terverifikasi.\n');
+    console.log('✅ [25/26] Redesign /profile (MediaGallery, Global Mini-HUD Removal, Banner Canvas 800x280, 2 Tab & Mode Inspeksi) terverifikasi.');
 
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (25/25 PASSED)!');
+    // ====================================================
+    // 26. TEST SISTEM PROPERTI TERBATAS & VOXEL 3D (/tanah, /bangun, /property, /gather)
+    // ====================================================
+    const {
+        BUILDING_MODULES,
+        SHAPE_BLOCKS,
+        ALL_BUILDABLE_BLOCKS,
+        STRUCTURAL_MATERIALS,
+        LAND_TIERS,
+        STARTER_TEMPLATES,
+        validateCellPlacement,
+        validateVoxelSupport,
+        calculateStructuralStress,
+        parseAsciiFloorPattern,
+        parseGridAreaInput,
+        parseAreaPerimeterWalls,
+        parseLineWallInput,
+        buildPresetBlueprintCells
+    } = require('../data/buildingModules');
+    const { getFurnitureSpec, getRotatedDimensions, getFootprintCells, rotateFurnitureClockwise } = require('../data/furniture');
+    const { SHOPS } = require('../data/items');
+    const { detectFloorRooms } = require('../services/roomDetectionService');
+    const { validateFurniturePlacement } = require('../services/furnitureService');
+    const {
+        PARCEL_SIZE_TIERS,
+        generateDistrictParcelSpecs,
+        calculateFiniteParcelBasePrice
+    } = require('../data/landParcels');
+    const { GATHER_ZONES, WORKSHOP_RECIPES, rollGatherDrops, getWorkshopRecipe } = require('../data/gathering');
+    const { getCityZoning } = require('../data/cities');
+    const {
+        computeLandStats,
+        computeArchitectureScore,
+        calculateLandPurchasePrice,
+        calculateLandExpandPrice,
+        P2P_PROPERTY_RULES,
+        validateP2PTradeEligibility,
+        validateMarketPriceBounds
+    } = require('../services/landService');
+    const {
+        getConditionMeta,
+        getHeavyRenovationRequirements
+    } = require('../services/buildingConditionService');
+    const { calculateConstructionRab } = require('../services/constructionService');
+    const {
+        generatePropertyCanvasBuffer,
+        buildPropertyCanvasAttachment,
+        clearPropertyCanvasCache
+    } = require('../services/propertyCanvasService');
+    const {
+        getControlledRetailPrice
+    } = require('../services/propertyBusinessService');
+    const { buildGatherPanel } = require('../commands/activities/gather');
+    const {
+        buildStudioPanel,
+        buildTemplatesPanel,
+        buildMetaPanel,
+        buildDepotPanel
+    } = require('../commands/life/bangun');
+    const {
+        buildMapTabPanel,
+        buildP2PTabPanel,
+        buildOffersTabPanel,
+        buildPbbTabPanel
+    } = require('../commands/life/tanah');
+    const {
+        buildHomeTabPanel,
+        buildBuyLandTabPanel,
+        buildNpcTabPanel,
+        buildBizWorkshopTabPanel,
+        buildMarketTabPanel,
+        buildGalleryTabPanel
+    } = require('../commands/life/property');
+    const { buildStoragePanel } = require('../commands/life/storage');
+    const { buildHelpCategoryPayload } = require('../commands/onboarding/help');
+    const gatherCmd = require('../commands/activities/gather');
+    const bangunCmd = require('../commands/life/bangun');
+    const tanahCmd = require('../commands/life/tanah');
+    const propertyCmd = require('../commands/life/property');
+
+    // A. Verifikasi Katalog Modul, Blok Bentuk 3D, Parsel Distrik, Workshop & Migrasi 012 + 013
+    assert.strictEqual(BUILDING_MODULES.length, 23, 'Harus ada 23 modul ruangan sandbox');
+    assert.strictEqual(SHAPE_BLOCKS.length, 11, 'Harus ada 11 blok bentuk 3D');
+    assert.strictEqual(ALL_BUILDABLE_BLOCKS.length, 34, 'Harus ada 34 total blok (modul + bentuk)');
+    assert.strictEqual(STRUCTURAL_MATERIALS.length, 7, 'Harus ada 7 material struktural');
+    assert.strictEqual(LAND_TIERS.length, 5, 'Harus ada 5 ukuran kavling tanah (3x3..10x10)');
+    assert.strictEqual(PARCEL_SIZE_TIERS.length, 4, 'Harus ada 4 tier ukuran parsel distrik (S/M/L/XL)');
+    assert.strictEqual(STARTER_TEMPLATES.length, 5, 'Harus ada 5 preset blueprint siap pakai');
+    assert.strictEqual(GATHER_ZONES.length, 3, 'Harus ada 3 zona gather di Lembah Hijau');
+    assert.strictEqual(WORKSHOP_RECIPES.length, 17, 'Harus ada 17 resep workshop (9 olah bahan + 8 rakit perabotan)');
+    assert.ok(getWorkshopRecipe('proc_papan_kayu'), 'Resep proc_papan_kayu wajib tersedia');
+
+    const distSpecs = generateDistrictParcelSpecs('kota_sentral', 1);
+    assert.strictEqual(distSpecs.length, 12, 'Setiap distrik wajib menghasilkan 12 parsel tanah terbatas');
+    assert.strictEqual(calculateFiniteParcelBasePrice('S_4x4', 'kota_sentral', 1), 36500000, 'Harga dasar S_4x4 Distrik 1 Kota Sentral harus 36.500.000 Lp');
+
+    const sql012 = fs.readFileSync(path.join(__dirname, '..', 'database', 'migrations', '012_modular_sandbox_property.sql'), 'utf8');
+    const stmts012 = splitSqlStatements(sql012);
+    assert.strictEqual(stmts012.length, 17, `Migrasi 012 wajib ter-parse menjadi tepat 17 statement SQL valid (ditemukan ${stmts012.length})`);
+    assert.ok(sql012.includes('CREATE TABLE IF NOT EXISTS player_lands'), 'Migrasi 012 wajib membuat tabel player_lands');
+    assert.ok(sql012.includes('CREATE TABLE IF NOT EXISTS land_grid_cells'), 'Migrasi 012 wajib membuat tabel land_grid_cells');
+
+    const sql013 = fs.readFileSync(path.join(__dirname, '..', 'database', 'migrations', '013_finite_land_and_voxel3d.sql'), 'utf8');
+    const stmts013 = splitSqlStatements(sql013);
+    assert.strictEqual(stmts013.length, 8, `Migrasi 013 wajib ter-parse menjadi tepat 8 statement SQL valid (ditemukan ${stmts013.length})`);
+    assert.ok(sql013.includes('CREATE TABLE IF NOT EXISTS city_land_parcels'), 'Migrasi 013 wajib membuat tabel city_land_parcels');
+    assert.ok(sql013.includes('CREATE TABLE IF NOT EXISTS land_trade_offers'), 'Migrasi 013 wajib membuat tabel land_trade_offers');
+    assert.ok(sql013.includes('CREATE TABLE IF NOT EXISTS property_likes'), 'Migrasi 013 wajib membuat tabel property_likes');
+
+    // B. Validasi Material vs Lantai Bebas, Voxel Support, Stress, ASCII Sketch & Parser Kuas Area TEPI
+    const kayuL3Res = validateCellPlacement('kayu', 3, 'bedroom_std');
+    assert.strictEqual(kayuL3Res.ok, true, 'Tinggi bangunan bebas: Kayu Olahan di Lantai 3 wajib diperbolehkan');
+    assert.strictEqual(kayuL3Res.overSafeHeight, true, 'Kayu Olahan di Lantai 3 wajib menandai overSafeHeight');
+    assert.strictEqual(validateCellPlacement('beton', 3, 'bedroom_std').ok, true, 'Beton Cor boleh sampai Lantai 4');
+    assert.strictEqual(validateCellPlacement('beton', -1, 'gudang').ok, true, 'Beton Cor mendukung Basement B1');
+    assert.strictEqual(validateCellPlacement('bata', -1, 'gudang').ok, false, 'Batu Bata tidak mendukung Basement B1');
+    assert.strictEqual(validateCellPlacement('baja', 6, 'rooftop_lounge').ok, true, 'Rangka Baja mendukung Rooftop');
+    assert.strictEqual(validateCellPlacement('bambu', 1, 'freezer_room').ok, false, 'Bambu tidak mendukung modul heavy-tech (Freezer)');
+
+    assert.strictEqual(validateVoxelSupport([{ floor_level: 1, x: 0, y: 0 }, { floor_level: 3, x: 0, y: 0 }]).ok, false, 'Blok Lt.3 melayang tanpa penyangga di Lt.2 wajib ditolak');
+    assert.strictEqual(validateVoxelSupport([
+        { floor_level: 1, x: 0, y: 0 },
+        { floor_level: 2, x: 0, y: 0 },
+        { floor_level: 2, x: 1, y: 0 },
+        { floor_level: 2, x: 2, y: 0 }
+    ]).ok, true, 'Blok Lt.2 di atas Lt.1 + overhang <= 2 petak wajib valid');
+
+    const stressEval = calculateStructuralStress([
+        { floor_level: 1, x: 0, y: 0, material_id: 'kayu' },
+        { floor_level: 3, x: 0, y: 0, material_id: 'kayu' }
+    ]);
+    assert(stressEval.overHeightCells === 1 && stressEval.dailyExtraDecay > 0, 'Over-height material wajib menambah stres & keausan harian');
+
+    const asciiRes = parseAsciiFloorPattern('###\n#.#\n###', 4, 4);
+    assert.strictEqual(asciiRes.ok, true, 'Sketsa ASCII 3x3 wajib ter-parse valid');
+    assert.strictEqual(asciiRes.entries.length, 8, 'Sketsa ASCII cincin 3x3 harus menghasilkan tepat 8 blok');
+
+    const gTepi = parseGridAreaInput('TEPI A1:D4', 4, 4);
+    assert.strictEqual(gTepi.ok, true);
+    assert.strictEqual(gTepi.cells.length, 12, 'Kuas TEPI A1:D4 wajib menghasilkan 12 sel keliling');
+    const gRange = parseGridAreaInput('A1:C3', 3, 3);
+    assert.strictEqual(gRange.ok, true);
+    assert.strictEqual(gRange.cells.length, 9, 'A1:C3 wajib menghasilkan 9 sel');
+    const gSize = parseGridAreaInput('B2 2x2', 4, 4);
+    assert.strictEqual(gSize.ok, true);
+    assert.strictEqual(gSize.cells.length, 4, 'B2 2x2 wajib menghasilkan 4 sel');
+    const gSingle = parseGridAreaInput('C2', 3, 3);
+    assert.strictEqual(gSingle.ok, true);
+    assert.strictEqual(gSingle.cells.length, 1);
+    assert.strictEqual(parseGridAreaInput('D1', 3, 3).ok, false, 'Koordinat D1 di kavling 3x3 wajib ditolak');
+
+    // Kondisional degradasi / terbengkalai / roboh
+    assert.strictEqual(getConditionMeta(85, 'active', true).state, 'active');
+    assert.strictEqual(getConditionMeta(45, 'worn', true).qualityFactor, 0.75, 'Kondisi lapuk wajib menurunkan efektivitas menjadi 0.75x');
+    assert.strictEqual(getConditionMeta(15, 'abandoned', true).facilitiesLocked, true, 'Kondisi terbengkalai wajib mengunci fasilitas');
+    assert.strictEqual(getConditionMeta(0, 'collapsed', true).isCollapsed, true, 'Kondisi 0% roboh wajib menandai isCollapsed');
+    assert.ok(Object.keys(getHeavyRenovationRequirements([{ material_id: 'bata' }], 20)).length > 0, 'Renovasi berat harus menghitung kebutuhan material');
+
+    // C. Agregasi Statistik Kavling, Skor Arsitektur, Zoning Kota Barat (+20% Gudang) & RAB / Refund Konstruksi
+    const sampleLandBarat = {
+        id: 101,
+        discord_id: samplePlayer.discord_id,
+        city_id: 'kota_barat',
+        land_tier: 'standar_4x4',
+        parcel_code: 'KB-D1-01',
+        width: 4,
+        height: 4,
+        custom_name: 'Gudang Pelabuhan Barat',
+        theme_id: 'minimalis',
+        purchase_price: calculateLandPurchasePrice('standar_4x4', 'kota_barat'),
+        condition_pct: 100,
+        building_state: 'active',
+        is_primary: 1,
+        next_pbb_at: nowTs + 86400000 * 15
+    };
+    const presetCells = buildPresetBlueprintCells('rumah_standar').map(c => ({ ...c, land_id: 101, layout_state: 'active' }));
+    const presetWithExtraWarehouse = [
+        ...presetCells,
+        { land_id: 101, layout_state: 'active', floor_level: 1, x: 3, y: 0, zone_group_id: 'gudang_barat_1', zone_name: 'Gudang Tambahan', module_id: 'gudang', material_id: 'beton', color_hex: '#94A3B8' }
+    ];
+    const statsBarat = computeLandStats(presetWithExtraWarehouse, sampleLandBarat, getCityZoning('kota_barat'));
+    const statsSentral = computeLandStats(presetWithExtraWarehouse, { ...sampleLandBarat, city_id: 'kota_sentral' }, getCityZoning('kota_sentral'));
+    assert(statsBarat.storageLimits.gudang > statsSentral.storageLimits.gudang, 'Zoning Kota Barat (+20%) wajib memperbesar kapasitas Gudang');
+    assert(statsBarat.cookingSlots >= 2, 'Preset Rumah Standar + dapur wajib menyediakan slot kompor');
+    assert(statsBarat.sleepEnergyBonus >= 70, 'Kamar tidur wajib meningkatkan bonus Energy tidur');
+    assert(statsBarat.totalAppraisalValue > sampleLandBarat.purchase_price, 'NJOP wajib menjumlahkan harga tanah + nilai bangunan');
+    assert(statsBarat.monthlyPbbBase > 0, 'PBB bulanan kavling wajib > 0');
+    const archCheck = computeArchitectureScore(presetWithExtraWarehouse, sampleLandBarat);
+    assert(archCheck.architectureScore > 0 && ['S', 'A', 'B', 'C'].includes(archCheck.architectureGrade), 'Skor & grade arsitektur wajib valid');
+
+    const rabBuild = calculateConstructionRab(presetCells, [], 100);
+    assert.strictEqual(rabBuild.ok, true);
+    assert(rabBuild.changedStructuralCells > 0 && rabBuild.durationMs > 0);
+    const rabRenameOnly = calculateConstructionRab(
+        presetCells.map(c => ({ ...c, zone_name: 'Kamar Direname' })),
+        presetCells,
+        100
+    );
+    assert.strictEqual(rabRenameOnly.changedStructuralCells, 0, 'Ubah nama zona saja tidak boleh meminta material/waktu baru');
+    assert.strictEqual(rabRenameOnly.durationMs, 0);
+    assert(rabRenameOnly.renamedOnlyCells > 0);
+
+    const rabDemolish100 = calculateConstructionRab([], presetCells, 100);
+    const rabDemolish0 = calculateConstructionRab([], presetCells, 0);
+    assert(rabDemolish100.refundMaterials.batu_bata >= rabDemolish0.refundMaterials.batu_bata, 'Refund bongkar pada kondisi 100% (70%) wajib >= kondisi 0% (50%)');
+    assert.strictEqual(rabDemolish100.refundMaterials.batu_bata, Math.floor(rabBuild.requiredMaterials.batu_bata * 0.7), 'Kondisi 100% wajib memberi refund 70%');
+
+    // D. Aturan Anti-Alt P2P, Batas Harga Pasar (0.7x–2.5x NJOP), Pajak BPHTB 5%, Retail & KPR Tanah
+    assert.strictEqual(P2P_PROPERTY_RULES.BPHTB_TAX_RATE, 0.05);
+    assert.strictEqual(
+        validateP2PTradeEligibility({ created_at: nowTs - 86400000 * 2, total_shifts: 30 }, 15, nowTs).ok,
+        false,
+        'Akun < 7 hari wajib ditolak dari perdagangan P2P'
+    );
+    assert.strictEqual(
+        validateP2PTradeEligibility({ created_at: nowTs - 86400000 * 10, total_shifts: 10 }, 15, nowTs).ok,
+        false,
+        'Akun < 20 shift wajib ditolak dari perdagangan P2P'
+    );
+    assert.strictEqual(
+        validateP2PTradeEligibility({ created_at: nowTs - 86400000 * 10, total_shifts: 25 }, 5, nowTs).ok,
+        false,
+        'Akun Total Skill < Lv 10 wajib ditolak dari perdagangan P2P'
+    );
+    assert.strictEqual(
+        validateP2PTradeEligibility({ created_at: nowTs - 86400000 * 10, total_shifts: 25 }, 12, nowTs).ok,
+        true,
+        'Akun memenuhi 7 hari + 20 shift + 10 skill wajib lolos P2P'
+    );
+
+    const njopTest = 10000000;
+    assert.strictEqual(validateMarketPriceBounds(6500000, njopTest).ok, false, 'Harga < 0.7x NJOP wajib ditolak');
+    assert.strictEqual(validateMarketPriceBounds(26000000, njopTest).ok, false, 'Harga > 2.5x NJOP wajib ditolak');
+    assert.strictEqual(validateMarketPriceBounds(15000000, njopTest).ok, true, 'Harga dalam rentang 0.7x–2.5x NJOP wajib valid');
+    assert.strictEqual(getControlledRetailPrice({ sellPrice: 10000, buyPrice: 20000 }), 12500, 'Harga retail harus 1.25x sellPrice');
+
+    const kprTanah = calculateCreditPlan('land:standar_4x4:kota_sentral', 12);
+    assert.strictEqual(kprTanah.asset.category, 'land');
+    assert.strictEqual(kprTanah.downPayment, Math.round(kprTanah.totalPrice * 0.2));
+    assert(calculateLandExpandPrice('mini_3x3', 'kota_sentral') > 0);
+
+    // E. Render PNG Voxel 3D Isometrik (800x420 + Cache LRU + Rotasi Kamera)
+    clearPropertyCanvasCache();
+    const denahAtt1 = await buildPropertyCanvasAttachment({
+        land: sampleLandBarat,
+        allCells: presetWithExtraWarehouse,
+        stats: statsBarat,
+        viewFloor: 1,
+        layoutMode: 'active',
+        project: null,
+        cameraAngle: 0
+    }, nowTs);
+    const denahBuf2 = await generatePropertyCanvasBuffer({
+        land: sampleLandBarat,
+        allCells: presetWithExtraWarehouse,
+        stats: statsBarat,
+        viewFloor: 1,
+        layoutMode: 'active',
+        project: null,
+        cameraAngle: 0
+    }, nowTs);
+    const denahBufRot90 = await generatePropertyCanvasBuffer({
+        land: sampleLandBarat,
+        allCells: presetWithExtraWarehouse,
+        stats: statsBarat,
+        viewFloor: 1,
+        layoutMode: 'active',
+        project: null,
+        cameraAngle: 1
+    }, nowTs);
+    assert.strictEqual(denahAtt1.buffer.subarray(0, 4).toString('hex'), '89504e47', 'Canvas 3D properti harus PNG valid');
+    assert.strictEqual(denahAtt1.buffer.readUInt32BE(16), 800, 'Lebar PNG Canvas properti wajib 800 px');
+    assert.strictEqual(denahAtt1.buffer.readUInt32BE(20), 420, 'Tinggi PNG Canvas properti wajib 420 px');
+    assert.strictEqual(denahBuf2, denahAtt1.buffer, 'Cache LRU canvas properti wajib mengembalikan buffer identik');
+    assert.notStrictEqual(denahBufRot90, denahAtt1.buffer, 'Rotasi kamera 90° wajib menghasilkan signature render berbeda');
+
+    // F. Verifikasi Drop Gather & Seluruh Panel Components V2 (/tanah, /bangun, /property, /storage, /help)
+    const sampleGatherDrops = rollGatherDrops(GATHER_ZONES[0], { toolTier: 2 }, 3, () => 0.1);
+    assert(Array.isArray(sampleGatherDrops) && sampleGatherDrops.length > 0, 'rollGatherDrops wajib menghasilkan material');
+
+    const gatherPlayerTimur = {
+        ...samplePlayer,
+        current_city: 'kota_timur',
+        gathering_xp: 120,
+        last_gather_loc: 'hutan_pinus',
+        last_gather_at: 0
+    };
+    const gatherGatePanel = buildGatherPanel({
+        player: { ...gatherPlayerTimur, current_city: 'kota_sentral' },
+        bestAxe: null,
+        bestShovel: null,
+        lvInfo: { level: 3, currentXp: 20, requiredXp: 150 },
+        slotsUsed: 2,
+        zone: GATHER_ZONES[0],
+        elig: { allowed: true },
+        remCd: 0
+    }, null, nowTs);
+    const gatherActivePanel = buildGatherPanel({
+        player: gatherPlayerTimur,
+        bestAxe: { item: getItem('kapak_tangan'), row: { durability: 20 } },
+        bestShovel: null,
+        lvInfo: { level: 3, currentXp: 20, requiredXp: 150 },
+        slotsUsed: 2,
+        zone: GATHER_ZONES[0],
+        elig: { allowed: true },
+        remCd: 0
+    }, null, nowTs);
+
+    const buildEmptyState = {
+        player: gatherPlayerTimur,
+        lands: [],
+        land: null,
+        activeCells: [],
+        draftCells: [],
+        project: null,
+        depot: {},
+        invRows: [],
+        gudangRows: [],
+        stats: null,
+        activeStats: null,
+        rab: null
+    };
+    const draftWithRename = presetCells.map(c => ({ ...c, layout_state: 'draft' }));
+    const buildActiveState = {
+        player: gatherPlayerTimur,
+        lands: [sampleLandBarat],
+        land: sampleLandBarat,
+        activeCells: presetWithExtraWarehouse,
+        draftCells: draftWithRename,
+        project: null,
+        depot: { batu_bata: 20, semen: 10 },
+        invRows: [{ item_id: 'papan_kayu', quantity: 5, spoilage_pct: 100 }],
+        gudangRows: [],
+        stats: statsBarat,
+        activeStats: statsBarat,
+        rab: calculateConstructionRab(draftWithRename, presetWithExtraWarehouse, 100)
+    };
+    const studioEmptyPanel = await buildStudioPanel({ ownerId: gatherPlayerTimur.discord_id, state: buildEmptyState, now: nowTs });
+    const studioActivePanel = await buildStudioPanel({ ownerId: gatherPlayerTimur.discord_id, state: buildActiveState, now: nowTs });
+    const buildTplPanel = buildTemplatesPanel({ ownerId: gatherPlayerTimur.discord_id, state: buildActiveState, now: nowTs });
+    const buildMetaView = buildMetaPanel({ ownerId: gatherPlayerTimur.discord_id, state: buildActiveState, now: nowTs });
+    const buildDepotView = buildDepotPanel({ ownerId: gatherPlayerTimur.discord_id, state: buildActiveState, now: nowTs });
+
+    const mappedParcels = distSpecs.map(sp => ({
+        parcel_code: sp.parcelCode,
+        city_id: sp.cityId,
+        district_no: sp.districtNo,
+        size_tier: sp.sizeTier,
+        width: sp.width,
+        height: sp.height,
+        base_price: sp.basePrice,
+        status: 'available',
+        foreclosed_price: null,
+        land_id: null,
+        owner_id: null,
+        like_count: 0
+    }));
+    const tanahState = {
+        player: gatherPlayerTimur,
+        lands: [sampleLandBarat],
+        landPbbList: [{ land: sampleLandBarat, stats: statsBarat, mult: 1, pbbFee: statsBarat.monthlyPbbBase, cellCount: presetWithExtraWarehouse.length }],
+        maxLands: 3,
+        totalSkillLv: 15,
+        targetCity: 'kota_sentral',
+        parcels: mappedParcels,
+        filteredParcels: mappedParcels,
+        selectedParcel: mappedParcels[0],
+        inspectedLand: null,
+        inspectedCells: [],
+        inspectedStats: null,
+        viewerLiked: false,
+        marketListings: [],
+        offers: { incoming: [], outgoing: [] }
+    };
+    const tanahMapTab = await buildMapTabPanel({ state: tanahState, now: nowTs });
+    const tanahP2PTab = buildP2PTabPanel({ state: tanahState, now: nowTs });
+    const tanahOffersTab = buildOffersTabPanel({ state: tanahState, now: nowTs });
+    const tanahPbbTab = buildPbbTabPanel({ state: tanahState, now: nowTs });
+
+    const propCondMeta = getConditionMeta(100, 'active', true);
+    const propModularState = {
+        player: gatherPlayerTimur,
+        status: {
+            source: 'owned_land',
+            landId: sampleLandBarat.id,
+            land: sampleLandBarat,
+            customName: sampleLandBarat.custom_name,
+            effectiveTier: getPropertyTier('rumah'),
+            actualTier: getPropertyTier('rumah'),
+            capacities: { bag: 25, kulkas: 15, freezer: 10, gudang: statsBarat.storageLimits.gudang, stove: 2, coolerbox: 0 },
+            isEvicted: false,
+            inGracePeriod: false,
+            facilitiesLocked: false,
+            conditionMeta: propCondMeta
+        },
+        lands: [sampleLandBarat],
+        maxLands: 3,
+        totalSkillLv: 15,
+        selectedLand: sampleLandBarat,
+        selectedLandCells: presetWithExtraWarehouse,
+        selectedLandStats: statsBarat,
+        selectedLandProject: null,
+        selectedLandCondition: propCondMeta,
+        heavyRenoReqs: {},
+        selectedBizRows: [],
+        pendingRevenue: 0,
+        emergencyLockedCount: 0,
+        galleryLands: [{ ...sampleLandBarat, owner_name: gatherPlayerTimur.username, like_count: 5, liked_by_me: 0 }],
+        galleryLand: { ...sampleLandBarat, owner_name: gatherPlayerTimur.username, like_count: 5, liked_by_me: 0 },
+        galleryCells: presetWithExtraWarehouse,
+        galleryStats: statsBarat,
+        galleryCondition: propCondMeta,
+        bagRows: [{ item_id: 'kayu_bulat', quantity: 12, spoilage_pct: 100 }],
+        wsQueues: [],
+        marketListings: [],
+        vacantRooms: []
+    };
+    const propHomeTab = await buildHomeTabPanel({ state: propModularState, now: nowTs });
+    const propBuyTab = buildBuyLandTabPanel({ state: propModularState, now: nowTs });
+    const propNpcTab = buildNpcTabPanel({ state: propModularState, now: nowTs });
+    const propBizTab = buildBizWorkshopTabPanel({ state: propModularState, now: nowTs });
+    const propMarketTab = buildMarketTabPanel({ state: propModularState, now: nowTs });
+    const propGalleryTab = await buildGalleryTabPanel({ state: propModularState, now: nowTs });
+    const storModularPanel = buildStoragePanel({
+        state: {
+            player: gatherPlayerTimur,
+            propStatus: propModularState.status,
+            allRows: [],
+            allLands: [sampleLandBarat]
+        },
+        now: nowTs
+    });
+    const helpLifePayload = await buildHelpCategoryPayload(gatherPlayerTimur.discord_id, 'life', false, null, nowTs);
+    const helpActivitiesPayload = await buildHelpCategoryPayload(gatherPlayerTimur.discord_id, 'activities', false, null, nowTs);
+
+    assert.strictEqual(typeof gatherCmd.panel.buttons.act, 'function');
+    assert.strictEqual(typeof bangunCmd.panel.modals.paint_submit, 'function');
+    assert.strictEqual(typeof bangunCmd.panel.modals.demolish_submit, 'function');
+    assert.strictEqual(typeof bangunCmd.panel.modals.ascii_submit, 'function');
+    assert.strictEqual(typeof tanahCmd.panel.userSelects.offer_user_pick, 'function');
+    assert.strictEqual(typeof propertyCmd.panel.buttons.tab_gallery, 'function');
+
+    for (const [label, pObj] of [
+        ['gather (city gate)', gatherGatePanel],
+        ['gather (active)', gatherActivePanel],
+        ['bangun (empty)', studioEmptyPanel],
+        ['bangun (studio + 3D canvas)', studioActivePanel],
+        ['bangun (templates)', buildTplPanel],
+        ['bangun (meta)', buildMetaView],
+        ['bangun (depot)', buildDepotView],
+        ['tanah (map)', tanahMapTab],
+        ['tanah (p2p)', tanahP2PTab],
+        ['tanah (offers)', tanahOffersTab],
+        ['tanah (pbb)', tanahPbbTab],
+        ['property (home + 3D canvas)', propHomeTab],
+        ['property (buy land)', propBuyTab],
+        ['property (npc lease)', propNpcTab],
+        ['property (biz & workshop)', propBizTab],
+        ['property (p2p market)', propMarketTab],
+        ['property (gallery 3D)', propGalleryTab],
+        ['storage (land scoped)', storModularPanel],
+        ['help (life)', helpLifePayload],
+        ['help (activities)', helpActivitiesPayload]
+    ]) {
+        assertComponentLimit(pObj, label);
+        const serialized = JSON.stringify(pObj.components || []);
+        assert(!/\bRp\s*[\d.,]+/i.test(serialized), `Panel ${label} tidak boleh mengandung mata uang Rp`);
+    }
+    assert.strictEqual(Array.isArray(studioActivePanel.files) && studioActivePanel.files.length, 1, 'Studio /bangun aktif wajib menyertakan 1 attachment PNG 3D');
+    assert.strictEqual(Array.isArray(propHomeTab.files) && propHomeTab.files.length, 1, 'Tab home /property wajib menyertakan 1 attachment PNG 3D');
+    assert.strictEqual(Array.isArray(propGalleryTab.files) && propGalleryTab.files.length, 1, 'Tab gallery /property wajib menyertakan 1 attachment PNG 3D');
+
+    // H. Sistem 4-Layer Editor (The Sims), Edge Walls H/V, Room Flood-Fill, Multi-Size Furniture & Toko Furnitur 26 Item
+    const perimA1B2 = parseAreaPerimeterWalls('A1:B2', 4, 4);
+    assert.strictEqual(perimA1B2.ok, true);
+    assert.strictEqual(perimA1B2.edges.length, 8, 'Perimeter 2x2 wajib menghasilkan tepat 8 segmen edge');
+    const lineSouth = parseLineWallInput('A1:C1 S', 4, 4);
+    assert.strictEqual(lineSouth.ok, true);
+    assert.strictEqual(lineSouth.edges.length, 3, 'Garis A1:C1 S wajib menghasilkan 3 segmen horizontal');
+    assert.strictEqual(lineSouth.edges[0].orientation, 'H');
+    assert.strictEqual(lineSouth.edges[0].gy, 2);
+
+    const floor3x3 = [];
+    for (let y = 0; y < 3; y++) {
+        for (let x = 0; x < 3; x++) {
+            floor3x3.push({ floor_level: 1, x, y, floor_material_id: 'keramik', roof_variant: 'gable', is_pillar: 0 });
+        }
+    }
+    const perim3x3 = parseAreaPerimeterWalls('A1:C3', 4, 4).edges.map((e, idx) => ({
+        ...e,
+        floor_level: 1,
+        edge_type: idx === 1 ? 'door' : 'wall',
+        material_id: 'bata'
+    }));
+
+    const roomWhole = detectFloorRooms({ width: 4, height: 4, floorLevel: 1, floorCells: floor3x3, wallEdges: perim3x3 });
+    assert.strictEqual(roomWhole.rooms.length, 1, 'Area 3x3 tertutup wajib membentuk tepat 1 ruangan');
+    assert.strictEqual(roomWhole.rooms[0].isEnclosed, true);
+    assert.strictEqual(roomWhole.rooms[0].isIndoorValid, true);
+    assert.strictEqual(roomWhole.rooms[0].cellCount, 9);
+
+    const splitLine = parseLineWallInput('A1:A3 E', 4, 4).edges.map(e => ({ ...e, floor_level: 1, edge_type: 'wall', material_id: 'bata' }));
+    const roomSplit = detectFloorRooms({ width: 4, height: 4, floorLevel: 1, floorCells: floor3x3, wallEdges: [...perim3x3, ...splitLine] });
+    assert.strictEqual(roomSplit.rooms.length, 2, 'Sekat dinding di tengah 3x3 wajib membelah jadi 2 ruangan (3 + 6 sel)');
+
+    const archLine = parseLineWallInput('A1:A3 E', 4, 4).edges.map(e => ({ ...e, floor_level: 1, edge_type: 'arch', material_id: 'semen' }));
+    const roomArchMerged = detectFloorRooms({ width: 4, height: 4, floorLevel: 1, floorCells: floor3x3, wallEdges: [...perim3x3, ...archLine] });
+    assert.strictEqual(roomArchMerged.rooms.length, 1, 'Tipe arch (gapura terbuka) tidak memutus ruangan flood-fill');
+
+    const floorNoRoof = floor3x3.map(fc => ({ ...fc, roof_variant: null }));
+    const roomOpenRoof = detectFloorRooms({ width: 4, height: 4, floorLevel: 1, floorCells: floorNoRoof, wallEdges: perim3x3 });
+    assert.strictEqual(roomOpenRoof.rooms[0].hasRoof, false, 'Tanpa atap & lantai atas wajib terdeteksi tidak beratap');
+    assert.strictEqual(roomOpenRoof.rooms[0].isIndoorValid, false);
+
+    // Validasi rotasi furniture 1x2, tabrakan, penyeberangan dinding internal, & penalti outdoor 50%
+    const bedSpec = getFurnitureSpec('ranjang_kayu');
+    assert(bedSpec && bedSpec.width === 1 && bedSpec.height === 2);
+    assert.strictEqual(rotateFurnitureClockwise('N'), 'E');
+    const bedDimsE = getRotatedDimensions(bedSpec, 'E');
+    assert.strictEqual(bedDimsE.widthCells, 2);
+    assert.strictEqual(bedDimsE.heightCells, 1);
+    assert.strictEqual(getFootprintCells(0, 0, bedDimsE.widthCells, bedDimsE.heightCells).length, 2);
+
+    const fValid = validateFurniturePlacement({
+        itemId: 'ranjang_kayu',
+        anchorX: 1,
+        anchorY: 0,
+        rotation: 'E',
+        floorLevel: 1,
+        landWidth: 4,
+        landHeight: 4,
+        floorCells: floor3x3,
+        wallEdges: [...perim3x3, ...splitLine],
+        existingFurniture: [],
+        detectedRooms: roomSplit
+    });
+    assert.strictEqual(fValid.ok, true, 'Penempatan ranjang 1x2 horizontal B1:C1 di ruangan kanan wajib valid');
+    assert.strictEqual(fValid.isOutdoorPenalty, false);
+
+    const fCrossWall = validateFurniturePlacement({
+        itemId: 'ranjang_kayu',
+        anchorX: 0,
+        anchorY: 0,
+        rotation: 'E',
+        floorLevel: 1,
+        landWidth: 4,
+        landHeight: 4,
+        floorCells: floor3x3,
+        wallEdges: [...perim3x3, ...splitLine],
+        existingFurniture: [],
+        detectedRooms: roomSplit
+    });
+    assert.strictEqual(fCrossWall.ok, false, 'Perabot 2 petak yang menembus sekat dinding internal wajib ditolak');
+
+    const fOverlap = validateFurniturePlacement({
+        itemId: 'kompor_1tungku',
+        anchorX: 1,
+        anchorY: 0,
+        rotation: 'S',
+        floorLevel: 1,
+        landWidth: 4,
+        landHeight: 4,
+        floorCells: floor3x3,
+        wallEdges: perim3x3,
+        existingFurniture: [{ id: 1, floor_level: 1, item_id: 'ranjang_kayu', anchor_x: 1, anchor_y: 0, width_cells: 2, height_cells: 1, rotation: 'E', is_locked_rubble: 0 }],
+        detectedRooms: roomWhole
+    });
+    assert.strictEqual(fOverlap.ok, false, 'Perabot yang menindih petak perabot lain wajib ditolak');
+
+    const archStatsIndoor = computeLandStats([], sampleLandBarat, getCityZoning('kota_sentral'), {
+        floorCells: floor3x3,
+        wallEdges: perim3x3,
+        roomNamesByFloor: { 1: { [roomWhole.rooms[0].roomKey]: 'Suite Utama' } },
+        furniture: [
+            { id: 10, floor_level: 1, item_id: 'ranjang_kayu', anchor_x: 0, anchor_y: 0, width_cells: 2, height_cells: 1, rotation: 'E', is_locked_rubble: 0 },
+            { id: 11, floor_level: 1, item_id: 'meja_tamu_resto', anchor_x: 0, anchor_y: 1, width_cells: 1, height_cells: 1, rotation: 'S', is_locked_rubble: 0 },
+            { id: 12, floor_level: 1, item_id: 'kompor_komersial', anchor_x: 2, anchor_y: 1, width_cells: 1, height_cells: 2, rotation: 'S', is_locked_rubble: 0 }
+        ]
+    });
+    assert.strictEqual(archStatsIndoor.detectedRooms[0].customName, 'Suite Utama');
+    assert.strictEqual(archStatsIndoor.rentalRoomZones.length, 1, 'Ranjang + meja di ruang tertutup wajib terdeteksi sebagai Kamar Kos P2P');
+    assert.strictEqual(archStatsIndoor.sleepEnergyBonus, 82, 'Ranjang kayu indoor penuh wajib memberi bonus tidur +82');
+    assert.strictEqual(archStatsIndoor.cookingSlots, 2, 'Kompor komersial indoor wajib memberi 2 slot masak');
+
+    const archStatsOutdoor = computeLandStats([], sampleLandBarat, getCityZoning('kota_sentral'), {
+        floorCells: floorNoRoof,
+        wallEdges: [],
+        furniture: [
+            { id: 20, floor_level: 1, item_id: 'kompor_komersial', anchor_x: 0, anchor_y: 0, width_cells: 1, height_cells: 2, rotation: 'S', is_locked_rubble: 0 }
+        ]
+    });
+    assert.strictEqual(archStatsOutdoor.furnitureDetails[0].isOutdoorPenalty, true, 'Perabot indoor di ruangan tanpa dinding/atap wajib kena penalti 50%');
+    assert.strictEqual(archStatsOutdoor.furnitureDetails[0].effectivenessMult, 0.5);
+    assert.strictEqual(archStatsOutdoor.cookingSlots, 1, 'Efektivitas 50% dari kompor komersial (2 -> 1 tungku) wajib lebih kecil dari indoor 2');
+    assert(archStatsOutdoor.cookingSlots < archStatsIndoor.cookingSlots);
+
+    // Uji 10+ lantai menara kayu di lahan 4x4 mengalami stress berat
+    const tower10Floors = [];
+    for (let fl = 1; fl <= 10; fl++) {
+        tower10Floors.push({ floor_level: fl, x: 0, y: 0, material_id: 'kayu', module_id: 'hall_custom' });
+    }
+    const rab10Floor = calculateConstructionRab(tower10Floors, [], 100);
+    assert.strictEqual(rab10Floor.structuralStress.maxFloor, 10);
+    assert(rab10Floor.structuralStress.overHeightCells > 0 && rab10Floor.structuralStress.dailyExtraDecay > 0, 'Menara 10 lantai kayu di 4x4 wajib memicu overHeightCells & extra decay');
+
+    // Uji Render Canvas 4-Layer + 5 Mode Studio /bangun + Toko Furnitur 26 item (select <= 25 opsi)
+    clearPropertyCanvasCache();
+    const canvas4LayerPng = await generatePropertyCanvasBuffer({
+        land: sampleLandBarat,
+        allCells: [],
+        floorCells: floor3x3,
+        wallEdges: perim3x3,
+        furniture: archStatsIndoor.furnitureDetails,
+        rooms: archStatsIndoor.detectedRooms,
+        stats: archStatsIndoor,
+        viewFloor: 1,
+        layoutMode: 'active',
+        cameraAngle: 1
+    }, nowTs);
+    assert(Buffer.isBuffer(canvas4LayerPng) && canvas4LayerPng.length > 5000, 'Canvas PNG 4-Layer (dinding H/V, lantai, atap, furniture, room label) wajib valid');
+
+    assert(SHOPS.some(s => s.id === 'furnitur'), 'Toko furnitur wajib terdaftar di SHOPS');
+    const furnShopPanel = buildShopPanel({
+        state: {
+            player: { ...gatherPlayerTimur, backpack_tier: 1, max_slots: 20 },
+            invRows: [],
+            ownedClothes: new Set(),
+            slotsUsed: 5,
+            liveCfg: { shop_price_multiplier: 1.0 }
+        },
+        shopId: 'furnitur',
+        selectedItemId: 'ranjang_kayu',
+        page: 1,
+        now: nowTs
+    });
+    assertComponentLimit(furnShopPanel, 'shop (furnitur 26 items sliding select page 1)');
+    const furnShopPage6 = buildShopPanel({
+        state: {
+            player: { ...gatherPlayerTimur, backpack_tier: 1, max_slots: 20 },
+            invRows: [],
+            ownedClothes: new Set(),
+            slotsUsed: 5,
+            liveCfg: { shop_price_multiplier: 1.0 }
+        },
+        shopId: 'furnitur',
+        page: 6,
+        now: nowTs
+    });
+    assertComponentLimit(furnShopPage6, 'shop (furnitur 26 items sliding select page 6)');
+
+    assert.strictEqual(typeof bangunCmd.panel.modals.wall_perim_submit, 'function');
+    assert.strictEqual(typeof bangunCmd.panel.modals.place_furn_submit, 'function');
+    assert.strictEqual(typeof bangunCmd.panel.modals.rename_room_submit, 'function');
+
+    console.log('✅ [26/27] Sistem Properti 4-Layer (/tanah, /bangun 4-Layer & Flood-Fill, Perabot 1x1..2x2, Toko Furnitur, Degradasi/Roboh, Canvas 800x420 & Migrasi 015) terverifikasi.');
+
+    // ====================================================
+    // 27. TEST MODE UNDER DEVELOPMENT (PROPERTY, TANAH, BANGUN) & FALLBACK DAPUR UMUM
+    // ====================================================
+    const { FEATURE_FLAGS } = require('../data/constants');
+    const {
+        isPropertyUnderDevelopment,
+        isPropertyModuleDisabled,
+        buildPropertyUnderDevPanel
+    } = require('../utils/featureFlags');
+    const { resolveEffectiveStoveInfo } = require('../services/cookService');
+
+    assert.strictEqual(FEATURE_FLAGS.PROPERTY_UNDER_DEVELOPMENT, true, 'FEATURE_FLAGS.PROPERTY_UNDER_DEVELOPMENT harus aktif (true)');
+    assert.strictEqual(isPropertyUnderDevelopment(), true);
+    assert.strictEqual(isPropertyModuleDisabled('property'), true);
+    assert.strictEqual(isPropertyModuleDisabled('bangun'), true);
+    assert.strictEqual(isPropertyModuleDisabled('tanah'), true);
+    assert.strictEqual(isPropertyModuleDisabled('cook'), false);
+
+    for (const [modName, modCmd] of [
+        ['property', propertyCmd],
+        ['bangun', bangunCmd],
+        ['tanah', tanahCmd]
+    ]) {
+        let slashPayload = null;
+        await modCmd.executeSlash({
+            user: { id: '123456789' },
+            reply: async (p) => {
+                slashPayload = p;
+                return p;
+            }
+        });
+        assert(slashPayload, `/${modName} executeSlash wajib mengembalikan payload Under Development`);
+        assert((slashPayload.flags & 64) === 64, `/${modName} Under Development reply wajib ephemeral`);
+        assertComponentLimit(slashPayload, `${modName} (under dev slash)`);
+        const rawSlash = JSON.stringify(slashPayload.components.map(c => c.toJSON()));
+        assert(rawSlash.includes('Dalam Pengembangan'), `/${modName} wajib memuat status Dalam Pengembangan`);
+        assert(!rawSlash.includes('undefined'), `/${modName} Under Development tidak boleh mengandung "undefined"`);
+    }
+
+    clearRegistry();
+    for (const modName of ['property', 'bangun', 'tanah']) {
+        let innerHandlerCalled = false;
+        registerPanel(modName, {
+            buttons: {
+                async home() {
+                    innerHandlerCalled = true;
+                }
+            }
+        }, 15, true);
+
+        let updatedPayload = null;
+        const intercepted = await dispatch({
+            customId: makeId(modName, 'home', '123456789', '', nowTs),
+            user: { id: '123456789' },
+            isButton: () => true,
+            isFromMessage: () => true,
+            update: async (p) => {
+                updatedPayload = p;
+                return p;
+            }
+        }, {}, nowTs + 1000);
+
+        assert.strictEqual(intercepted, true, `panelRouter wajib mencegat interaksi tombol ${modName}`);
+        assert.strictEqual(innerHandlerCalled, false, `Handler lama ${modName} tidak boleh dieksekusi saat Under Development`);
+        assert(updatedPayload, `Intersepsi ${modName} harus mengirim pembaruan panel`);
+        assert((updatedPayload.flags & 64) === 0, `interaction.update pada ${modName} tidak boleh memakai flag ephemeral`);
+        assert(Array.isArray(updatedPayload.attachments) && updatedPayload.attachments.length === 0, `interaction.update pada ${modName} wajib membersihkan attachments lama`);
+        assertComponentLimit(updatedPayload, `${modName} (under dev router)`);
+    }
+    clearRegistry();
+
+    const underDevStandAlone = buildPropertyUnderDevPanel({ mod: 'property', ownerId: '123456789', now: nowTs });
+    assertComponentLimit(underDevStandAlone, 'underDev standalone helper');
+
+    const gatherRaw = JSON.stringify(gatherActivePanel.components.map(c => c.toJSON()));
+    assert(!gatherRaw.includes('bangun:home:'), '/gather tidak boleh menampilkan tombol Studio /bangun saat Under Development');
+
+    const tunawismaStove = resolveEffectiveStoveInfo({
+        capacities: { stove: 0 },
+        facilitiesLocked: false
+    });
+    assert.deepStrictEqual(tunawismaStove, { stoveSlots: 1, usingPublicStove: true });
+
+    const lockedStove = resolveEffectiveStoveInfo({
+        capacities: { stove: 3 },
+        facilitiesLocked: true
+    });
+    assert.deepStrictEqual(lockedStove, { stoveSlots: 1, usingPublicStove: true });
+
+    const activeMultiStove = resolveEffectiveStoveInfo({
+        capacities: { stove: 2 },
+        facilitiesLocked: false
+    });
+    assert.deepStrictEqual(activeMultiStove, { stoveSlots: 2, usingPublicStove: false });
+
+    const cookPublicPanel = buildCookPanel({
+        state: {
+            player: { ...samplePlayer, current_city: 'kota_sentral', lpg_charges: 2, cooking_xp: 0 },
+            buffs: [],
+            propStatus: {
+                effectiveTier: getPropertyTier('tunawisma'),
+                capacities: { stove: 0 },
+                facilitiesLocked: false
+            },
+            queues: [],
+            invRows: [],
+            gasInBag: 1,
+            coalInBag: 0
+        },
+        mode: 'kitchen',
+        now: nowTs
+    });
+    assertComponentLimit(cookPublicPanel, 'cook (public stove fallback)');
+    const cookPublicRaw = JSON.stringify(cookPublicPanel.components.map(c => c.toJSON()));
+    assert(cookPublicRaw.includes('Dapur Umum'), '/cook wajib menampilkan Dapur Umum Kota untuk warga tanpa properti saat Under Development');
+    assert(!cookPublicRaw.includes('Belum Punya Dapur Aktif'), '/cook tidak boleh memblokir warga tanpa properti saat Under Development');
+
+    const helpLifeRaw = JSON.stringify(helpLifePayload.components.map(c => c.toJSON()));
+    assert(helpLifeRaw.includes('Under Development'), '/help kategori Kehidupan wajib menandai fitur properti sebagai Under Development');
+
+    console.log('✅ [27/27] Mode Under Development (/property, /tanah, /bangun), Router Guard, /gather & Fallback Dapur Umum /cook terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (27/27 PASSED)!');
     process.exit(0);
 }
 

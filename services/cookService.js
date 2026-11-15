@@ -10,6 +10,20 @@ const { getLevelInfoFromXp } = require('../data/locations');
 const { getPlayerPropertyStatus } = require('./propertyService');
 const { getPlayerInventory, canFitItems, addItem, removeItem, recordCollection } = require('./inventoryService');
 const { getActiveSeasonalEvent, awardEventActivityProgress } = require('./eventService');
+const { isPropertyUnderDevelopment } = require('../utils/featureFlags');
+
+/**
+ * Menghitung slot tungku efektif. Saat fitur Properti/Bangun sedang dalam pengembangan,
+ * warga yang belum punya kompor aktif (atau fasilitas terkunci) mendapat 1 slot Dapur Umum Kota.
+ */
+function resolveEffectiveStoveInfo(propStatus) {
+    const rawStoveSlots = Number(propStatus?.capacities?.stove || 0);
+    const facilitiesLocked = Boolean(propStatus?.facilitiesLocked);
+    if (isPropertyUnderDevelopment() && (facilitiesLocked || rawStoveSlots <= 0)) {
+        return { stoveSlots: 1, usingPublicStove: true };
+    }
+    return { stoveSlots: rawStoveSlots, usingPublicStove: false };
+}
 
 async function getActiveCookingQueues(conn, discordId, forUpdate = false) {
     const lockSql = forUpdate ? 'FOR UPDATE' : '';
@@ -133,7 +147,7 @@ async function startCookingBatch(conn, player, recipeInput, requestedPortions = 
     const portions = Math.max(1, Math.min(COOKING_LIMITS.MAX_BATCH_PORTIONS, Number(requestedPortions) || 1));
 
     const propStatus = await getPlayerPropertyStatus(conn, player.discord_id, player.max_slots, now, false);
-    const stoveSlots = Number(propStatus.capacities?.stove || 0);
+    const { stoveSlots } = resolveEffectiveStoveInfo(propStatus);
     if (stoveSlots <= 0) {
         return { error: 'NO_STOVE', propStatus };
     }
@@ -320,6 +334,7 @@ async function collectFinishedCooking(conn, player, now = Date.now(), activeBuff
 
 module.exports = {
     getActiveCookingQueues,
+    resolveEffectiveStoveInfo,
     resolveRecipeIngredientsFromBag,
     resolveFuelSource,
     startCookingBatch,

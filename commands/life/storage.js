@@ -2,6 +2,9 @@ const { SlashCommandBuilder, ActionRowBuilder, ButtonStyle } = require('discord.
 const { withTransaction } = require('../../database/mariadb');
 const { syncPlayerVitals } = require('../../services/vitalService');
 const { getPlayerPropertyStatus } = require('../../services/propertyService');
+const { getEffectiveLocalProperty, getPlayerLands } = require('../../services/landService');
+const { evacuateEmergencyStorage } = require('../../services/buildingConditionService');
+const { getCity } = require('../../data/cities');
 const {
     getPlayerInventory,
     calculateSlotsUsed,
@@ -21,6 +24,7 @@ const {
     parseModalNumber,
     respondOrUpdate
 } = require('../../utils/panelBuilder');
+const { isPropertyUnderDevelopment } = require('../../utils/featureFlags');
 
 const STORAGE_META = {
     kulkas: {
@@ -53,12 +57,41 @@ const STORAGE_META = {
     }
 };
 
+const storageLandSelection = new Map();
+
 async function fetchStorageState(discordId, now = Date.now()) {
     return await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, false);
-        const propStatus = await getPlayerPropertyStatus(conn, discordId, synced.player.max_slots, now, false);
+        const p = synced.player;
+        const currentCity = p.current_city || 'kota_sentral';
+        let propStatus = await getPlayerPropertyStatus(conn, discordId, p.max_slots, now, false, currentCity);
+        const prefLandId = storageLandSelection.get(discordId);
+        if (prefLandId && (propStatus.cityLands || []).some(l => Number(l.id) === Number(prefLandId))) {
+            const eff = await getEffectiveLocalProperty(conn, discordId, currentCity, p.max_slots, now, false, prefLandId);
+            if (eff.landId && Number(eff.landId) !== Number(propStatus.landId)) {
+                propStatus = {
+                    ...propStatus,
+                    landId: eff.landId,
+                    land: eff.land,
+                    stats: eff.stats,
+                    customName: eff.customName,
+                    effectiveTier: eff.tierObj,
+                    facilitiesLocked: eff.facilitiesLocked,
+                    buildingState: eff.buildingState,
+                    conditionMeta: eff.conditionMeta,
+                    capacities: {
+                        ...propStatus.capacities,
+                        kulkas: Number(eff.storageLimits?.kulkas || 0),
+                        freezer: Number(eff.storageLimits?.freezer || 0),
+                        gudang: Number(eff.storageLimits?.gudang || 0),
+                        stove: Number(eff.storageLimits?.stove || 0)
+                    }
+                };
+            }
+        }
+        const allLands = await getPlayerLands(conn, discordId, null, false);
         const allRows = await getPlayerInventory(conn, discordId, false, 'all', now);
-        return { player: synced.player, propStatus, allRows };
+        return { player: p, propStatus, allRows, allLands };
     });
 }
 
@@ -98,17 +131,28 @@ function buildStoragePanel({
     banner = null,
     now = Date.now()
 }) {
-    const { player: p, propStatus, allRows } = state;
+    const { player: p, propStatus, allRows, allLands = [] } = state;
     const ownerId = p.discord_id;
     const meta = STORAGE_META[place] || STORAGE_META.kulkas;
+    const currentCity = getCity(p.current_city || 'kota_sentral');
+    const activeLandId = propStatus.landId ? Number(propStatus.landId) : null;
 
-    const bagRows = allRows.filter(r => !r.storage_location || r.storage_location === 'bag');
-    const placeRows = allRows.filter(r => r.storage_location === meta.id);
+    const bagRows = allRows.filter(r => (!r.storage_location || r.storage_location === 'bag') && Number(r.emergency_locked || 0) === 0);
+    const emergencyRows = allRows.filter(r => Number(r.emergency_locked || 0) === 1);
+    const emergencyTotalQty = emergencyRows.reduce((s, r) => s + Number(r.quantity || 0), 0);
+    const placeRows = allRows.filter(r => {
+        if (Number(r.emergency_locked || 0) === 1) return false;
+        if (r.storage_location !== meta.id) return false;
+        if (meta.id === 'coolerbox') return true;
+        return activeLandId !== null
+            ? Number(r.land_id) === activeLandId
+            : (r.land_id === null || r.land_id === undefined);
+    });
 
     const bagSlotsUsed = calculateSlotsUsed(bagRows);
     const placeSlotsUsed = calculateSlotsUsed(placeRows);
     const maxCap = propStatus.capacities[meta.id] || 0;
-    const isLocked = maxCap <= 0;
+    const isLocked = (meta.id !== 'coolerbox' && Boolean(propStatus.facilitiesLocked)) || maxCap <= 0;
 
     // Row 1: Pilih Tempat Penyimpanan + Toggle Mode Simpan/Ambil
     const tabRow = new ActionRowBuilder().addComponents(
@@ -149,10 +193,41 @@ function buildStoragePanel({
         return `• ${e.item.emoji} **${e.item.name}** \`×${e.totalQty}\`${fresh}`;
     });
 
+    const homeTitle = propStatus.customName || propStatus.effectiveTier.name;
+    const remoteStorageRows = allRows.filter(r =>
+        ['kulkas', 'freezer', 'gudang'].includes(r.storage_location) &&
+        Number(r.land_id || 0) !== Number(activeLandId || 0)
+    );
+    let remoteHint = null;
+    if (remoteStorageRows.length > 0) {
+        const byLand = new Map();
+        for (const r of remoteStorageRows) {
+            const key = Number(r.land_id || 0);
+            const cur = byLand.get(key) || 0;
+            byLand.set(key, cur + Number(r.quantity || 0));
+        }
+        const summaries = [...byLand.entries()].slice(0, 4).map(([lid, cnt]) => {
+            if (!lid) return `🏠 Properti Sewa Lain (**${cnt}** item)`;
+            const landObj = allLands.find(l => Number(l.id) === lid);
+            const c = landObj ? getCity(landObj.city_id) : null;
+            return landObj
+                ? `${c?.emoji || '🏡'} **${landObj.custom_name}** (${c?.shortName || ''}): **${cnt}** item`
+                : `🏡 Kavling #${lid}: **${cnt}** item`;
+        });
+        remoteHint = `🌍 **Barang di Properti / Kota Lain (Gunakan \`/travel\` untuk mengakses):**\n• ${summaries.join('\n• ')}`;
+    }
+
+    const storageFurns = (propStatus.stats?.furnitureDetails || []).filter(
+        d => d.spec?.category === 'kitchen_storage' && d.spec?.effects?.storageType === meta.id
+    );
+    const furnLine = storageFurns.length > 0
+        ? `\n🛋️ **Perabot ${meta.name}:** ${storageFurns.slice(0, 3).map(d => `${d.spec.emoji} **${d.spec.name}**${d.room ? ` *(${d.room.customName})*` : ''}${d.isOutdoorPenalty ? ' *(⚠️ Terbuka -50%)*' : ''}`).join(', ')}`
+        : '';
+
     const blocks = [
         [
-            `🏠 **Hunian Aktif:** ${propStatus.effectiveTier.emoji} **${propStatus.effectiveTier.name}** · 🎒 **Tas:** \`${bagSlotsUsed}/${p.max_slots} slot\``,
-            `${meta.emoji} **${meta.name}:** \`${renderBar(placeSlotsUsed, Math.max(1, maxCap), 8)}\` (**${placeSlotsUsed}/${maxCap} slot**) — *${meta.rateText}*`
+            `🏠 **Properti Lokal (${currentCity.emoji} ${currentCity.shortName}):** ${propStatus.effectiveTier.emoji} **${homeTitle}** · 🎒 **Tas:** \`${bagSlotsUsed}/${Number(p.max_slots || 20)} slot\``,
+            `${meta.emoji} **${meta.name}:** \`${renderBar(placeSlotsUsed, Math.max(1, maxCap), 8)}\` (**${placeSlotsUsed}/${maxCap} slot**) — *${meta.rateText}*${furnLine}`
         ].join('\n')
     ];
 
@@ -160,15 +235,51 @@ function buildStoragePanel({
         blocks.push(
             meta.id === 'coolerbox'
                 ? `🔒 **Cooler Box Belum Dimiliki:** Beli **🧊 Cooler Box Portabel** di Toko Perkakas (\`/shop\`) untuk menambah 10 slot pendingin portabel.`
-                : `🔒 **Fasilitas Belum Terbuka / Terkunci:** Sewa atau beli hunian yang memiliki **${meta.name}** lewat \`/property\`.`
+                : propStatus.facilitiesLocked
+                    ? (isPropertyUnderDevelopment()
+                        ? `🔒 **Fasilitas Penyimpanan Terkunci (${propStatus.conditionMeta?.label || 'Terbengkalai/Roboh'}):** Kulkas/Freezer/Gudang properti belum dapat diakses sementara karena \`/property\` sedang dalam pengembangan. Gunakan **Cooler Box Portabel** (\`/shop\`)!`
+                        : `🔒 **Fasilitas Penyimpanan Terkunci (${propStatus.conditionMeta?.label || 'Terbengkalai/Roboh'}):** Renovasi bangunan atau bersihkan puing lewat \`/property\` untuk membuka kembali Kulkas/Freezer/Gudang.`)
+                    : (isPropertyUnderDevelopment()
+                        ? `🔒 **Fasilitas Belum Terbuka:** Fitur \`/property\` & \`/bangun\` sedang dalam pengembangan. Gunakan **🧊 Cooler Box Portabel** (Toko Perkakas \`/shop\`) untuk menyimpan bahan mudah basi!`
+                        : `🔒 **Fasilitas Belum Terbuka / Terkunci:** Bangun modul Kulkas/Freezer/Gudang lewat \`/bangun\` atau sewa hunian lewat \`/property\`.`)
         );
+    }
+
+    if (emergencyTotalQty > 0) {
+        blocks.push(`🚨 **Barang Evakuasi Darurat (${emergencyTotalQty} unit terkunci):** Kosongkan slot tas lalu klik **Evakuasi Darurat** di bawah untuk mengambil barang dari puing bangunan roboh!`);
     }
 
     blocks.push(
         `**📦 Isi ${meta.emoji} ${meta.name} Saat Ini:**\n${placeItemLines.length > 0 ? placeItemLines.slice(0, 12).join('\n') : '*Kosong*'}`
     );
+    if (remoteHint) blocks.push(remoteHint);
 
     const rows = [tabRow];
+    if (emergencyTotalQty > 0) {
+        rows.push(
+            new ActionRowBuilder().addComponents(
+                btn('storage', 'evacuate_emergency', ownerId, {
+                    label: `Evakuasi Darurat (${emergencyTotalQty})`,
+                    emoji: '🚨',
+                    style: ButtonStyle.Danger
+                }, now)
+            )
+        );
+    }
+    if ((propStatus.cityLands || []).length > 1) {
+        rows.push(
+            select('storage', 'pick_land', ownerId, {
+                placeholder: 'Pilih kavling lokal yang ingin diakses penyimpanannya...',
+                options: propStatus.cityLands.slice(0, 25).map(l => ({
+                    label: `${l.custom_name} (${l.width}×${l.height})`,
+                    value: `${meta.id}:${direction}:${l.id}`,
+                    emoji: '🏡',
+                    description: `${currentCity.shortName}${Number(l.is_primary) === 1 ? ' · Utama' : ''}`,
+                    default: Number(l.id) === Number(activeLandId)
+                }))
+            }, now)
+        );
+    }
 
     if (!isLocked) {
         // Daftar kandidat barang sesuai arah (put = dari Tas yang sesuai jenisnya, take = dari Storage)
@@ -225,7 +336,7 @@ function buildStoragePanel({
         player: p,
         banner,
         blocks,
-        rows,
+        rows: rows.slice(0, 5),
         footer: 'Klik tombol Mode di kanan atas untuk berganti antara Simpan dari Tas (📥) dan Ambil ke Tas (📤).',
         now
     });
@@ -239,19 +350,43 @@ async function executeStorageMove(discordId, place, direction, itemId, reqAmount
     return await withTransaction(async (conn) => {
         const synced = await syncPlayerVitals(conn, discordId, now, true);
         const p = synced.player;
-        const propStatus = await getPlayerPropertyStatus(conn, discordId, p.max_slots, now, true);
+        const currentCity = p.current_city || 'kota_sentral';
+        const prefLandId = storageLandSelection.get(discordId);
+        let propStatus = await getPlayerPropertyStatus(conn, discordId, p.max_slots, now, true, currentCity);
+        if (prefLandId && (propStatus.cityLands || []).some(l => Number(l.id) === Number(prefLandId))) {
+            const eff = await getEffectiveLocalProperty(conn, discordId, currentCity, p.max_slots, now, true, prefLandId);
+            if (eff.landId && Number(eff.landId) !== Number(propStatus.landId)) {
+                propStatus = {
+                    ...propStatus,
+                    landId: eff.landId,
+                    facilitiesLocked: eff.facilitiesLocked,
+                    capacities: {
+                        ...propStatus.capacities,
+                        kulkas: Number(eff.storageLimits?.kulkas || 0),
+                        freezer: Number(eff.storageLimits?.freezer || 0),
+                        gudang: Number(eff.storageLimits?.gudang || 0),
+                        stove: Number(eff.storageLimits?.stove || 0)
+                    }
+                };
+            }
+        }
 
         const maxTargetCap = propStatus.capacities[meta.id] || 0;
-        if (maxTargetCap <= 0) {
+        if ((meta.id !== 'coolerbox' && propStatus.facilitiesLocked) || maxTargetCap <= 0) {
             return { error: 'FACILITY_LOCKED' };
         }
 
+        const isLandScoped = ['kulkas', 'freezer', 'gudang'].includes(meta.id);
+        const targetLandId = isLandScoped ? (propStatus.landId ? Number(propStatus.landId) : null) : null;
+
         const sourceLoc = direction === 'put' ? 'bag' : meta.id;
         const destLoc = direction === 'put' ? meta.id : 'bag';
+        const sourceLandId = direction === 'put' ? undefined : targetLandId;
+        const destLandId = direction === 'put' ? targetLandId : null;
         const destMaxSlots = direction === 'put' ? maxTargetCap : Number(p.max_slots || 20);
 
-        const sourceRows = await getPlayerInventory(conn, discordId, true, sourceLoc, now);
-        const destRows = await getPlayerInventory(conn, discordId, true, destLoc, now);
+        const sourceRows = await getPlayerInventory(conn, discordId, true, sourceLoc, now, sourceLandId);
+        const destRows = await getPlayerInventory(conn, discordId, true, destLoc, now, destLandId);
 
         const ownedInSource = sourceRows
             .filter(r => r.item_id === item.id)
@@ -287,9 +422,9 @@ async function executeStorageMove(discordId, place, direction, itemId, reqAmount
             };
         }
 
-        const removedBatches = await removeItem(conn, discordId, item.id, moveQty, sourceLoc);
+        const removedBatches = await removeItem(conn, discordId, item.id, moveQty, sourceLoc, sourceLandId);
         for (const b of removedBatches) {
-            await addItem(conn, discordId, item.id, b.qty, now, destLoc, b.freshnessMs);
+            await addItem(conn, discordId, item.id, b.qty, now, destLoc, b.freshnessMs, destLandId);
         }
 
         return {
@@ -349,7 +484,11 @@ module.exports = {
                         type: 'warning',
                         text: res.error === 'DEST_FULL'
                             ? `Kapasitas penyimpanan tujuan penuh! Butuh **${res.slotsAfter}/${res.maxSlots} slot**.`
-                            : 'Gagal memindahkan barang: pastikan barang masih tersedia dan ruang cukup.'
+                            : res.error === 'FACILITY_LOCKED'
+                                ? (isPropertyUnderDevelopment()
+                                    ? 'Fasilitas penyimpanan sedang terkunci! Fitur `/property` & `/bangun` sedang dalam pengembangan.'
+                                    : 'Fasilitas penyimpanan sedang terkunci! Renovasi bangunan di `/property` atau bangun modul di `/bangun`.')
+                                : 'Gagal memindahkan barang: pastikan barang masih tersedia dan ruang cukup.'
                     };
                 } else {
                     banner = {
@@ -366,6 +505,29 @@ module.exports = {
                         place,
                         direction,
                         selectedItemId: itemId,
+                        banner,
+                        now
+                    })
+                );
+            },
+            async evacuate_emergency(interaction) {
+                const now = Date.now();
+                const userId = interaction.user.id;
+                const res = await withTransaction(async (conn) => {
+                    const synced = await syncPlayerVitals(conn, userId, now, true);
+                    return await evacuateEmergencyStorage(conn, userId, null, synced.player.max_slots, now);
+                });
+                const state = await fetchStorageState(userId, now);
+                const banner = res.ok
+                    ? (res.movedCount > 0
+                        ? { type: 'success', text: `🚨 Berhasil mengevakuasi **${res.movedCount}** barang darurat ke Tas! *(Sisa terkunci: **${res.remainingCount}**)*` }
+                        : { type: 'warning', text: `Tas penuh! Kosongkan tas dulu untuk mengevakuasi **${res.remainingCount}** barang tersisa.` })
+                    : { type: 'warning', text: res.error || 'Tidak ada barang darurat yang perlu dievakuasi.' };
+                return await interaction.update(
+                    buildStoragePanel({
+                        state,
+                        place: 'kulkas',
+                        direction: 'take',
                         banner,
                         now
                     })
@@ -396,6 +558,21 @@ module.exports = {
                         place,
                         direction,
                         selectedItemId: itemId,
+                        now
+                    })
+                );
+            },
+            async pick_land(interaction) {
+                const now = Date.now();
+                const [place = 'kulkas', direction = 'put', lidStr = ''] = (interaction.values[0] || '').split(':');
+                const lid = Number(lidStr);
+                if (lid > 0) storageLandSelection.set(interaction.user.id, lid);
+                const state = await fetchStorageState(interaction.user.id, now);
+                return await interaction.update(
+                    buildStoragePanel({
+                        state,
+                        place,
+                        direction,
                         now
                     })
                 );

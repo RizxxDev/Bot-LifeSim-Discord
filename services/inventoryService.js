@@ -139,7 +139,7 @@ function canFitItems(inventoryRows, maxSlots, itemsToAdd = []) {
  * Mengambil isi inventory player di lokasi tertentu (default: 'bag').
  * Gunakan location = 'all' untuk mengambil seluruh lokasi sekaligus.
  */
-async function getPlayerInventory(conn, discordId, forUpdate = false, location = 'bag', now = Date.now()) {
+async function getPlayerInventory(conn, discordId, forUpdate = false, location = 'bag', now = Date.now(), landId = undefined) {
     await syncInventoryFreshness(conn, discordId, now);
 
     const lock = forUpdate ? ' FOR UPDATE' : '';
@@ -154,12 +154,24 @@ async function getPlayerInventory(conn, discordId, forUpdate = false, location =
         return rows;
     }
 
+    const loc = String(location || 'bag').toLowerCase();
+    const params = [discordId, loc];
+    let landSql = '';
+    if (landId !== undefined && ['kulkas', 'freezer', 'gudang'].includes(loc)) {
+        if (landId === null) {
+            landSql = ` AND land_id IS NULL`;
+        } else {
+            landSql = ` AND land_id = ?`;
+            params.push(Number(landId));
+        }
+    }
+
     const [rows] = await conn.execute(
         `SELECT * FROM player_inventory
-         WHERE discord_id = ? AND storage_location = ? AND quantity > 0
+         WHERE discord_id = ? AND storage_location = ?${landSql} AND quantity > 0
          ORDER BY CASE WHEN freshness_remaining_ms IS NULL THEN 1 ELSE 0 END ASC,
                   freshness_remaining_ms ASC, id ASC${lock}`,
-        [discordId, location]
+        params
     );
     return rows;
 }
@@ -168,19 +180,21 @@ async function getPlayerInventory(conn, discordId, forUpdate = false, location =
  * Menambahkan item ke lokasi penyimpanan tertentu (default: 'bag').
  * Mendukung penggabungan tumpukan per batch kesegaran (toleransi 1 jam).
  */
-async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), location = 'bag', customFreshnessMs = undefined) {
+async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), location = 'bag', customFreshnessMs = undefined, landId = null) {
     const item = getItem(itemId);
     if (!item || qty <= 0) return;
 
     const loc = String(location || 'bag').toLowerCase();
+    const targetLandId = (loc === 'bag' || loc === 'coolerbox') ? null : (landId ? Number(landId) : null);
+    const landMatchSql = targetLandId === null ? `land_id IS NULL` : `land_id = ?`;
 
     if (item.maxDurability) {
         for (let i = 0; i < qty; i++) {
             await conn.execute(
                 `INSERT INTO player_inventory
-                 (discord_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
-                 VALUES (?, ?, 1, ?, ?, NULL, NULL, ?)`,
-                [discordId, item.id, item.maxDurability, loc, now]
+                 (discord_id, land_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
+                 VALUES (?, ?, ?, 1, ?, ?, NULL, NULL, ?)`,
+                [discordId, targetLandId, item.id, item.maxDurability, loc, now]
             );
         }
         return;
@@ -191,15 +205,19 @@ async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), locat
         : getInitialFreshnessMs(item);
 
     if (initialFreshness !== null && initialFreshness !== undefined) {
+        const batchParams = [discordId, loc, item.id];
+        if (targetLandId !== null) batchParams.push(targetLandId);
+        batchParams.push(initialFreshness, BATCH_MERGE_TOLERANCE_MS);
+
         const [existingBatches] = await conn.execute(
             `SELECT id, quantity, freshness_remaining_ms
              FROM player_inventory
-             WHERE discord_id = ? AND storage_location = ? AND item_id = ?
+             WHERE discord_id = ? AND storage_location = ? AND item_id = ? AND ${landMatchSql}
                AND durability IS NULL AND freshness_remaining_ms IS NOT NULL
                AND ABS(freshness_remaining_ms - ?) <= ?
              ORDER BY freshness_remaining_ms ASC
              LIMIT 1 FOR UPDATE`,
-            [discordId, loc, item.id, initialFreshness, BATCH_MERGE_TOLERANCE_MS]
+            batchParams
         );
 
         if (existingBatches.length > 0) {
@@ -216,19 +234,22 @@ async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), locat
 
         await conn.execute(
             `INSERT INTO player_inventory
-             (discord_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
-             VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
-            [discordId, item.id, qty, loc, initialFreshness, now, now]
+             (discord_id, land_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
+             VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+            [discordId, targetLandId, item.id, qty, loc, initialFreshness, now, now]
         );
         return;
     }
 
+    const nonPerishParams = [discordId, loc, item.id];
+    if (targetLandId !== null) nonPerishParams.push(targetLandId);
+
     const [existing] = await conn.execute(
         `SELECT id, quantity FROM player_inventory
-         WHERE discord_id = ? AND storage_location = ? AND item_id = ?
+         WHERE discord_id = ? AND storage_location = ? AND item_id = ? AND ${landMatchSql}
            AND durability IS NULL AND freshness_remaining_ms IS NULL
          LIMIT 1 FOR UPDATE`,
-        [discordId, loc, item.id]
+        nonPerishParams
     );
 
     if (existing.length > 0) {
@@ -239,9 +260,9 @@ async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), locat
     } else {
         await conn.execute(
             `INSERT INTO player_inventory
-             (discord_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
-             VALUES (?, ?, ?, NULL, ?, NULL, NULL, ?)`,
-            [discordId, item.id, qty, loc, now]
+             (discord_id, land_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
+             VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, ?)`,
+            [discordId, targetLandId, item.id, qty, loc, now]
         );
     }
 }
@@ -250,18 +271,29 @@ async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), locat
  * Mengurangi item dari lokasi penyimpanan dengan urutan FIFO (yang paling dekat basi dipakai lebih dulu).
  * Mengembalikan array batch yang diambil (truthy) atau false bila stok kurang.
  */
-async function removeItem(conn, discordId, itemId, qty = 1, location = 'bag') {
+async function removeItem(conn, discordId, itemId, qty = 1, location = 'bag', landId = undefined) {
     if (qty <= 0) return [];
     const loc = String(location || 'bag').toLowerCase();
+
+    const params = [discordId, loc, itemId];
+    let landSql = '';
+    if (landId !== undefined && ['kulkas', 'freezer', 'gudang'].includes(loc)) {
+        if (landId === null) {
+            landSql = ` AND land_id IS NULL`;
+        } else {
+            landSql = ` AND land_id = ?`;
+            params.push(Number(landId));
+        }
+    }
 
     const [rows] = await conn.execute(
         `SELECT id, quantity, freshness_remaining_ms
          FROM player_inventory
-         WHERE discord_id = ? AND storage_location = ? AND item_id = ? AND quantity > 0
+         WHERE discord_id = ? AND storage_location = ? AND item_id = ?${landSql} AND quantity > 0
          ORDER BY CASE WHEN freshness_remaining_ms IS NULL THEN 1 ELSE 0 END ASC,
                   freshness_remaining_ms ASC, id ASC
          FOR UPDATE`,
-        [discordId, loc, itemId]
+        params
     );
 
     const totalOwned = rows.reduce((acc, r) => acc + Number(r.quantity), 0);

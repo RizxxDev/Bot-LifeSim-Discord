@@ -24,6 +24,18 @@ async function computePlayerMetrics(conn, player) {
         `SELECT property_tier, ownership_type, is_evicted FROM player_properties WHERE discord_id = ?`,
         [discordId]
     );
+    const [landRows] = await conn.execute(
+        `SELECT l.id, COUNT(c.id) AS active_cells
+         FROM player_lands l
+         LEFT JOIN land_grid_cells c ON c.land_id = l.id AND c.layout_state = 'active'
+         WHERE l.discord_id = ?
+         GROUP BY l.id`,
+        [discordId]
+    );
+    const [leaseRows] = await conn.execute(
+        `SELECT id, lease_kind FROM property_leases WHERE tenant_id = ? AND is_evicted = 0`,
+        [discordId]
+    );
     const [creditRows] = await conn.execute(
         `SELECT status FROM player_credits WHERE discord_id = ?`,
         [discordId]
@@ -81,10 +93,12 @@ async function computePlayerMetrics(conn, player) {
     const cookLv = getLevelInfoFromXp(Number(player.cooking_xp || 0)).level;
 
     const activePropRows = propRows.filter(p => Number(p.is_evicted || 0) === 0 && p.property_tier !== 'tunawisma');
-    const hasActiveProperty = activePropRows.length > 0 ? 1 : 0;
-    const ownsHouse = activePropRows.some(
-        p => p.ownership_type === 'owned' && (p.property_tier === 'rumah_pribadi' || p.property_tier === 'rumah_mewah')
-    ) ? 1 : 0;
+    const hasActiveProperty = (landRows.length > 0 || leaseRows.length > 0 || activePropRows.length > 0) ? 1 : 0;
+    const ownsBuiltLand = landRows.some(l => Number(l.active_cells || 0) > 0);
+    const ownsLegacyHouse = activePropRows.some(
+        p => p.ownership_type === 'owned' && (p.property_tier === 'rumah' || p.property_tier === 'rumah_pribadi' || p.property_tier === 'rumah_mewah')
+    );
+    const ownsHouse = (ownsBuiltLand || ownsLegacyHouse) ? 1 : 0;
     const paidOffCredits = creditRows.filter(c => c.status === 'paid_off').length;
     const netWorth = Number(player.cash || 0) + Number(player.bank || 0);
     const dailyStreak = Number(player.daily_streak || 0);

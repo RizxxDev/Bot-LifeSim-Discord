@@ -1,3 +1,5 @@
+const { buildPresetBlueprintCells } = require('./buildingModules');
+
 const PROPERTIES = [
     {
         id: 'tunawisma',
@@ -126,9 +128,31 @@ function calculateMonthlyPbb(propertyTierObj) {
     return Math.round(propertyTierObj.buyPrice * propertyTierObj.pbbRateMonthly);
 }
 
+function getNpcRentTiers() {
+    return PROPERTIES.filter(p => p.canRent && !p.canBuy);
+}
+
+function convertPresetToBlueprint(presetId) {
+    const tier = getPropertyTier(presetId);
+    if (!tier || !tier.canBuy) return null;
+    const isLuxury = tier.id === 'rumah_mewah';
+    return {
+        presetId: tier.id,
+        name: isLuxury ? 'Paket Mansion Siap Huni' : 'Paket Rumah Keluarga Siap Huni',
+        landTier: isLuxury ? 'luas_6x6' : 'standar_4x4',
+        width: isLuxury ? 6 : 4,
+        height: isLuxury ? 6 : 4,
+        themeId: isLuxury ? 'sultan_klasik' : 'minimalis',
+        buyPrice: tier.buyPrice,
+        cells: buildPresetBlueprintCells(tier.id)
+    };
+}
+
 module.exports = {
     PROPERTIES,
     getPropertyTier,
     getAllPropertyTiers,
-    calculateMonthlyPbb
+    getNpcRentTiers,
+    calculateMonthlyPbb,
+    convertPresetToBlueprint
 };

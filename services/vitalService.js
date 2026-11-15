@@ -1,5 +1,6 @@
 const { VITALS, HOSPITAL } = require('../data/constants');
 const { getPropertyTier } = require('../data/properties');
+const { getEffectiveLocalProperty } = require('./landService');
 
 /**
  * Pure function untuk menghitung perubahan stat berbasis waktu (Lazy Evaluation).
@@ -151,16 +152,12 @@ async function syncPlayerVitals(conn, discordId, now = Date.now(), forUpdate = t
         `SELECT * FROM player_buffs WHERE discord_id = ? AND expires_at > ?`,
         [discordId, now]
     );
-    const [propRows] = await conn.execute(
-        `SELECT property_tier, city_id, is_evicted FROM player_properties WHERE discord_id = ? LIMIT 1`,
-        [discordId]
-    );
     const effectiveCity = (Number(player.traveling_until || 0) > 0 && now >= Number(player.traveling_until) && player.travel_destination)
         ? player.travel_destination
         : (player.current_city || 'kota_sentral');
-    const propInSameCity = propRows.length > 0 && (propRows[0].city_id || 'kota_sentral') === effectiveCity;
-    const activePropTier = (propRows.length > 0 && Number(propRows[0].is_evicted) === 0 && propInSameCity)
-        ? getPropertyTier(propRows[0].property_tier)
+    const localProp = await getEffectiveLocalProperty(conn, discordId, effectiveCity, Number(player.max_slots || 20), now, false);
+    const activePropTier = (localProp && !localProp.isEvicted && localProp.tierObj)
+        ? localProp.tierObj
         : getPropertyTier('tunawisma');
 
     const lazy = computeLazyVitals(player, now, buffRows, activePropTier);

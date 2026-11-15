@@ -25,6 +25,7 @@ const {
 } = require('../../utils/panelBuilder');
 
 const CREDITABLE_IDS = ['motor_baru', 'rumah', 'mobil', 'rumah_mewah'];
+const LAND_KPR_TIERS = ['mini_3x3', 'standar_4x4', 'luas_6x6'];
 const TENORS = [4, 8, 12, 24];
 
 function formatCreditStatusBlock(c, now = Date.now()) {
@@ -36,8 +37,14 @@ function formatCreditStatusBlock(c, now = Date.now()) {
         ? `⚠️ **MENUNGGAK ${c.missed_weeks} MINGGU** *(Segera bayar cicilan agar aset tidak disita!)*`
         : `🟢 **Lancar** · Jatuh tempo berikutnya: **<t:${dueUnix}:R>**`;
 
+    const catLabel = c.asset_category === 'vehicle'
+        ? 'Kendaraan'
+        : c.asset_category === 'land'
+            ? 'Kavling Tanah'
+            : 'Properti';
+
     return [
-        `📄 **Kredit #${c.id} (${c.asset_category === 'vehicle' ? 'Kendaraan' : 'Properti'}):** ${assetLabel}`,
+        `📄 **Kredit #${c.id} (${catLabel}):** ${assetLabel}`,
         `• Status: ${statusBadge}`,
         `• Progres Tenor: **${c.weeks_paid} / ${c.tenor_weeks} minggu** *(Sisa ${remWeeks}x cicilan)*`,
         `• Cicilan Mingguan: **${formatLp(c.weekly_installment)} / minggu**`,
@@ -86,11 +93,20 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
         ? activeCredits.map(c => formatCreditStatusBlock(c, now)).join('\n\n')
         : '✨ *Kamu tidak memiliki kontrak kredit aktif saat ini. Pilih paket cicilan di menu bawah untuk mengajukan pembiayaan.*';
 
-    const simLines = CREDITABLE_IDS.map(id => {
-        const p4 = calculateCreditPlan(id, 4);
-        const p24 = calculateCreditPlan(id, 24);
-        return `• ${p4.asset.emoji} **${p4.asset.name}** (${formatLp(p4.totalPrice)}) — DP 20%: **${formatLp(p4.downPayment)}** · Cicilan **${formatLp(p24.weeklyInstallment)}/mgg** (24 mgg) s/d **${formatLp(p4.weeklyInstallment)}/mgg** (4 mgg)`;
-    });
+    const curCityId = p.current_city || 'kota_sentral';
+    const simLines = [
+        ...CREDITABLE_IDS.map(id => {
+            const p4 = calculateCreditPlan(id, 4);
+            const p24 = calculateCreditPlan(id, 24);
+            return `• ${p4.asset.emoji} **${p4.asset.name}** (${formatLp(p4.totalPrice)}) — DP 20%: **${formatLp(p4.downPayment)}** · Cicilan **${formatLp(p24.weeklyInstallment)}/mgg** (24 mgg) s/d **${formatLp(p4.weeklyInstallment)}/mgg** (4 mgg)`;
+        }),
+        ...LAND_KPR_TIERS.map(lt => {
+            const kid = `land:${lt}:${curCityId}`;
+            const p12 = calculateCreditPlan(kid, 12);
+            const p24 = calculateCreditPlan(kid, 24);
+            return `• ${p12.asset.emoji} **KPR ${p12.asset.name}** (${formatLp(p12.totalPrice)}) — DP 20%: **${formatLp(p12.downPayment)}** · **${formatLp(p24.weeklyInstallment)}/mgg** (24 mgg) / **${formatLp(p12.weeklyInstallment)}/mgg** (12 mgg)`;
+        })
+    ];
 
     const planOptions = [];
     for (const id of CREDITABLE_IDS) {
@@ -100,6 +116,19 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
             planOptions.push({
                 label: `${plan.asset.name} — ${t} Minggu (Bunga ${Math.round(plan.flatRate * 100)}%)`,
                 value: `${id}|${t}`,
+                emoji: plan.asset.emoji,
+                description: `DP 20%: ${formatLp(plan.downPayment)} | Cicilan: ${formatLp(plan.weeklyInstallment)}/minggu`
+            });
+        }
+    }
+    for (const lt of LAND_KPR_TIERS) {
+        const kid = `land:${lt}:${curCityId}`;
+        for (const t of [12, 24]) {
+            const plan = calculateCreditPlan(kid, t);
+            if (!plan) continue;
+            planOptions.push({
+                label: `KPR ${plan.asset.name} — ${t} Minggu`,
+                value: `${kid}|${t}`,
                 emoji: plan.asset.emoji,
                 description: `DP 20%: ${formatLp(plan.downPayment)} | Cicilan: ${formatLp(plan.weeklyInstallment)}/minggu`
             });
@@ -115,7 +144,7 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
 
     const actionBtns = [];
     const vehCredit = activeCredits.find(c => c.asset_category === 'vehicle');
-    const propCredit = activeCredits.find(c => c.asset_category === 'property');
+    const propCredit = activeCredits.find(c => c.asset_category === 'property' || c.asset_category === 'land');
 
     if (vehCredit) {
         actionBtns.push(
@@ -135,18 +164,19 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
     }
 
     if (propCredit) {
+        const propArg = propCredit.asset_category;
         actionBtns.push(
             btn('credit', 'pay', ownerId, {
-                label: `Bayar 1 Mgg Properti (${formatLp(propCredit.weekly_installment)})`,
+                label: `Bayar 1 Mgg ${propArg === 'land' ? 'Kavling' : 'Properti'} (${formatLp(propCredit.weekly_installment)})`,
                 emoji: '🏠',
                 style: propCredit.missed_weeks > 0 ? ButtonStyle.Danger : ButtonStyle.Primary,
-                arg: 'property'
+                arg: propArg
             }, now),
             btn('credit', 'payoff_prompt', ownerId, {
-                label: 'Lunasi Cepat Properti',
+                label: `Lunasi Cepat ${propArg === 'land' ? 'Kavling' : 'Properti'}`,
                 emoji: '🎊',
                 style: ButtonStyle.Success,
-                arg: 'property'
+                arg: propArg
             }, now)
         );
     }
@@ -218,7 +248,12 @@ module.exports = {
                 } else if (res.error === 'ACCOUNT_TOO_YOUNG') {
                     banner = { type: 'warning', text: `Pengajuan ditolak: Umur karaktermu belum 14 hari (kurang ${formatDuration(res.remainingMs)}).` };
                 } else if (res.error === 'CATEGORY_ALREADY_ACTIVE') {
-                    banner = { type: 'warning', text: `Pengajuan ditolak: Kamu masih memiliki kredit **${res.category === 'vehicle' ? 'Kendaraan' : 'Properti'}** yang belum lunas.` };
+                    const catName = res.category === 'vehicle'
+                        ? 'Kendaraan'
+                        : res.category === 'land'
+                            ? 'Kavling Tanah'
+                            : 'Properti';
+                    banner = { type: 'warning', text: `Pengajuan ditolak: Kamu masih memiliki kredit **${catName}** yang belum lunas.` };
                 } else if (res.error === 'ASSET_ALREADY_OWNED') {
                     banner = { type: 'warning', text: `Kamu sudah memiliki **${res.asset.emoji} ${res.asset.name}** secara penuh!` };
                 } else if (res.error === 'INCOME_TOO_LOW') {

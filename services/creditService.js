@@ -1,6 +1,9 @@
 const { getVehicle } = require('../data/vehicles');
-const { getPropertyTier, calculateMonthlyPbb } = require('../data/properties');
+const { getPropertyTier, calculateMonthlyPbb, convertPresetToBlueprint } = require('../data/properties');
+const { getLandTier, getMaxLandLimit } = require('../data/buildingModules');
+const { getCity } = require('../data/cities');
 const { debitPlayerFunds, logLedger } = require('./economyService');
+const { calculateLandPurchasePrice, getPlayerLands, getTotalSkillLevelFromPlayerRow, buyLand } = require('./landService');
 
 const CREDIT_RULES = {
     DOWN_PAYMENT_RATE: 0.20,
@@ -41,6 +44,24 @@ function getCreditableAsset(assetId) {
             emoji: prop.emoji,
             price: prop.buyPrice,
             raw: prop
+        };
+    }
+
+    // Dukung KPR pembelian kavling tanah: format "land:<tierId>:<cityId>"
+    if (key.startsWith('land:')) {
+        const [, rawTier, rawCity] = key.split(':');
+        const landTier = getLandTier(rawTier);
+        const city = getCity(rawCity || 'kota_sentral');
+        const price = calculateLandPurchasePrice(landTier.id, city.id);
+        return {
+            id: `land:${landTier.id}:${city.id}`,
+            category: 'land',
+            name: `${landTier.name} (${city.shortName})`,
+            emoji: landTier.emoji,
+            price,
+            tierId: landTier.id,
+            cityId: city.id,
+            raw: landTier
         };
     }
 
@@ -177,16 +198,11 @@ async function applyCredit(conn, player, assetId, tenorWeeks, now = Date.now()) 
         if (vRows.length > 0) {
             return { error: 'ASSET_ALREADY_OWNED', asset: plan.asset };
         }
-    } else if (plan.asset.category === 'property') {
-        const [pRows] = await conn.execute(
-            `SELECT property_tier, ownership_type, is_evicted FROM player_properties WHERE discord_id = ? LIMIT 1 FOR UPDATE`,
-            [player.discord_id]
-        );
-        if (pRows.length > 0 && Number(pRows[0].is_evicted) === 0 && pRows[0].ownership_type === 'owned') {
-            const curProp = getPropertyTier(pRows[0].property_tier);
-            if (curProp.order >= plan.asset.raw.order) {
-                return { error: 'ASSET_ALREADY_OWNED', asset: plan.asset };
-            }
+    } else if (plan.asset.category === 'property' || plan.asset.category === 'land') {
+        const existingLands = await getPlayerLands(conn, player.discord_id, null, true);
+        const maxLands = getMaxLandLimit(getTotalSkillLevelFromPlayerRow(player));
+        if (existingLands.length >= maxLands) {
+            return { error: 'ASSET_ALREADY_OWNED', asset: plan.asset };
         }
     }
 
@@ -225,6 +241,7 @@ async function applyCredit(conn, player, assetId, tenorWeeks, now = Date.now()) 
     );
 
     // Berikan aset kepada pemain
+    let grantedLandId = null;
     if (plan.asset.category === 'vehicle') {
         await conn.execute(`UPDATE player_vehicles SET is_equipped = 0 WHERE discord_id = ?`, [player.discord_id]);
         await conn.execute(
@@ -234,35 +251,40 @@ async function applyCredit(conn, player, assetId, tenorWeeks, now = Date.now()) 
             [player.discord_id, plan.asset.id, plan.asset.raw.tankCapacity, now]
         );
     } else if (plan.asset.category === 'property') {
-        const nextPbbAt = now + 30 * 86400000;
         const propCityId = player.current_city || 'kota_sentral';
-        await conn.execute(
-            `INSERT INTO player_properties
-             (discord_id, property_tier, city_id, ownership_type, acquired_at, next_billing_at, grace_until, is_evicted, updated_at)
-             VALUES (?, ?, ?, 'owned', ?, ?, 0, 0, ?)
-             ON DUPLICATE KEY UPDATE
-                property_tier = VALUES(property_tier),
-                city_id = VALUES(city_id),
-                ownership_type = 'owned',
-                acquired_at = VALUES(acquired_at),
-                next_billing_at = VALUES(next_billing_at),
-                grace_until = 0,
-                is_evicted = 0,
-                updated_at = VALUES(updated_at)`,
-            [player.discord_id, plan.asset.id, propCityId, now, nextPbbAt, now]
-        );
+        const bp = convertPresetToBlueprint(plan.asset.id);
+        const landRes = await buyLand(conn, player.discord_id, {
+            cityId: propCityId,
+            landTierId: bp.landTier,
+            customName: `${bp.name} (KPR)`,
+            themeId: bp.themeId,
+            initialCells: bp.cells,
+            skipDebit: true,
+            customPurchasePrice: plan.asset.price
+        }, now);
+        if (landRes.ok) grantedLandId = landRes.landId;
+    } else if (plan.asset.category === 'land') {
+        const landRes = await buyLand(conn, player.discord_id, {
+            cityId: plan.asset.cityId,
+            landTierId: plan.asset.tierId,
+            customName: `${plan.asset.raw.name} (KPR)`,
+            skipDebit: true,
+            customPurchasePrice: plan.asset.price
+        }, now);
+        if (landRes.ok) grantedLandId = landRes.landId;
     }
 
     const nextDueAt = now + CREDIT_RULES.INSTALLMENT_INTERVAL_MS;
     await conn.execute(
         `INSERT INTO player_credits
-         (discord_id, asset_category, asset_id, total_price, down_payment, principal_amount, interest_amount,
+         (discord_id, asset_category, asset_id, land_id, total_price, down_payment, principal_amount, interest_amount,
           tenor_weeks, weeks_paid, weekly_installment, principal_paid, interest_paid, next_due_at, missed_weeks, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, 0, 'active', ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, 0, 'active', ?)`,
         [
             player.discord_id,
             plan.asset.category,
             plan.asset.id,
+            grantedLandId,
             plan.totalPrice,
             plan.downPayment,
             plan.principalAmount,
@@ -525,13 +547,18 @@ async function processDueCreditInstallments(conn, now = Date.now()) {
                     if (c.asset_id === 'mobil' && (currentJob === 'taksi_online' || currentJob === 'sopir_pribadi')) {
                         currentJob = null;
                     }
-                } else if (c.asset_category === 'property') {
-                    await conn.execute(
-                        `UPDATE player_properties
-                         SET is_evicted = 1, ownership_type = 'rent', next_billing_at = 0, grace_until = 0, updated_at = ?
-                         WHERE discord_id = ?`,
-                        [now, c.discord_id]
-                    );
+                } else if (c.asset_category === 'property' || c.asset_category === 'land') {
+                    if (c.land_id) {
+                        await conn.execute(`DELETE FROM player_inventory WHERE land_id = ?`, [c.land_id]);
+                        await conn.execute(`DELETE FROM player_lands WHERE id = ?`, [c.land_id]);
+                    } else {
+                        await conn.execute(
+                            `UPDATE player_properties
+                             SET is_evicted = 1, ownership_type = 'rent', next_billing_at = 0, grace_until = 0, updated_at = ?
+                             WHERE discord_id = ?`,
+                            [now, c.discord_id]
+                        );
+                    }
                 }
 
                 await conn.execute(

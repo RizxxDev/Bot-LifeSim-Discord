@@ -13,6 +13,7 @@ const {
     btn,
     select
 } = require('../../utils/panelBuilder');
+const { isPropertyUnderDevelopment } = require('../../utils/featureFlags');
 
 const COMMAND_DETAILS = {
     start: {
@@ -55,14 +56,50 @@ const COMMAND_DETAILS = {
         usage: '`/sleep`',
         cost: 'Waktu istirahat 30–60 menit',
         cooldown: 'Hanya bisa saat Energy < 80',
-        tips: 'Tidur memulihkan +50 Energy (atau +60 s/d +100 Energy jika kamu menyewa/membeli properti di /property).'
+        tips: isPropertyUnderDevelopment()
+            ? 'Tidur memulihkan +50 Energy (Tidur Darurat atau Motel Transit saat merantau). Fitur properti (/property) sedang Under Development.'
+            : 'Tidur memulihkan +50 Energy (atau +60 s/d +100 Energy jika kamu menyewa/membeli properti di /property).'
     },
     property: {
-        title: '/property — Sewa Kos, Kontrakan & Beli Rumah',
+        title: isPropertyUnderDevelopment()
+            ? '/property — [🚧 Under Development] Portal Properti'
+            : '/property — Portal Kavling, Renovasi, Usaha & Galeri 3D',
         usage: '`/property`',
-        cost: 'Sewa mulai Lp 70.000/minggu atau beli tunai',
+        cost: isPropertyUnderDevelopment()
+            ? 'Sementara dinonaktifkan (degradasi, sewa, & PBB dijeda)'
+            : 'Sewa kos mulai Lp 70rb/mgg · Renovasi/Perawatan sesuai kerusakan',
         cooldown: 'Tidak ada',
-        tips: 'Properti membuka fasilitas Kulkas, Freezer, Tungku Dapur, Gudang, serta menambah bonus pemulihan /sleep!'
+        tips: isPropertyUnderDevelopment()
+            ? 'Fitur /property sedang dinonaktifkan sementara untuk perombakan konsep gameplay. Aset & data tetap aman.'
+            : 'Kelola kondisi bangunan, renovasi kerusakan/roboh, evakuasi darurat barang, Workshop, Warung/Kafe, Sewa NPC, serta kunjungi Galeri 3D warga!'
+    },
+    tanah: {
+        title: isPropertyUnderDevelopment()
+            ? '/tanah — [🚧 Under Development] Kavling & Pasar P2P'
+            : '/tanah — Peta Kavling Distrik, Lelang Sitaan, Pasar & PBB',
+        usage: '`/tanah`',
+        cost: isPropertyUnderDevelopment()
+            ? 'Sementara dinonaktifkan'
+            : 'Kavling distrik S (4×4) s/d XL (10×10) · Pajak BPHTB P2P 5%',
+        cooldown: 'Tidak ada',
+        tips: isPropertyUnderDevelopment()
+            ? 'Fitur /tanah sedang dinonaktifkan sementara untuk perombakan konsep gameplay.'
+            : 'Beli kavling terbatas per distrik, ikuti lelang tanah sitaan, ajukan penawaran P2P langsung ke pemain lain, bayar PBB bulanan, dan inspeksi 3D bangunan!'
+    },
+    bangun: {
+        title: isPropertyUnderDevelopment()
+            ? '/bangun — [🚧 Under Development] Studio Arsitek 3D'
+            : '/bangun — Studio Arsitek 4-Layer Voxel 3D & Perabot',
+        usage: '`/bangun`',
+        cost: isPropertyUnderDevelopment()
+            ? 'Sementara dinonaktifkan'
+            : 'Material Konstruksi (/gather, Workshop, Toko Material) & Perabot (/shop -> Toko Furnitur)',
+        cooldown: isPropertyUnderDevelopment()
+            ? 'Tidak ada'
+            : 'Waktu konstruksi berdasar luas & material',
+        tips: isPropertyUnderDevelopment()
+            ? 'Fitur /bangun sedang dinonaktifkan sementara untuk perombakan konsep gameplay. /cook tetap aktif via Dapur Umum Kota.'
+            : 'Editor 4-Layer ala The Sims: 1. Lantai/Pilar, 2. Dinding/Pintu/Jendela tepi grid, 3. Atap 3D, 4. Perabot 1x1..2x2 dengan rotasi N/E/S/W & deteksi ruangan otomatis!'
     },
     storage: {
         title: '/storage — Kulkas, Freezer, Gudang & Cooler Box',
@@ -148,6 +185,15 @@ const COMMAND_DETAILS = {
         cooldown: '5 menit',
         tips: 'Beli Beliung Batu (Lp 60.000) di /shop terlebih dahulu. Gunakan Helm Keselamatan untuk mengurangi risiko kecelakaan tambang sebesar 70%.'
     },
+    gather: {
+        title: '/gather — Hutan Kayu & Galian Material (Lembah Hijau)',
+        usage: '`/gather`',
+        cost: 'Kapak/Sekop · ⚡ 10 Energy · 🍔 4 Hunger · 💧 5 Thirst',
+        cooldown: '4 menit',
+        tips: isPropertyUnderDevelopment()
+            ? 'Khusus di Lembah Hijau (kota_timur)! Cari Kayu Gelondongan, Bambu, Tanah Liat & Pasir. (Workshop /property sedang Under Development).'
+            : 'Khusus di Lembah Hijau (kota_timur)! Cari Kayu Gelondongan, Bambu, Tanah Liat & Pasir lalu olah di Workshop /property.'
+    },
     farm: {
         title: '/farm — Perkebunan & Lahan Tani',
         usage: '`/farm`',
@@ -156,18 +202,22 @@ const COMMAND_DETAILS = {
         tips: 'Tanam, siram semua petak, beri pupuk, daur ulang kompos, dan panen sekaligus dalam 1 panel interaktif!'
     },
     cook: {
-        title: '/cook — Dapur Properti & Memasak Hidangan',
+        title: isPropertyUnderDevelopment()
+            ? '/cook — Memasak Hidangan (Dapur Umum Kota)'
+            : '/cook — Dapur Properti & Memasak Hidangan',
         usage: '`/cook`',
         cost: '⚡ 3 Energy/batch + 1× Muatan LPG atau Batu Bara + Bahan di Tas',
         cooldown: 'Durasi masak 20–120 detik per porsi',
-        tips: 'Masak hingga 5 porsi sekaligus hanya dengan 1 bahan bakar! Hidangan rumahan memulihkan stat vital besar dan memberi buff.'
+        tips: isPropertyUnderDevelopment()
+            ? 'Masak hingga 5 porsi sekaligus hanya dengan 1 bahan bakar menggunakan Dapur Umum Kota (1 slot gratis) atau kompor milikmu!'
+            : 'Masak hingga 5 porsi sekaligus hanya dengan 1 bahan bakar! Hidangan rumahan memulihkan stat vital besar dan memberi buff.'
     },
     shop: {
         title: '/shop — Pusat Perbelanjaan & Katalog Toko Kota',
         usage: '`/shop`',
         cost: 'Lp sesuai harga barang (otomatis potong Bank jika Cash kurang)',
         cooldown: 'Tidak ada',
-        tips: 'Jelajahi 9 toko kota (termasuk Butik & Distro Busana), pilih barang dari dropdown, dan beli langsung di panel!'
+        tips: 'Jelajahi 11 toko kota (termasuk Toko Furnitur, Butik Busana & Toko Material), pilih barang dari dropdown, dan beli langsung di panel!'
     },
     sell: {
         title: '/sell — Papan Harga Pasar & Pengepul Komoditas',
@@ -260,10 +310,12 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 default: category === 'home' && !selectedCmd
             },
             {
-                label: 'Kehidupan, Travel Kota, Properti & Kendaraan',
+                label: 'Kehidupan, Travel Kota, Properti & Arsitektur',
                 value: 'life',
                 emoji: '🧍',
-                description: '/profile, /wardrobe, /travel, /consume, /sleep, /property, /storage, /vehicle',
+                description: isPropertyUnderDevelopment()
+                    ? '/profile, /wardrobe, /travel, /consume, /sleep, /storage (Properti: Under Dev)'
+                    : '/profile, /wardrobe, /travel, /consume, /sleep, /property, /tanah, /bangun, /storage',
                 default: category === 'life' && !selectedCmd
             },
             {
@@ -274,10 +326,10 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 default: category === 'career' && !selectedCmd
             },
             {
-                label: 'Memulung, Memancing, Tambang, Tani & Masak',
+                label: 'Memulung, Mancing, Tambang, Hutan, Tani & Masak',
                 value: 'activities',
                 emoji: '🎣',
-                description: '/bin, /fishing, /mining, /farm, /cook',
+                description: '/bin, /fishing, /mining, /gather, /farm, /cook',
                 default: category === 'activities' && !selectedCmd
             },
             {
@@ -349,8 +401,18 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                     '• `/travel` — Perjalanan antar 3 kota (Tanjung Barat, Metropolis Sentral, Lembah Hijau) dengan kendaraan & opsi Supir Mobil.',
                     '• `/consume` — Makan, minum, pakai obat/vitamin, atau klik **🍴 Makan & Minum Otomatis**.',
                     '• `/sleep` — Tidur di hunianmu (+50 s/d +100 ⚡) atau sewa **🏨 Motel Transit** saat merantau di luar kota.',
-                    '• `/property` — Sewa Kos/Kontrakan atau beli Rumah untuk membuka Kulkas, Freezer, & Dapur.',
-                    '• `/storage` — Simpan makanan/ikan ke Kulkas, Freezer, Gudang, atau Cooler Box.',
+                    ...(isPropertyUnderDevelopment()
+                        ? [
+                            '• `/property` — *(🚧 Under Development)* Portal kavling, renovasi & usaha sementara dinonaktifkan.',
+                            '• `/tanah` — *(🚧 Under Development)* Peta kavling distrik & pasar P2P sementara dinonaktifkan.',
+                            '• `/bangun` — *(🚧 Under Development)* Studio arsitek 3D sementara dinonaktifkan.'
+                        ]
+                        : [
+                            '• `/property` — Portal kavling, renovasi & pembersihan puing, Warung/Workshop & Galeri 3D.',
+                            '• `/tanah` — Peta kavling distrik terbatas (S–XL), lelang sitaan, penawaran P2P & pembayaran PBB.',
+                            '• `/bangun` — Studio arsitek 4-Layer 3D (Lantai, Dinding/Pintu tepi grid, Atap, Perabot N/E/S/W & Nama Ruangan).'
+                        ]),
+                    '• `/storage` — Simpan makanan/ikan ke Kulkas, Freezer, Gudang properti lokal, atau Cooler Box.',
                     '• `/vehicle` — Kelola kendaraan, isi bensin SPBU, servis berkala, & kontrak Supir Pribadi 7 hari.',
                     '• `/achievements` — Klaim hadiah pencapaian dan pasang Gelar Kehormatan (Title).',
                     '• `/event` — Cek cuaca 2 mingguan, bazar token event musiman, dan target komunitas.',
@@ -399,7 +461,8 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 [
                     '• `/bin` — Aduk tempat sampah kota (cooldown **5 detik**) untuk mencari rongsokan, makanan, umpan, atau alat bekas.',
                     '• `/fishing` — Wajib punya Pancingan & Umpan. Pilih lokasi, lempar kail (cooldown 3 mnt), dan jual ikan.',
-                    '• `/mining` — Wajib punya Beliung. Pilih lokasi tambang, ayunkan beliung (cooldown 5 mnt), dan jual mineral.',
+                    '• `/mining` — Wajib punya Beliung (Tanjung Barat). Pilih lokasi tambang, ayunkan beliung, dan jual mineral.',
+                    '• `/gather` — Wajib punya Kapak/Sekop (Lembah Hijau). Cari Kayu, Bambu, Tanah Liat & Pasir bahan bangunan.',
                     '• `/farm` — Sewa/beli petak kebun, tanam bibit, siram semua petak, pupuk, kompos, & panen.',
                     '• `/cook` — Masak ikan & hasil tani di tungku dapur propertimu menjadi hidangan ber-buff.'
                 ].join('\n'),
@@ -423,11 +486,11 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 'Kelola keuanganmu, belanja kebutuhan, dan pantau harga pasar dinamis.',
                 [
                     '• `/bank` — Setor (Deposit) & Tarik (Withdraw) uang dengan tombol persentase cepat atau modal.',
-                    '• `/shop` — Jelajahi 9 toko kota (termasuk Butik Busana) dan beli barang dengan tombol interaktif.',
+                    '• `/shop` — Jelajahi 11 toko kota (termasuk Toko Furnitur, Butik & Toko Material) dan beli barang dengan tombol interaktif.',
                     '• `/sell` — Cek papan harga pasar 24 jam dan jual hasil pancing, tambang, tani, & masakan.',
                     '• `/gacha` — Putar Mesin Kapsul Warung, Mystery Box Mall, atau Brankas Sultan (1× & 10× Pull).',
                     '• `/inventory` — Lihat isi tas, perbaiki alat yang rusak, atau upgrade ukuran tas (hingga 130 slot).',
-                    '• `/credit` — Cicil Motor Baru, Mobil, Rumah, atau Rumah Mewah dengan DP 20%.',
+                    '• `/credit` — Cicil Motor, Mobil, Rumah Siap Huni, atau KPR Kavling Tanah dengan DP 20%.',
                     '• `/pay` — Pilih warga lewat User Select Menu dan transfer uang (pajak 5%).',
                     '• `/daily` — Ambil hadiah harian beruntun (streak 7 hari).',
                     '• `/leaderboard` — Lihat peringkat warga terkaya, pekerja terajin, & master 4 skill.'
