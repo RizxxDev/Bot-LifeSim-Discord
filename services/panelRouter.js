@@ -76,37 +76,47 @@ async function dispatch(interaction, client, now = Date.now()) {
         return false;
     }
 
-    // 1. Validasi Kepemilikan Panel (Ownership Guard)
-    if (parsed.ownerId !== interaction.user.id) {
-        await interaction.reply(
-            buildV2Card({
-                accentColor: COLORS.WARNING,
-                title: '🔒 Bukan Panel Milikmu',
-                blocks: [
-                    `🔒 Panel ini milik <@${parsed.ownerId}>. Ketik \`/${parsed.mod}\` untuk membuka panelmu sendiri.`
-                ],
-                ephemeral: true
-            })
-        );
-        return true;
-    }
+    const isPublicButton = Boolean(
+        parsed.ownerId === '0' &&
+        typeof interaction.isButton === 'function' &&
+        interaction.isButton() &&
+        entry.handlers?.publicButtons instanceof Set &&
+        entry.handlers.publicButtons.has(parsed.action)
+    );
 
-    // 2. Validasi Kedaluwarsa 5 Menit Sejak Interaksi Terakhir (Idle Timeout)
-    if (parsed.isExpired) {
-        const expiredCard = buildExpiredPanel(parsed.mod);
-        const canUpdateMessage =
-            (typeof interaction.isMessageComponent === 'function' && interaction.isMessageComponent()) ||
-            (typeof interaction.isModalSubmit === 'function' &&
-                interaction.isModalSubmit() &&
-                typeof interaction.isFromMessage === 'function' &&
-                interaction.isFromMessage());
-
-        if (canUpdateMessage && typeof interaction.update === 'function') {
-            await interaction.update({ ...expiredCard, attachments: [] });
-        } else {
-            await interaction.reply({ ...expiredCard, ephemeral: true });
+    if (!isPublicButton) {
+        // 1. Validasi Kepemilikan Panel (Ownership Guard)
+        if (parsed.ownerId !== interaction.user.id) {
+            await interaction.reply(
+                buildV2Card({
+                    accentColor: COLORS.WARNING,
+                    title: '🔒 Bukan Panel Milikmu',
+                    blocks: [
+                        `🔒 Panel ini milik <@${parsed.ownerId}>. Ketik \`/${parsed.mod}\` untuk membuka panelmu sendiri.`
+                    ],
+                    ephemeral: true
+                })
+            );
+            return true;
         }
-        return true;
+
+        // 2. Validasi Kedaluwarsa 5 Menit Sejak Interaksi Terakhir (Idle Timeout)
+        if (parsed.isExpired) {
+            const expiredCard = buildExpiredPanel(parsed.mod);
+            const canUpdateMessage =
+                (typeof interaction.isMessageComponent === 'function' && interaction.isMessageComponent()) ||
+                (typeof interaction.isModalSubmit === 'function' &&
+                    interaction.isModalSubmit() &&
+                    typeof interaction.isFromMessage === 'function' &&
+                    interaction.isFromMessage());
+
+            if (canUpdateMessage && typeof interaction.update === 'function') {
+                await interaction.update({ ...expiredCard, attachments: [] });
+            } else {
+                await interaction.reply({ ...expiredCard, ephemeral: true });
+            }
+            return true;
+        }
     }
 
     // 3. Validasi Registrasi & Status Blokir Pemain

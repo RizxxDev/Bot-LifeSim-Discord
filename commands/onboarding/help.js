@@ -212,6 +212,20 @@ const COMMAND_DETAILS = {
             ? 'Masak hingga 5 porsi sekaligus hanya dengan 1 bahan bakar menggunakan Dapur Umum Kota (1 slot gratis) atau kompor milikmu!'
             : 'Masak hingga 5 porsi sekaligus hanya dengan 1 bahan bakar! Hidangan rumahan memulihkan stat vital besar dan memberi buff.'
     },
+    craft: {
+        title: '/craft — Meja Daur Ulang & Prakarya',
+        usage: '`/craft`',
+        cost: '⚡ 4 Energy + Rongsokan /bin & Bahan Alam',
+        cooldown: 'Tidak ada',
+        tips: 'Olah rongsokan menjadi Umpan Pelet Jagung, Umpan Magnet Rongsokan, P3K Darurat (+30 ❤️), Pupuk Kompos, atau Kit Perbaikan Alat (+25 Durability).'
+    },
+    ternak: {
+        title: '/ternak — Peternakan Kandang (Lembah Hijau)',
+        usage: '`/ternak`',
+        cost: 'Sewa kandang mulai Lp 20rb/mgg atau beli permanen + Pakan Jagung/Bayam/Pelet',
+        cooldown: 'Siklus panen 3–6 jam otomatis',
+        tips: 'Khusus di Lembah Hijau (`kota_timur`)! Pelihara Ayam, Bebek, dan Kambing untuk memanen Telur, Susu & Daging bahan resep /cook.'
+    },
     shop: {
         title: '/shop — Pusat Perbelanjaan & Katalog Toko Kota',
         usage: '`/shop`',
@@ -267,8 +281,51 @@ const COMMAND_DETAILS = {
         cost: 'Tidak ada',
         cooldown: 'Cache diperbarui tiap 5 menit',
         tips: 'Bandingkan Kekayaan, Total Shift, Fishing, Mining, Farming, dan Cooking dengan tombol kategori interaktif.'
+    },
+    news: {
+        title: '/news — Koran Kota & Tren Ekonomi Harian',
+        usage: '`/news`',
+        cost: 'Tidak ada (Gratis dibaca kapan saja)',
+        cooldown: 'Edisi berganti otomatis setiap 00:00 WIB',
+        tips: 'Cek 2 Komoditas Naik Daun (+15% harga di /sell), 1 kategori /shop Diskon -15%, cuaca besok, dan kilas berita warga!'
+    },
+    traktir: {
+        title: '/traktir — Traktir Warga & Pos Sosial Kota',
+        usage: '`/traktir`',
+        cost: 'Makanan/minuman (tas atau beli) atau donasi item/rongsokan',
+        cooldown: 'Batas perolehan maks +50 Poin Karma per hari (00:00 WIB)',
+        tips: 'Tebar traktiran di channel untuk diklaim warga lain atau donasi rongsokan ke Pos Sosial guna meraih diskon RS (-20%) & bunga /credit (-2.0%).'
+    },
+    jasa: {
+        title: '/jasa — Papan Order Jasa & Logistik Antar-Kota',
+        usage: '`/jasa`',
+        cost: 'Jaminan escrow 100% upah (pajak 5% saat kontrak tuntas)',
+        cooldown: 'Maksimal 3 kontrak aktif bersamaan · Masa berlaku 48 jam',
+        tips: 'Pesan barang dari kota lain tanpa harus bepergian sendiri, atau ambil kontrak kota tempatmu berada untuk memperoleh upah cepat!'
+    },
+    lelang: {
+        title: '/lelang — Balai Lelang Barang Langka & Koleksi',
+        usage: '`/lelang`',
+        cost: 'Bid min Lp 10.000 · Pajak hasil lelang 5% saat terjual',
+        cooldown: 'Durasi 1/6/12/24 jam · Anti-sniping +120 detik di 2 menit akhir',
+        tips: 'Lelang alat kerja (durability utuh), busana non-starter, trofi gacha, mineral berharga, dan ikan Rare+ (kesegaran beku di escrow)!'
     }
 };
+
+const CATEGORY_COMMANDS = {
+    home: ['start', 'news', 'profile', 'job', 'work', 'daily', 'traktir', 'jasa', 'lelang', 'craft', 'ternak'],
+    life: ['profile', 'wardrobe', 'travel', 'consume', 'sleep', 'traktir', 'news', 'storage', 'vehicle', 'achievements', 'event', 'cooldowns', 'property', 'tanah', 'bangun'],
+    career: ['job', 'work', 'study'],
+    activities: ['bin', 'fishing', 'mining', 'gather', 'farm', 'ternak', 'craft', 'cook'],
+    economy: ['bank', 'shop', 'sell', 'jasa', 'lelang', 'gacha', 'inventory', 'credit', 'pay', 'daily', 'leaderboard', 'news']
+};
+
+function getCategoryForCommand(cmd) {
+    for (const cat of ['activities', 'career', 'economy', 'life']) {
+        if (CATEGORY_COMMANDS[cat].includes(cmd)) return cat;
+    }
+    return 'home';
+}
 
 function getDynamicRecommendation(player) {
     if (!player) {
@@ -314,8 +371,8 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 value: 'life',
                 emoji: '🧍',
                 description: isPropertyUnderDevelopment()
-                    ? '/profile, /wardrobe, /travel, /consume, /sleep, /storage (Properti: Under Dev)'
-                    : '/profile, /wardrobe, /travel, /consume, /sleep, /property, /tanah, /bangun, /storage',
+                    ? '/profile, /wardrobe, /travel, /consume, /sleep, /traktir, /news, /storage'
+                    : '/profile, /wardrobe, /travel, /consume, /traktir, /news, /property, /tanah, /bangun',
                 default: category === 'life' && !selectedCmd
             },
             {
@@ -326,25 +383,31 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                 default: category === 'career' && !selectedCmd
             },
             {
-                label: 'Memulung, Mancing, Tambang, Hutan, Tani & Masak',
+                label: 'Memulung, Mancing, Tambang, Hutan, Tani, Ternak, Craft & Masak',
                 value: 'activities',
                 emoji: '🎣',
-                description: '/bin, /fishing, /mining, /gather, /farm, /cook',
+                description: '/bin, /fishing, /mining, /gather, /farm, /ternak, /craft, /cook',
                 default: category === 'activities' && !selectedCmd
             },
             {
-                label: 'Ekonomi, Bank, Toko, Gacha & Kredit',
+                label: 'Ekonomi, Bank, Toko, Jasa, Lelang & Kredit',
                 value: 'economy',
                 emoji: '💰',
-                description: '/bank, /shop, /sell, /gacha, /inventory, /credit, /pay, /daily, /leaderboard',
+                description: '/bank, /shop, /sell, /jasa, /lelang, /gacha, /inventory, /credit, /pay, /daily',
                 default: category === 'economy' && !selectedCmd
             }
         ]
     }, now);
 
+    const categoryKeys = CATEGORY_COMMANDS[category] || CATEGORY_COMMANDS.home;
+    const cmdEntries = categoryKeys
+        .filter(k => Boolean(COMMAND_DETAILS[k]))
+        .slice(0, 25)
+        .map(k => [k, COMMAND_DETAILS[k]]);
+
     const cmdRow = select('help', 'cmd', discordId, {
-        placeholder: '📘 Pilih Command untuk Melihat Detail & Tips...',
-        options: Object.entries(COMMAND_DETAILS).slice(0, 25).map(([cmd, info]) => ({
+        placeholder: '📘 Pilih Command pada Kategori Ini untuk Detail...',
+        options: cmdEntries.map(([cmd, info]) => ({
             label: info.title.slice(0, 100),
             value: cmd,
             emoji: '🔹',
@@ -415,6 +478,8 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                     '• `/storage` — Simpan makanan/ikan ke Kulkas, Freezer, Gudang properti lokal, atau Cooler Box.',
                     '• `/vehicle` — Kelola kendaraan, isi bensin SPBU, servis berkala, & kontrak Supir Pribadi 7 hari.',
                     '• `/achievements` — Klaim hadiah pencapaian dan pasang Gelar Kehormatan (Title).',
+                    '• `/traktir` — Traktir makanan di channel & donasi rongsokan/bahan ke Pos Sosial untuk Karma (diskon RS & bunga /credit).',
+                    '• `/news` — Baca Koran Kota harian: tren harga +15%, diskon toko -15%, cuaca esok, & berita warga.',
                     '• `/event` — Cek cuaca 2 mingguan, bazar token event musiman, dan target komunitas.',
                     '• `/cooldowns` — Lihat semua jadwal tunggu dan kuota harian aktivitasmu.'
                 ].join('\n')
@@ -464,7 +529,9 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                     '• `/mining` — Wajib punya Beliung (Tanjung Barat). Pilih lokasi tambang, ayunkan beliung, dan jual mineral.',
                     '• `/gather` — Wajib punya Kapak/Sekop (Lembah Hijau). Cari Kayu, Bambu, Tanah Liat & Pasir bahan bangunan.',
                     '• `/farm` — Sewa/beli petak kebun, tanam bibit, siram semua petak, pupuk, kompos, & panen.',
-                    '• `/cook` — Masak ikan & hasil tani di tungku dapur propertimu menjadi hidangan ber-buff.'
+                    '• `/ternak` — Pelihara Ayam, Bebek & Kambing di Lembah Hijau untuk panen telur, susu, & daging.',
+                    '• `/craft` — Daur ulang rongsokan `/bin` menjadi umpan spesial, P3K darurat, kompos, & kit alat.',
+                    '• `/cook` — Masak ikan, hasil tani, telur, & susu di tungku dapur menjadi hidangan ber-buff.'
                 ].join('\n'),
                 '💡 **Tips Pemula:** Karena pemain baru mulai dari **Lp 0 tanpa alat**, gunakan `/bin` untuk mencari dan menjual rongsokan hingga cukup membeli **🎋 Pancingan Bambu (Lp 50.000)** atau **🪨 Beliung Batu (Lp 60.000)** di `/shop`!'
             ],
@@ -492,6 +559,8 @@ async function buildHelpCategoryPayload(discordId, category = 'home', ephemeral 
                     '• `/inventory` — Lihat isi tas, perbaiki alat yang rusak, atau upgrade ukuran tas (hingga 130 slot).',
                     '• `/credit` — Cicil Motor, Mobil, Rumah Siap Huni, atau KPR Kavling Tanah dengan DP 20%.',
                     '• `/pay` — Pilih warga lewat User Select Menu dan transfer uang (pajak 5%).',
+                    '• `/jasa` — Pasang atau kerjakan order pengantaran barang antar-kota beserta jaminan escrow.',
+                    '• `/lelang` — Ikuti atau buka balai lelang barang koleksi, alat, busana, mineral, & ikan Rare+.',
                     '• `/daily` — Ambil hadiah harian beruntun (streak 7 hari).',
                     '• `/leaderboard` — Lihat peringkat warga terkaya, pekerja terajin, & master 4 skill.'
                 ].join('\n')
@@ -552,7 +621,8 @@ module.exports = {
             async cmd(interaction) {
                 const now = Date.now();
                 const cmd = interaction.values[0] || '';
-                const payload = await buildHelpCategoryPayload(interaction.user.id, 'home', false, cmd, now);
+                const cat = getCategoryForCommand(cmd);
+                const payload = await buildHelpCategoryPayload(interaction.user.id, cat, false, cmd, now);
                 return await interaction.update(payload);
             }
         }

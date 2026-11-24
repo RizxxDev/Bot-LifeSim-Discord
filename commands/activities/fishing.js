@@ -26,7 +26,13 @@ const { COLORS, formatLp, formatDuration, buildV2Card } = require('../../utils/u
 const { buildPanel, btn, select } = require('../../utils/panelBuilder');
 const { scheduleAutoUpdate, cancelAutoUpdate, setPanelMinigameLock } = require('../../services/autoUpdateService');
 
-const BAIT_IDS = ['umpan_cacing', 'umpan_udang', 'umpan_pro'];
+const BAIT_IDS = [
+    'umpan_cacing',
+    'umpan_udang',
+    'umpan_pro',
+    'umpan_pelet_jagung',
+    'umpan_magnet_rongsokan'
+];
 
 function sleepMs(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -746,6 +752,7 @@ module.exports = {
         }
     },
 
+    BAIT_IDS,
     fetchFishingState,
     buildFishingPrepPanel
 };

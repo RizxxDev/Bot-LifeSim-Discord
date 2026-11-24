@@ -2,7 +2,10 @@ const { withTransaction, query } = require('../database/mariadb');
 const { calculateMarginalWealthTax, getLiveEconomyConfig } = require('./economyService');
 const { processDuePropertyBillings } = require('./propertyService');
 const { processDueFarmPlotBillings } = require('./farmService');
+const { processDueLivestockPenBillings } = require('./livestockService');
 const { processDueCreditInstallments } = require('./creditService');
+const { processExpiredJasaContracts } = require('./jasaService');
+const { settleDueAuctions } = require('./auctionService');
 const { runScheduledBuildingConditionChecks } = require('./buildingConditionService');
 const { isPropertyUnderDevelopment } = require('../utils/featureFlags');
 const { BANK } = require('../data/constants');
@@ -114,7 +117,10 @@ async function runPeriodicEconomyMaintenance(now = Date.now(), client = null) {
             await processDuePropertyBillings(conn, now);
         }
         await processDueFarmPlotBillings(conn, now);
+        await processDueLivestockPenBillings(conn, now);
         await processDueCreditInstallments(conn, now);
+        await processExpiredJasaContracts(conn, now);
+        await settleDueAuctions(conn, now);
     });
 }
 

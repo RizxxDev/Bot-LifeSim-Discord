@@ -4,6 +4,7 @@ const { syncPlayerVitals } = require('../../services/vitalService');
 const { getPlayerInventory } = require('../../services/inventoryService');
 const { getLiveEconomyConfig } = require('../../services/economyService');
 const { getItemDynamicSellInfo, executeSellItems } = require('../../services/marketService');
+const { getDailyNewsConfig } = require('../../services/newsService');
 const { getItem } = require('../../data/items');
 const { COLORS, formatLp } = require('../../utils/uiBuilder');
 const {
@@ -93,10 +94,18 @@ function buildSellPanel({
         `• ${info.item.emoji} **${info.item.name}**: **${formatLp(info.unitPrice)}** *(Dasar ${formatLp(info.basePrice)} · ${info.percentOfBase}% · Suplai 24j: ${info.sold24h}/${info.threshold} · ${info.trend})*`
     );
 
+    const newsCfg = getDailyNewsConfig(now);
+    const hotNames = newsCfg.hotCommodities
+        .map(id => getItem(id))
+        .filter(Boolean)
+        .map(it => `${it.emoji} **${it.name}**`)
+        .join(' & ');
+
     const blocks = [
+        `📰 **Sorotan Koran Hari Ini (+15% Harga Jual):** ${hotNames || '-'} *(Cek detail di \`/news\`)*`,
         bagLines.length > 0
             ? `**🎒 Komoditas di Tasmu (Estimasi Total: ${formatLp(estimatedBagTotal)}):**\n${bagLines.slice(0, 12).join('\n')}${bagLines.length > 12 ? `\n*...dan ${bagLines.length - 12} jenis lainnya.*` : ''}`
-            : '🎒 *Tasmu saat ini belum berisi komoditas (ikan, mineral, panen tani, atau masakan) yang dapat dijual.*',
+            : '🎒 *Tasmu saat ini belum berisi komoditas (ikan, mineral, panen tani, ternak, atau masakan) yang dapat dijual.*',
         `**📈 Indeks Harga Pasar Dinamis (24 Jam):**\n${marketLines.join('\n')}`
     ];
 

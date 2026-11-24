@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS players (
     backpack_tier INT NOT NULL DEFAULT 0,
     max_slots INT NOT NULL DEFAULT 20,
     equipped_title VARCHAR(64) DEFAULT NULL,
+    karma_points INT NOT NULL DEFAULT 0,
     daily_streak INT NOT NULL DEFAULT 0,
     last_daily_at BIGINT NOT NULL DEFAULT 0,
     last_fishing_loc VARCHAR(32) NOT NULL DEFAULT 'sungai',
@@ -562,4 +563,112 @@ CREATE TABLE IF NOT EXISTS land_furniture_items (
     placed_at BIGINT NOT NULL DEFAULT 0,
     INDEX idx_furn_land_floor (land_id, floor_level),
     CONSTRAINT fk_furn_land FOREIGN KEY (land_id) REFERENCES player_lands(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS player_livestock_pens (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    discord_id VARCHAR(32) NOT NULL,
+    pen_number INT NOT NULL,
+    ownership_type VARCHAR(16) NOT NULL DEFAULT 'rented',
+    species_id VARCHAR(64) NULL,
+    phase TINYINT NOT NULL DEFAULT 0,
+    fed TINYINT(1) NOT NULL DEFAULT 0,
+    cleaned TINYINT(1) NOT NULL DEFAULT 1,
+    cycles_left INT NOT NULL DEFAULT 0,
+    phase_started_at BIGINT NULL,
+    mature_at BIGINT NULL,
+    next_billing_at BIGINT NULL,
+    is_locked TINYINT(1) NOT NULL DEFAULT 0,
+    UNIQUE KEY uq_player_pen (discord_id, pen_number),
+    INDEX idx_pen_billing (ownership_type, next_billing_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS social_traktir_drops (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    creator_id VARCHAR(32) NOT NULL,
+    channel_id VARCHAR(32) NULL,
+    item_id VARCHAR(64) NOT NULL,
+    total_portions INT NOT NULL,
+    remaining_portions INT NOT NULL,
+    karma_per_claim INT NOT NULL DEFAULT 2,
+    note VARCHAR(140) NULL,
+    expires_at BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    INDEX idx_traktir_creator (creator_id, created_at),
+    INDEX idx_traktir_expires (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS social_traktir_claims (
+    drop_id BIGINT NOT NULL,
+    claimer_id VARCHAR(32) NOT NULL,
+    claimed_at BIGINT NOT NULL,
+    PRIMARY KEY (drop_id, claimer_id),
+    INDEX idx_traktir_claim_user (claimer_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 14. Papan Order Jasa Antar-Warga & Kotak Pengambilan
+CREATE TABLE IF NOT EXISTS jasa_contracts (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    requester_id VARCHAR(32) NOT NULL,
+    worker_id VARCHAR(32) NULL,
+    target_city_id VARCHAR(32) NOT NULL,
+    item_id VARCHAR(64) NOT NULL,
+    quantity INT NOT NULL,
+    reward_lp BIGINT NOT NULL,
+    note VARCHAR(120) NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'open',
+    expires_at BIGINT NOT NULL,
+    completed_at BIGINT NULL,
+    created_at BIGINT NOT NULL,
+    INDEX idx_jasa_status_expires (status, expires_at),
+    INDEX idx_jasa_requester (requester_id, status),
+    INDEX idx_jasa_city (target_city_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS player_jasa_claim_box (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    discord_id VARCHAR(32) NOT NULL,
+    contract_id BIGINT NOT NULL,
+    item_id VARCHAR(64) NOT NULL,
+    quantity INT NOT NULL,
+    delivery_city_id VARCHAR(32) NOT NULL,
+    created_at BIGINT NOT NULL,
+    INDEX idx_jasa_box_user (discord_id, delivery_city_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 15. Balai Lelang Warga & Kotak Klaim Lelang
+CREATE TABLE IF NOT EXISTS market_auctions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    seller_id VARCHAR(32) NOT NULL,
+    item_kind VARCHAR(16) NOT NULL,
+    item_id VARCHAR(64) NOT NULL,
+    quantity INT NOT NULL DEFAULT 1,
+    durability INT NULL,
+    freshness_remaining_ms BIGINT NULL,
+    start_price BIGINT NOT NULL,
+    reserve_price BIGINT NOT NULL DEFAULT 0,
+    current_bid BIGINT NOT NULL DEFAULT 0,
+    highest_bidder_id VARCHAR(32) NULL,
+    bid_count INT NOT NULL DEFAULT 0,
+    status VARCHAR(16) NOT NULL DEFAULT 'active',
+    ends_at BIGINT NOT NULL,
+    settled_at BIGINT NULL,
+    created_at BIGINT NOT NULL,
+    INDEX idx_auction_status_ends (status, ends_at),
+    INDEX idx_auction_seller (seller_id, status),
+    INDEX idx_auction_bidder (highest_bidder_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS market_auction_claims (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    discord_id VARCHAR(32) NOT NULL,
+    auction_id BIGINT NOT NULL,
+    item_kind VARCHAR(16) NOT NULL,
+    item_id VARCHAR(64) NOT NULL,
+    quantity INT NOT NULL DEFAULT 1,
+    durability INT NULL,
+    freshness_remaining_ms BIGINT NULL,
+    claim_reason VARCHAR(24) NOT NULL,
+    created_at BIGINT NOT NULL,
+    INDEX idx_auction_claim_user (discord_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

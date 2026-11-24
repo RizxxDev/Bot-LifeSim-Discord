@@ -180,7 +180,7 @@ async function getPlayerInventory(conn, discordId, forUpdate = false, location =
  * Menambahkan item ke lokasi penyimpanan tertentu (default: 'bag').
  * Mendukung penggabungan tumpukan per batch kesegaran (toleransi 1 jam).
  */
-async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), location = 'bag', customFreshnessMs = undefined, landId = null) {
+async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), location = 'bag', customFreshnessMs = undefined, landId = null, customDurability = undefined) {
     const item = getItem(itemId);
     if (!item || qty <= 0) return;
 
@@ -189,12 +189,15 @@ async function addItem(conn, discordId, itemId, qty = 1, now = Date.now(), locat
     const landMatchSql = targetLandId === null ? `land_id IS NULL` : `land_id = ?`;
 
     if (item.maxDurability) {
+        const initDur = customDurability !== undefined && customDurability !== null
+            ? Math.max(1, Math.min(item.maxDurability, Number(customDurability)))
+            : item.maxDurability;
         for (let i = 0; i < qty; i++) {
             await conn.execute(
                 `INSERT INTO player_inventory
                  (discord_id, land_id, item_id, quantity, durability, storage_location, freshness_remaining_ms, freshness_updated_at, created_at)
                  VALUES (?, ?, ?, 1, ?, ?, NULL, NULL, ?)`,
-                [discordId, targetLandId, item.id, item.maxDurability, loc, now]
+                [discordId, targetLandId, item.id, initDur, loc, now]
             );
         }
         return;
@@ -382,6 +385,33 @@ async function repairToolById(conn, rowId, maxDurability) {
     );
 }
 
+async function repairToolPartialById(conn, rowId, maxDurability, addAmount = 25) {
+    await conn.execute(
+        `UPDATE player_inventory
+         SET durability = LEAST(?, GREATEST(0, COALESCE(durability, 0)) + ?)
+         WHERE id = ?`,
+        [Number(maxDurability), Math.max(1, Number(addAmount || 25)), rowId]
+    );
+}
+
+async function getInventoryRowById(conn, rowId, discordId, forUpdate = false) {
+    const lock = forUpdate ? ' FOR UPDATE' : '';
+    const [rows] = await conn.execute(
+        `SELECT * FROM player_inventory
+         WHERE id = ? AND discord_id = ? AND quantity > 0${lock}`,
+        [Number(rowId), discordId]
+    );
+    return rows[0] || null;
+}
+
+async function removeInventoryRowById(conn, rowId, discordId) {
+    const [res] = await conn.execute(
+        `DELETE FROM player_inventory WHERE id = ? AND discord_id = ?`,
+        [Number(rowId), discordId]
+    );
+    return Number(res.affectedRows || 0) > 0;
+}
+
 async function recordCollection(conn, discordId, itemId, qty = 1, now = Date.now()) {
     const [existing] = await conn.execute(
         `SELECT total_caught FROM player_collections WHERE discord_id = ? AND item_id = ?`,
@@ -414,5 +444,8 @@ module.exports = {
     getDamagedTools,
     damageTool,
     repairToolById,
+    repairToolPartialById,
+    getInventoryRowById,
+    removeInventoryRowById,
     recordCollection
 };

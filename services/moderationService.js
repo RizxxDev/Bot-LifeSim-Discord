@@ -605,7 +605,10 @@ async function resetPlayerAccount(targetId, adminId, now = Date.now()) {
             'player_cooldowns',
             'player_properties',
             'player_farm_plots',
+            'player_livestock_pens',
             'player_cooking_queues',
+            'player_jasa_claim_box',
+            'market_auction_claims',
             'player_vehicles',
             'player_credits',
             'player_achievements',
@@ -633,6 +636,12 @@ async function resetPlayerAccount(targetId, adminId, now = Date.now()) {
         }
         await conn.execute(`DELETE FROM property_leases WHERE tenant_id = ? OR owner_id = ?`, [targetId, targetId]);
         await conn.execute(`DELETE FROM property_market_listings WHERE seller_id = ?`, [targetId]);
+        await conn.execute(`DELETE FROM social_traktir_claims WHERE claimer_id = ?`, [targetId]);
+        await conn.execute(`DELETE FROM social_traktir_drops WHERE creator_id = ?`, [targetId]);
+        await conn.execute(`DELETE FROM jasa_contracts WHERE requester_id = ?`, [targetId]);
+        await conn.execute(`UPDATE jasa_contracts SET worker_id = NULL WHERE worker_id = ?`, [targetId]);
+        await conn.execute(`DELETE FROM market_auctions WHERE seller_id = ?`, [targetId]);
+        await conn.execute(`UPDATE market_auctions SET highest_bidder_id = NULL WHERE highest_bidder_id = ?`, [targetId]);
 
         await conn.execute(
             `UPDATE players SET
@@ -670,6 +679,7 @@ async function resetPlayerAccount(targetId, adminId, now = Date.now()) {
                 last_fishing_loc = 'sungai',
                 last_fishing_bait = 'umpan_cacing',
                 last_mining_loc = 'tambang_batu',
+                karma_points = 0,
                 last_farm_crop = 'bayam'
              WHERE discord_id = ?`,
             [STARTER_PACK.cash, now, targetId]

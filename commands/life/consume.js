@@ -168,6 +168,9 @@ function formatConsumptionBanner(res) {
         if (res.error === 'PASSIVE_ITEM') {
             return { type: 'info', text: 'Item ini bersifat pasif dan otomatis aktif selama ada di tasmu.' };
         }
+        if (res.error === 'USE_AT_CRAFT') {
+            return { type: 'info', text: 'Buka `/craft` lalu pilih tab **🔧 Pakai Kit Perbaikan** untuk memilih alat yang ingin ditambal (+25 Durability).' };
+        }
         if (res.error === 'ALREADY_FULL') {
             return { type: 'info', text: 'Kondisi stat targetmu sudah penuh (100)! Item tidak jadi dikonsumsi agar tidak terbuang.' };
         }

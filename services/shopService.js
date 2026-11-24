@@ -4,6 +4,7 @@ const { syncPlayerVitals } = require('./vitalService');
 const { getPlayerInventory, canFitItems, addItem, calculateSlotsUsed } = require('./inventoryService');
 const { debitPlayerFunds, getLiveEconomyConfig } = require('./economyService');
 const { getPlayerOwnedClothingIds, grantClothing } = require('./avatarService');
+const { NEWS_SHOP_DISCOUNT_MULTIPLIER, getDailyNewsDiscountShopId } = require('./newsService');
 const { SHOPS, getItem, getItemsByShop } = require('../data/items');
 const { getBackpackByTier, getNextBackpackTier } = require('../data/backpacks');
 const { COLORS, formatLp } = require('../utils/uiBuilder');
@@ -18,14 +19,19 @@ const {
 const ITEMS_PER_PAGE = 5;
 const EXPENSIVE_PURCHASE_THRESHOLD = 1000000;
 
-function getEffectiveItemPrice(item, liveConfig = {}) {
+function getEffectiveItemPrice(item, liveConfig = {}, now = Date.now()) {
     if (!item) return 0;
     if (item.lockedPrice) return item.buyPrice;
-    const overrides = liveConfig.price_overrides || {};
-    if (overrides[item.id] !== undefined && Number(overrides[item.id]) > 0) {
-        return Number(overrides[item.id]);
+    const cfg = liveConfig || {};
+    const overrides = cfg.price_overrides || {};
+    const basePrice = (overrides[item.id] !== undefined && Number(overrides[item.id]) > 0)
+        ? Number(overrides[item.id])
+        : item.buyPrice;
+    const discountShopId = getDailyNewsDiscountShopId(now, cfg.daily_news_override);
+    if (item.shop && item.shop === discountShopId) {
+        return Math.max(1, Math.round(basePrice * NEWS_SHOP_DISCOUNT_MULTIPLIER));
     }
-    return item.buyPrice;
+    return basePrice;
 }
 
 async function fetchShopState(discordId, now = Date.now()) {
@@ -65,8 +71,11 @@ function buildShopPanel({
     const activeItem = allItems.find(it => it.id === selectedItemId) || pageItems[0] || allItems[0] || null;
     const activeItemId = activeItem ? activeItem.id : null;
 
+    const discountShopId = getDailyNewsDiscountShopId(now, liveCfg?.daily_news_override);
+    const isDiscountedShop = shop.id === discountShopId;
+
     const blocks = [
-        `${shop.description}\n🎒 **Kapasitas Tas:** \`${slotsUsed}/${p.max_slots} slot terpakai\``
+        `${shop.description}\n🎒 **Kapasitas Tas:** \`${slotsUsed}/${p.max_slots} slot terpakai\`${isDiscountedShop ? `\n📰 **Promo Koran Hari Ini:** Diskon **-15%** untuk item non-subsidi di toko ini!` : ''}`
     ];
 
     const extraNavBtns = [];
@@ -99,7 +108,7 @@ function buildShopPanel({
     }
 
     const itemLines = pageItems.map(item => {
-        const price = getEffectiveItemPrice(item, liveCfg);
+        const price = getEffectiveItemPrice(item, liveCfg, now);
         const isSel = item.id === activeItemId;
         const pointer = isSel ? '▶️ ' : '• ';
         const isClothingOwned = item.tags?.includes('clothing') && ownedClothes.has(item.id);
@@ -219,7 +228,7 @@ async function executeItemPurchase(discordId, itemId, quantity = 1, now = Date.n
         const invRows = await getPlayerInventory(conn, discordId, true, 'bag', now);
         const liveCfg = await getLiveEconomyConfig(conn);
 
-        const unitPrice = getEffectiveItemPrice(item, liveCfg);
+        const unitPrice = getEffectiveItemPrice(item, liveCfg, now);
         const totalCost = unitPrice * qty;
 
         // Jika pakaian (/wardrobe), cek kepemilikan di player_clothes

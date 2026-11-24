@@ -1,5 +1,6 @@
 const { VITALS, HOSPITAL } = require('../data/constants');
 const { getPropertyTier } = require('../data/properties');
+const { getKarmaPerks } = require('../data/karma');
 const { getEffectiveLocalProperty } = require('./landService');
 
 /**
@@ -107,13 +108,17 @@ function computeLazyVitals(playerRow, now = Date.now(), activeBuffs = [], proper
 /**
  * Menghitung tagihan Rumah Sakit dan pemotongan cash/bank saat Health <= 0.
  */
-function calculateHospitalAdmission(cash, bank, now = Date.now()) {
+function calculateHospitalAdmission(cash, bank, now = Date.now(), karmaPoints = 0) {
     const currentCash = Number(cash || 0);
     const currentBank = Number(bank || 0);
-    const targetFee = Math.min(
+    const rawTargetFee = Math.min(
         HOSPITAL.MAX_FEE,
         HOSPITAL.BASE_FEE + Math.round(currentCash * HOSPITAL.CASH_PERCENT)
     );
+    const karmaPerks = getKarmaPerks(karmaPoints);
+    const discountRate = karmaPerks.hospitalDiscountRate || 0;
+    const karmaDiscount = Math.round(rawTargetFee * discountRate);
+    const targetFee = Math.max(0, rawTargetFee - karmaDiscount);
 
     const paidFromCash = Math.min(currentCash, targetFee);
     const remainingFee = targetFee - paidFromCash;
@@ -125,6 +130,9 @@ function calculateHospitalAdmission(cash, bank, now = Date.now()) {
     const hospitalUntil = now + lockSeconds * 1000;
 
     return {
+        rawTargetFee,
+        karmaDiscount,
+        discountRate,
         targetFee,
         totalPaid,
         paidFromCash,
@@ -237,7 +245,7 @@ async function syncPlayerVitals(conn, discordId, now = Date.now(), forUpdate = t
 }
 
 function applyHospitalToPlayerObj(player, now = Date.now()) {
-    const admission = calculateHospitalAdmission(player.cash, player.bank, now);
+    const admission = calculateHospitalAdmission(player.cash, player.bank, now, player.karma_points || 0);
     player.cash = admission.newCash;
     player.bank = admission.newBank;
     player.health = HOSPITAL.RECOVERY_STAT_VALUE;

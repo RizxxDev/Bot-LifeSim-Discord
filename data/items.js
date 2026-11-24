@@ -1463,6 +1463,128 @@ const ITEMS = [
             label: '+15% Peluang Rarity (2 Jam)'
         },
         description: 'Ramuan rahasia para Sultan! Memulihkan seluruh stat vital ke 100% + Buff +15% Rarity selama 2 jam.'
+    },
+
+    // ==========================================
+    // 15. RILIS EKOSISTEM: TERNAK & PRAKARYA (/ternak & /craft)
+    // ==========================================
+    {
+        id: 'pakan_ternak',
+        name: 'Pelet Pakan Ternak',
+        emoji: '🌾',
+        shop: 'tani',
+        tags: ['feed'],
+        buyPrice: 3500,
+        sellPrice: 1400,
+        stackSize: 50,
+        description: 'Pakan bernutrisi serbaguna untuk ayam, bebek, dan kambing di /ternak.'
+    },
+    {
+        id: 'telur_ayam',
+        name: 'Telur Ayam Segar',
+        emoji: '🥚',
+        shop: null,
+        tags: ['crop', 'livestock_product'],
+        buyPrice: 0,
+        sellPrice: 3200,
+        baseSupplyThreshold: 120,
+        stackSize: 30,
+        shelfLifeHours: 48,
+        spoilageCategory: 'crop',
+        description: 'Telur ayam kampung segar hasil panen kandang /ternak (Umur segar 48 jam).'
+    },
+    {
+        id: 'telur_bebek',
+        name: 'Telur Bebek Gurih',
+        emoji: '🥚',
+        shop: null,
+        tags: ['crop', 'livestock_product'],
+        buyPrice: 0,
+        sellPrice: 5400,
+        baseSupplyThreshold: 90,
+        stackSize: 30,
+        shelfLifeHours: 48,
+        spoilageCategory: 'crop',
+        description: 'Telur bebek kaya rasa untuk masakan spesial di /cook (Umur segar 48 jam).'
+    },
+    {
+        id: 'susu_kambing',
+        name: 'Susu Kambing Murni',
+        emoji: '🥛',
+        shop: null,
+        tags: ['crop', 'livestock_product', 'drink'],
+        buyPrice: 0,
+        sellPrice: 9800,
+        baseSupplyThreshold: 70,
+        stackSize: 20,
+        shelfLifeHours: 36,
+        spoilageCategory: 'crop',
+        effects: { thirst: 20, energy: 8, health: 4 },
+        description: 'Susu segar hasil perahan kambing di /ternak (+20 Thirst, +8 Energy, +4 Health).'
+    },
+    {
+        id: 'daging_ternak',
+        name: 'Daging Ternak Segar',
+        emoji: '🥩',
+        shop: null,
+        tags: ['crop', 'livestock_product'],
+        buyPrice: 0,
+        sellPrice: 12500,
+        baseSupplyThreshold: 60,
+        stackSize: 20,
+        shelfLifeHours: 36,
+        spoilageCategory: 'fish',
+        description: 'Daging segar berkualitas dari ternak yang memasuki masa pensiun (Umur segar 36 jam).'
+    },
+    {
+        id: 'umpan_pelet_jagung',
+        name: 'Umpan Pelet Jagung',
+        emoji: '🌽',
+        shop: null,
+        tags: ['bait'],
+        buyPrice: 0,
+        sellPrice: 1200,
+        stackSize: 50,
+        rarityBonus: 0.10,
+        minBoostTier: 'uncommon',
+        description: 'Umpan rakitan /craft (+10% peluang Uncommon+ saat memancing).'
+    },
+    {
+        id: 'umpan_magnet_rongsokan',
+        name: 'Umpan Magnet Rongsokan',
+        emoji: '🧲',
+        shop: null,
+        tags: ['bait'],
+        buyPrice: 0,
+        sellPrice: 2800,
+        stackSize: 50,
+        rarityBonus: 0.16,
+        minBoostTier: 'rare',
+        description: 'Umpan magnetik rakitan /craft (+16% peluang Rare+ saat memancing).'
+    },
+    {
+        id: 'p3k_darurat',
+        name: 'Kotak P3K Darurat',
+        emoji: '🩹',
+        shop: null,
+        tags: ['medicine'],
+        buyPrice: 0,
+        sellPrice: 4500,
+        stackSize: 10,
+        effects: { health: 30, hunger: 5 },
+        description: 'Perban & antiseptik darurat rakitan /craft (+30 ❤️ Health, +5 Hunger).'
+    },
+    {
+        id: 'kit_perbaikan_ringan',
+        name: 'Kit Perbaikan Ringan',
+        emoji: '🔧',
+        shop: null,
+        tags: ['service', 'repair_kit'],
+        buyPrice: 0,
+        sellPrice: 6000,
+        stackSize: 10,
+        repairAmount: 25,
+        description: 'Memulihkan +25 Durability pada 1 alat kerja rusak ringan melalui panel /craft.'
     }
 ];
 

@@ -4,6 +4,7 @@ const { syncPlayerVitals } = require('./vitalService');
 const { getPlayerInventory, removeItem } = require('./inventoryService');
 const { creditPlayerCash, getLiveEconomyConfig } = require('./economyService');
 const { getItem } = require('../data/items');
+const { NEWS_HOT_MULTIPLIER, isDailyNewsHotCommodity } = require('./newsService');
 
 /**
  * Pure function untuk menghitung multiplier harga pasar dinamis berdasarkan suplai 24 jam (S) dan DAU.
@@ -32,8 +33,11 @@ async function getItemDynamicSellInfo(itemId, adminSellMultiplier = 1.0, now = D
     ]);
 
     const dyn = computeDynamicPriceMultiplier(sold24h, item.baseSupplyThreshold || 100, dau);
-    const unitPrice = Math.max(1, Math.round(item.sellPrice * dyn.multiplier * Number(adminSellMultiplier || 1.0)));
+    const isNewsHot = isDailyNewsHotCommodity(item.id, now);
+    const newsMult = isNewsHot ? NEWS_HOT_MULTIPLIER : 1.0;
+    const unitPrice = Math.max(1, Math.round(item.sellPrice * dyn.multiplier * newsMult * Number(adminSellMultiplier || 1.0)));
     const percentOfBase = Math.round((unitPrice / item.sellPrice) * 100);
+    const trend = isNewsHot ? `${dyn.trend} · 📰 Koran +15%` : dyn.trend;
 
     return {
         item,
@@ -41,9 +45,10 @@ async function getItemDynamicSellInfo(itemId, adminSellMultiplier = 1.0, now = D
         unitPrice,
         percentOfBase,
         multiplier: dyn.multiplier,
+        isNewsHot,
         sold24h: dyn.sold24h,
         threshold: Math.round(dyn.threshold),
-        trend: dyn.trend
+        trend
     };
 }
 

@@ -192,6 +192,71 @@ const RECIPES = [
         effects: { thirst: 30 },
         buff: { type: 'energy_regen', multiplier: 1.5, durationSec: 7200, label: 'Regen Energy ×1,5 (2 jam)' },
         tags: ['food', 'drink', 'cooked']
+    },
+    {
+        id: 'telur_dadar',
+        perfectItemId: 'telur_dadar_sempurna',
+        name: 'Telur Dadar Kampung',
+        emoji: '🍳',
+        minLevel: 2,
+        cookMinutes: 5,
+        xp: 26,
+        sellPrice: 9500,
+        ingredients: [
+            { type: 'item', itemId: 'telur_ayam', qty: 2, label: '2× Telur Ayam Segar' }
+        ],
+        effects: { hunger: 40, energy: 8 },
+        tags: ['food', 'cooked']
+    },
+    {
+        id: 'martabak_telur',
+        perfectItemId: 'martabak_telur_sempurna',
+        name: 'Martabak Telur Spesial',
+        emoji: '🫓',
+        minLevel: 12,
+        cookMinutes: 15,
+        xp: 65,
+        sellPrice: 34000,
+        ingredients: [
+            { type: 'item', itemId: 'telur_bebek', qty: 2, label: '2× Telur Bebek Gurih' },
+            { type: 'item', itemId: 'daging_ternak', qty: 1, label: '1× Daging Ternak Segar' },
+            { type: 'item', itemId: 'cabai', qty: 1, label: '1× Cabai Rawit' }
+        ],
+        effects: { hunger: 75, health: 10 },
+        tags: ['food', 'cooked']
+    },
+    {
+        id: 'susu_hangat',
+        perfectItemId: 'susu_hangat_sempurna',
+        name: 'Susu Kambing Hangat',
+        emoji: '🥛',
+        minLevel: 15,
+        cookMinutes: 10,
+        xp: 55,
+        sellPrice: 26000,
+        ingredients: [
+            { type: 'item', itemId: 'susu_kambing', qty: 2, label: '2× Susu Kambing Murni' }
+        ],
+        effects: { thirst: 35, energy: 20, health: 10 },
+        tags: ['drink', 'cooked']
+    },
+    {
+        id: 'puding_susu',
+        perfectItemId: 'puding_susu_sempurna',
+        name: 'Puding Susu Stroberi',
+        emoji: '🍮',
+        minLevel: 22,
+        cookMinutes: 20,
+        xp: 90,
+        sellPrice: 38000,
+        ingredients: [
+            { type: 'item', itemId: 'susu_kambing', qty: 1, label: '1× Susu Kambing Murni' },
+            { type: 'item', itemId: 'telur_ayam', qty: 2, label: '2× Telur Ayam Segar' },
+            { type: 'item', itemId: 'stroberi', qty: 1, label: '1× Stroberi Kebun' }
+        ],
+        effects: { hunger: 55, thirst: 20 },
+        buff: { type: 'xp_boost', multiplier: 1.15, durationSec: 1800, label: '+15% Semua EXP (30 mnt)' },
+        tags: ['food', 'drink', 'cooked']
     }
 ];
 

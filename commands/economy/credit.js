@@ -12,6 +12,7 @@ const {
     payoffCreditEarly
 } = require('../../services/creditService');
 const { buildCityGatePanel } = require('../../services/cityService');
+const { getKarmaPerks } = require('../../data/karma');
 const {
     COLORS,
     formatLp,
@@ -83,10 +84,15 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
     const remainingDti = Math.max(0, maxInstallment - usedInstallment);
     const accountAgeDays = Math.floor(Math.max(0, now - Number(p.created_at || now)) / 86400000);
 
+    const karmaPoints = Number(p.karma_points || 0);
+    const karmaPerks = getKarmaPerks(karmaPoints);
+    const karmaDiscountPct = (karmaPerks.creditRateReduction * 100).toFixed(1).replace(/\.0$/, '');
+
     const headerBlock = [
         `📈 **Penghasilan 7 Hari Terakhir:** **${formatLp(income7d)}**`,
         `🛡️ **Batas Cicilan Aman (50% DTI):** **${formatLp(maxInstallment)}/mgg** *(Terpakai: ${formatLp(usedInstallment)}/mgg · Sisa Kuota: ${formatLp(remainingDti)}/mgg)*`,
-        `🪪 **Syarat Pengajuan:** Umur Akun **${accountAgeDays}/14 hari** (${accountAgeDays >= 14 ? '✅' : '⏳'}) · Pekerjaan Aktif: **${p.current_job ? '✅ Ada' : '❌ Belum Bekerja'}**`
+        `🪪 **Syarat Pengajuan:** Umur Akun **${accountAgeDays}/14 hari** (${accountAgeDays >= 14 ? '✅' : '⏳'}) · Pekerjaan Aktif: **${p.current_job ? '✅ Ada' : '❌ Belum Bekerja'}**`,
+        `⭐ **Reputasi Karma:** ${karmaPerks.tierEmoji} **${karmaPerks.tierName}** (${karmaPerks.karmaPoints} poin)${karmaPerks.creditRateReduction > 0 ? ` · Diskon Bunga Flat: **-${karmaDiscountPct}%**` : ''}`
     ].join('\n');
 
     const creditBlocks = activeCredits.length > 0
@@ -96,14 +102,14 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
     const curCityId = p.current_city || 'kota_sentral';
     const simLines = [
         ...CREDITABLE_IDS.map(id => {
-            const p4 = calculateCreditPlan(id, 4);
-            const p24 = calculateCreditPlan(id, 24);
+            const p4 = calculateCreditPlan(id, 4, karmaPoints);
+            const p24 = calculateCreditPlan(id, 24, karmaPoints);
             return `• ${p4.asset.emoji} **${p4.asset.name}** (${formatLp(p4.totalPrice)}) — DP 20%: **${formatLp(p4.downPayment)}** · Cicilan **${formatLp(p24.weeklyInstallment)}/mgg** (24 mgg) s/d **${formatLp(p4.weeklyInstallment)}/mgg** (4 mgg)`;
         }),
         ...LAND_KPR_TIERS.map(lt => {
             const kid = `land:${lt}:${curCityId}`;
-            const p12 = calculateCreditPlan(kid, 12);
-            const p24 = calculateCreditPlan(kid, 24);
+            const p12 = calculateCreditPlan(kid, 12, karmaPoints);
+            const p24 = calculateCreditPlan(kid, 24, karmaPoints);
             return `• ${p12.asset.emoji} **KPR ${p12.asset.name}** (${formatLp(p12.totalPrice)}) — DP 20%: **${formatLp(p12.downPayment)}** · **${formatLp(p24.weeklyInstallment)}/mgg** (24 mgg) / **${formatLp(p12.weeklyInstallment)}/mgg** (12 mgg)`;
         })
     ];
@@ -111,10 +117,11 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
     const planOptions = [];
     for (const id of CREDITABLE_IDS) {
         for (const t of TENORS) {
-            const plan = calculateCreditPlan(id, t);
+            const plan = calculateCreditPlan(id, t, karmaPoints);
             if (!plan) continue;
+            const rateLabel = `${Math.round(plan.flatRate * 1000) / 10}%`;
             planOptions.push({
-                label: `${plan.asset.name} — ${t} Minggu (Bunga ${Math.round(plan.flatRate * 100)}%)`,
+                label: `${plan.asset.name} — ${t} Minggu (Bunga ${rateLabel})`,
                 value: `${id}|${t}`,
                 emoji: plan.asset.emoji,
                 description: `DP 20%: ${formatLp(plan.downPayment)} | Cicilan: ${formatLp(plan.weeklyInstallment)}/minggu`
@@ -124,7 +131,7 @@ function buildCreditPanel({ state, banner = null, now = Date.now() }) {
     for (const lt of LAND_KPR_TIERS) {
         const kid = `land:${lt}:${curCityId}`;
         for (const t of [12, 24]) {
-            const plan = calculateCreditPlan(kid, t);
+            const plan = calculateCreditPlan(kid, t, karmaPoints);
             if (!plan) continue;
             planOptions.push({
                 label: `KPR ${plan.asset.name} — ${t} Minggu`,
@@ -379,12 +386,17 @@ module.exports = {
                 const rawVal = interaction.values[0] || '';
                 const [assetId, tenorStr] = rawVal.split('|');
                 const tenor = Number(tenorStr) || 4;
-                const plan = calculateCreditPlan(assetId, tenor);
                 const state = await fetchCreditState(interaction.user.id, now);
+                const plan = calculateCreditPlan(assetId, tenor, state.player.karma_points || 0);
 
                 if (!plan) {
                     return await interaction.update(buildCreditPanel({ state, now }));
                 }
+
+                const rateText = `${Math.round(plan.flatRate * 1000) / 10}%`;
+                const karmaNote = plan.karmaRateReduction > 0
+                    ? ` *(Diskon Karma -${(plan.karmaRateReduction * 100).toFixed(1).replace(/\.0$/, '')}%)*`
+                    : '';
 
                 return await interaction.update(
                     confirmView({
@@ -399,7 +411,7 @@ module.exports = {
                                 `• 💰 Harga Aset         : **${formatLp(plan.totalPrice)}**`,
                                 `• 💵 Uang Muka (DP 20%) : **${formatLp(plan.downPayment)}** *(Dibayar Sekarang)*`,
                                 `• 📊 Pokok Pinjaman     : **${formatLp(plan.principalAmount)}**`,
-                                `• 📈 Bunga Flat (${Math.round(plan.flatRate * 100)}%)  : **${formatLp(plan.interestAmount)}**`,
+                                `• 📈 Bunga Flat (${rateText})  : **${formatLp(plan.interestAmount)}**${karmaNote}`,
                                 `• 🗓️ Cicilan Mingguan   : **${formatLp(plan.weeklyInstallment)} / minggu** (×${plan.tenorWeeks} minggu)`
                             ].join('\n'),
                             'Pastikan saldo mencukupi untuk DP 20% dan penghasilan 7 hari terakhir memenuhi rasio aman (50% DTI).'

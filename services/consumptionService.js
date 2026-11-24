@@ -27,6 +27,9 @@ function formatItemEffectSummary(item) {
     if (item.id === 'surat_ganti_nama') {
         return '📜 Ganti username karakter';
     }
+    if (item.id === 'kit_perbaikan_ringan') {
+        return '🔧 Pulihkan +25 Durability alat via /craft';
+    }
     if (item.tags && item.tags.includes('prestise') && item.titleLabel) {
         return `👑 Pasang gelar "${item.titleLabel}"`;
     }
@@ -134,6 +137,9 @@ async function executeItemConsumption(discordId, itemId, requestedAmount = 1, no
         // Item pasif
         if (item.id === 'sim_c' || item.id === 'sim_a' || item.id === 'laptop' || item.id === 'surat_izin_melaut') {
             return { error: 'PASSIVE_ITEM', player, invRows };
+        }
+        if (item.id === 'kit_perbaikan_ringan') {
+            return { error: 'USE_AT_CRAFT', player, invRows };
         }
 
         // Tabung Gas LPG 3kg: +10 muatan kompor per tabung

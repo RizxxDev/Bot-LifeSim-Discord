@@ -42,7 +42,7 @@ async function runTests() {
 
     // 1. Verifikasi seluruh 35 Slash Command berhasil di-load, 0 opsi, deskripsi <= 100 karakter, & bebas fetchReply deprecated
     const cmdFiles = collectCommandFiles(path.join(__dirname, '..', 'commands'));
-    assert.strictEqual(cmdFiles.length, 35, `Harusnya tepat 35 command pasca pembaruan /tanah & /bangun, ditemukan: ${cmdFiles.length}`);
+    assert.strictEqual(cmdFiles.length, 41, `Harusnya tepat 41 command pasca Ekspansi 6-Fitur Ekosistem, ditemukan: ${cmdFiles.length}`);
     for (const file of cmdFiles) {
         const rawSrc = fs.readFileSync(file, 'utf8');
         assert(!rawSrc.includes('fetchReply: true'), `Command ${file} masih mengandung opsi deprecated fetchReply: true`);
@@ -2643,9 +2643,423 @@ async function runTests() {
     const helpLifeRaw = JSON.stringify(helpLifePayload.components.map(c => c.toJSON()));
     assert(helpLifeRaw.includes('Under Development'), '/help kategori Kehidupan wajib menandai fitur properti sebagai Under Development');
 
-    console.log('✅ [27/27] Mode Under Development (/property, /tanah, /bangun), Router Guard, /gather & Fallback Dapur Umum /cook terverifikasi.\n');
+    console.log('✅ [27/30] Mode Under Development (/property, /tanah, /bangun), Router Guard, /gather & Fallback Dapur Umum /cook terverifikasi.');
 
-    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (27/27 PASSED)!');
+    // ========================================================
+    // 28. BATCH 1: /craft, /ternak, 4 RESEP BARU /cook & MIGRASI 016
+    // ========================================================
+    const { assertComponentLimit: checkPanelLimit } = require('../utils/panelBuilder');
+    const { CRAFT_RECIPES, getCraftRecipe } = require('../data/crafting');
+    const { resolveCraftIngredientsFromBag, simulateBagAfterRemoval } = require('../services/craftService');
+    const { buildCraftPanel } = require('../commands/activities/craft');
+    const { BAIT_IDS } = require('../commands/activities/fishing');
+    const {
+        LIVESTOCK_LIMITS,
+        LIVESTOCK_SPECIES,
+        calculatePenRentPrice,
+        calculatePenBuyPrice,
+        getLivestockSpecies
+    } = require('../data/livestock');
+    const { computeLazyPenState } = require('../services/livestockService');
+    const { buildTernakPanel } = require('../commands/activities/ternak');
+
+    const nowEco = 1795000000000;
+    const ecoMockPlayer = {
+        discord_id: '999000111222333444',
+        username: 'WargaEkoUji',
+        cash: 500000,
+        bank: 1500000,
+        energy: 90,
+        hunger: 85,
+        thirst: 80,
+        health: 95,
+        max_slots: 25,
+        current_city: 'kota_sentral',
+        karma_points: 120,
+        xp_fishing: 500,
+        xp_mining: 400,
+        xp_farming: 3500,
+        xp_cooking: 300,
+        created_at: nowEco - 30 * 86400000,
+        current_job: 'driver_ojol',
+        is_travelling: 0,
+        hospital_until: 0,
+        sleeping_until: 0,
+        warnings: 0,
+        is_banned: 0,
+        edu_level: 1,
+        total_shifts: 15
+    };
+
+    // Migrasi 016
+    const mig016Path = path.join(__dirname, '..', 'database', 'migrations', '016_livestock_and_crafting.sql');
+    assert.strictEqual(fs.existsSync(mig016Path), true, 'Migrasi 016 wajib ada');
+    const mig016Stmts = splitSqlStatements(fs.readFileSync(mig016Path, 'utf8'));
+    assert(mig016Stmts.some(s => /CREATE TABLE IF NOT EXISTS player_livestock_pens/i.test(s)));
+
+    // Crafting recipes & bag simulation
+    assert.strictEqual(CRAFT_RECIPES.length, 5, 'Harus ada 5 resep /craft');
+    for (const r of CRAFT_RECIPES) {
+        assert(getItem(r.outputItemId), `Item output craft ${r.outputItemId} wajib terdaftar`);
+        for (const ingId of Object.keys(r.ingredients)) {
+            assert(getItem(ingId), `Bahan craft ${ingId} wajib terdaftar`);
+        }
+    }
+    assert(BAIT_IDS.includes('umpan_pelet_jagung'), 'BAIT_IDS memancing harus mencakup umpan_pelet_jagung');
+    assert(BAIT_IDS.includes('umpan_magnet_rongsokan'), 'BAIT_IDS memancing harus mencakup umpan_magnet_rongsokan');
+
+    const mockCraftBag = [
+        { id: 1, item_id: 'sampah_besi', quantity: 3 },
+        { id: 2, item_id: 'kayu_bulat', quantity: 2 },
+        { id: 3, item_id: 'sampah_kaleng', quantity: 1 },
+        { id: 4, item_id: 'pancing_bambu', quantity: 1, durability: 10 },
+        { id: 5, item_id: 'kit_perbaikan_ringan', quantity: 2 }
+    ];
+    const kitRecipe = getCraftRecipe('craft_kit_perbaikan');
+    const ingCheckOk = resolveCraftIngredientsFromBag(mockCraftBag, kitRecipe, 1);
+    assert.strictEqual(ingCheckOk.ok, true, 'Bahan kit perbaikan harus mencukupi');
+    const simAfterCraft = simulateBagAfterRemoval(mockCraftBag, ingCheckOk.requiredList);
+    assert.strictEqual(simAfterCraft.some(r => r.item_id === 'sampah_besi'), false, 'Simulasi harus mengosongkan sampah_besi');
+
+    const craftStateMock = {
+        player: ecoMockPlayer,
+        invRows: mockCraftBag,
+        slotsUsed: 5,
+        damagedTools: [{ rowId: 4, item: getItem('pancing_bambu'), currentDurability: 10, maxDurability: 35 }],
+        repairKitCount: 2
+    };
+    const craftTabPanel = buildCraftPanel({ state: craftStateMock, tab: 'craft', now: nowEco });
+    const craftRepairPanel = buildCraftPanel({ state: craftStateMock, tab: 'repair', now: nowEco });
+    checkPanelLimit(craftTabPanel, 'craft (craft tab)');
+    checkPanelLimit(craftRepairPanel, 'craft (repair tab)');
+
+    // Ternak data, state machine & panel
+    assert.strictEqual(LIVESTOCK_SPECIES.length, 3, 'Harus ada 3 spesies ternak awal');
+    assert(getLivestockSpecies('ayam_kampung') && getLivestockSpecies('bebek_petelur') && getLivestockSpecies('kambing_perah'));
+    assert(calculatePenRentPrice(2) > calculatePenRentPrice(1), 'Harga sewa kandang ke-2 harus naik progresif');
+    assert(calculatePenBuyPrice(2) > calculatePenBuyPrice(1), 'Harga beli kandang ke-2 harus naik progresif');
+
+    const penPhase2To3 = computeLazyPenState({
+        pen_number: 1,
+        species_id: 'ayam_kampung',
+        phase: 2,
+        cycles_left: 5,
+        phase_started_at: nowEco - 4 * 3600000,
+        mature_at: nowEco - 60000,
+        is_locked: 0
+    }, nowEco);
+    assert.strictEqual(penPhase2To3.phase, 3, 'Kandang melewati mature_at harus transisi lazy ke phase 3 (siap panen)');
+    assert.strictEqual(penPhase2To3.isReady, true);
+
+    const penPhase3To4 = computeLazyPenState({
+        pen_number: 2,
+        species_id: 'bebek_petelur',
+        phase: 3,
+        cycles_left: 2,
+        phase_started_at: nowEco - 48 * 3600000,
+        mature_at: nowEco - LIVESTOCK_LIMITS.SPOIL_OVERDUE_MS - 1000,
+        is_locked: 0
+    }, nowEco);
+    assert.strictEqual(penPhase3To4.phase, 4, 'Kandang melewati >36j overdue harus transisi lazy ke phase 4 (basi/kotor)');
+    assert.strictEqual(penPhase3To4.isRetired, true);
+
+    const ternakGatePanel = buildTernakPanel({
+        state: { player: ecoMockPlayer, pens: [], lvInfo: { level: 12 }, slotsUsed: 5, feedStock: {} },
+        now: nowEco
+    });
+    const ternakActivePanel = buildTernakPanel({
+        state: {
+            player: { ...ecoMockPlayer, current_city: 'kota_timur' },
+            pens: [penPhase2To3, penPhase3To4],
+            lvInfo: { level: 12 },
+            slotsUsed: 5,
+            feedStock: { jagung: 4, bayam: 2, pakan_ternak: 1 }
+        },
+        now: nowEco
+    });
+    checkPanelLimit(ternakGatePanel, 'ternak (city gate)');
+    checkPanelLimit(ternakActivePanel, 'ternak (lembah hijau)');
+
+    // 4 Resep Baru /cook berbasis hasil /ternak
+    for (const rid of ['telur_dadar', 'martabak_telur', 'susu_hangat', 'puding_susu']) {
+        assert(getRecipe(rid), `Resep ${rid} wajib terdaftar di data/recipes.js`);
+        assert(getItem(rid), `Item masakan ${rid} wajib otomatis terdaftar di data/items.js`);
+        assert(getItem(`${rid}_sempurna`), `Varian sempurna ${rid}_sempurna wajib terdaftar di data/items.js`);
+    }
+
+    console.log('✅ [28/30] Batch 1 (/craft, Kit Perbaikan, /ternak State Machine & 4 Resep /cook Baru + Migrasi 016) terverifikasi.');
+
+    // ========================================================
+    // 29. BATCH 2: /news, /traktir, KARMA PERKS, PUBLIC BUTTON & MIGRASI 017
+    // ========================================================
+    const {
+        NEWS_HOT_MULTIPLIER,
+        NEWS_SHOP_DISCOUNT_MULTIPLIER,
+        getDailyNewsConfig,
+        getDailyNewsEdition
+    } = require('../services/newsService');
+    const { getEffectiveItemPrice } = require('../services/shopService');
+    const { buildNewsPanel } = require('../commands/onboarding/news');
+    const { MAX_DAILY_KARMA_EARN, getKarmaPerks } = require('../data/karma');
+    const { ITEMS: CATALOG_ITEMS } = require('../data/items');
+    const traktirCmd = require('../commands/life/traktir');
+    const { buildTraktirPanel, buildPublicTraktirDropMessage } = traktirCmd;
+
+    // Migrasi 017
+    const mig017Path = path.join(__dirname, '..', 'database', 'migrations', '017_karma_social_and_traktir.sql');
+    assert.strictEqual(fs.existsSync(mig017Path), true, 'Migrasi 017 wajib ada');
+    const mig017Stmts = splitSqlStatements(fs.readFileSync(mig017Path, 'utf8'));
+    assert(mig017Stmts.some(s => /karma_points/i.test(s)));
+    assert(mig017Stmts.some(s => /social_traktir_drops/i.test(s)));
+    assert(mig017Stmts.some(s => /social_traktir_claims/i.test(s)));
+
+    // Deterministik /news & diskon toko tanpa memotong lockedPrice
+    const newsCfgA = getDailyNewsConfig(nowEco);
+    const newsCfgB = getDailyNewsConfig(nowEco + 3600000);
+    assert.strictEqual(newsCfgA.dateKey, newsCfgB.dateKey);
+    assert.strictEqual(newsCfgA.hotCommodities.length, 2);
+    assert.notStrictEqual(newsCfgA.hotCommodities[0], newsCfgA.hotCommodities[1]);
+    assert.strictEqual(NEWS_HOT_MULTIPLIER, 1.15);
+    assert.strictEqual(NEWS_SHOP_DISCOUNT_MULTIPLIER, 0.85);
+
+    const paracetamolItem = getItem('paracetamol');
+    assert.strictEqual(paracetamolItem.lockedPrice, true);
+    assert.strictEqual(getEffectiveItemPrice(paracetamolItem, null, nowEco), paracetamolItem.buyPrice, 'Item lockedPrice tidak boleh terdiskon /news');
+
+    const discountShopNow = newsCfgA.discountShopId;
+    const discountedSample = CATALOG_ITEMS.find(it => it.shop === discountShopNow && !it.lockedPrice && it.buyPrice > 0);
+    if (discountedSample) {
+        assert.strictEqual(
+            getEffectiveItemPrice(discountedSample, null, nowEco),
+            Math.max(1, Math.round(discountedSample.buyPrice * 0.85)),
+            'Item non-locked di toko diskon /news wajib diskon -15%'
+        );
+    }
+
+    const mockNewsEdition = await getDailyNewsEdition(null, nowEco);
+    const newsPanel = buildNewsPanel({ state: { player: ecoMockPlayer, edition: mockNewsEdition }, now: nowEco });
+    checkPanelLimit(newsPanel, 'news (koran harian)');
+
+    // Karma Perks & Capping (-20% RS & -2.0% Kredit, floor 0.01)
+    assert.strictEqual(MAX_DAILY_KARMA_EARN, 50);
+    assert.strictEqual(getKarmaPerks(0).hospitalDiscountRate, 0);
+    assert.strictEqual(getKarmaPerks(25).hospitalDiscountRate, 0.05);
+    assert.strictEqual(getKarmaPerks(100).creditRateReduction, 0.01);
+    assert.strictEqual(getKarmaPerks(500).hospitalDiscountRate, 0.20);
+    assert.strictEqual(getKarmaPerks(9999).creditRateReduction, 0.02, 'Diskon bunga kredit Karma wajib mentok di 2.0%');
+
+    const admNoKarma = calculateHospitalAdmission(100000, 0, nowEco, 0);
+    const admMaxKarma = calculateHospitalAdmission(100000, 0, nowEco, 500);
+    assert.strictEqual(admMaxKarma.targetFee, Math.round(admNoKarma.targetFee * 0.8), 'Biaya RS harus mendapat diskon tepat -20% pada tier Karma maks');
+
+    const creditMaxKarma4 = calculateCreditPlan('motor_baru', 4, 500);
+    assert.strictEqual(creditMaxKarma4.flatRate, 0.03, 'Tenor 4 mgg (5%) dengan Karma -2.0% wajib menjadi 3%');
+
+    const traktirMockState = {
+        player: ecoMockPlayer,
+        invRows: [{ id: 9, item_id: 'sampah_kardus', quantity: 5 }, { id: 10, item_id: 'telur_dadar', quantity: 3 }],
+        slotsUsed: 2,
+        liveConfig: null,
+        dailyKarmaUsed: 12,
+        perks: getKarmaPerks(ecoMockPlayer.karma_points),
+        buyCatalog: [{ item: getItem('air_mineral'), effectivePrice: 3000, karmaPerClaim: 2 }],
+        shareableBag: [{ item: getItem('telur_dadar'), qty: 3 }],
+        donatableBag: [{ item: getItem('sampah_kardus'), qty: 5, karmaPerUnit: 1 }],
+        recentDrops: []
+    };
+    const traktirDropPanel = buildTraktirPanel({ state: traktirMockState, tab: 'drop', source: 'buy', now: nowEco });
+    const traktirDonatePanel = buildTraktirPanel({ state: traktirMockState, tab: 'donate', now: nowEco });
+    const publicDropCard = buildPublicTraktirDropMessage({
+        drop: { id: 77, creator_id: ecoMockPlayer.discord_id, item_id: 'telur_dadar', total_portions: 3, remaining_portions: 2, expires_at: nowEco + 3600000 },
+        item: getItem('telur_dadar'),
+        creatorName: ecoMockPlayer.username,
+        now: nowEco
+    });
+    checkPanelLimit(traktirDropPanel, 'traktir (drop)');
+    checkPanelLimit(traktirDonatePanel, 'traktir (donate)');
+    checkPanelLimit(publicDropCard, 'traktir (public channel card)');
+
+    // Routing publicButtons untuk ownerId='0' walau diklik user lain & melewati idle timeout
+    clearRegistry();
+    let publicClickSeen = false;
+    registerPanel('traktir', {
+        publicButtons: new Set(['claim_drop']),
+        buttons: {
+            async tab() {},
+            async claim_drop(inter) {
+                publicClickSeen = inter.user.id;
+            }
+        }
+    }, 10, true);
+    const pubClaimCid = makeId('traktir', 'claim_drop', '0', '77', nowEco - 600000);
+    const blockedPrivCid = makeId('traktir', 'tab', ecoMockPlayer.discord_id, 'drop', nowEco);
+    let otherBlockedMsg = null;
+    await dispatch({
+        customId: blockedPrivCid,
+        user: { id: '888888888888888888', username: 'WargaLain' },
+        isButton: () => true,
+        isAnySelectMenu: () => false,
+        isStringSelectMenu: () => false,
+        isModalSubmit: () => false,
+        reply: async (p) => { otherBlockedMsg = p; }
+    }, {}, nowEco);
+    assert(otherBlockedMsg !== null, 'Tombol panel privat traktir wajib menolak user lain');
+
+    await dispatch({
+        customId: pubClaimCid,
+        user: { id: '888888888888888888', username: 'WargaLain' },
+        isButton: () => true,
+        isAnySelectMenu: () => false,
+        isStringSelectMenu: () => false,
+        isModalSubmit: () => false,
+        reply: async () => {}
+    }, {}, nowEco);
+    assert.strictEqual(publicClickSeen, '888888888888888888', 'Tombol publik claim_drop (ownerId=0) wajib lolos guard untuk semua warga');
+    clearRegistry();
+
+    console.log('✅ [29/30] Batch 2 (/news, Diskon lockedPrice, /traktir, Karma Perks RS & Kredit, Public Button Router + Migrasi 017) terverifikasi.');
+
+    // ========================================================
+    // 30. BATCH 3: /jasa, /lelang, FILTER KATEGORI /help (41 CMD) & MIGRASI 018
+    // ========================================================
+    const {
+        JASA_CONSTANTS,
+        getJasaItemBasePrice,
+        getJasaTradableItems,
+        validateJasaOrderInput
+    } = require('../services/jasaService');
+    const { buildJasaPanel } = require('../commands/economy/jasa');
+    const {
+        AUCTION_CONSTANTS,
+        isItemAuctionEligible,
+        isClothingAuctionEligible,
+        calculateBidEvaluation
+    } = require('../services/auctionService');
+    const { buildLelangPanel } = require('../commands/economy/lelang');
+    const { isItemPerishable } = require('../services/spoilageService');
+
+    // Migrasi 018
+    const mig018Path = path.join(__dirname, '..', 'database', 'migrations', '018_jasa_contracts_and_auctions.sql');
+    assert.strictEqual(fs.existsSync(mig018Path), true, 'Migrasi 018 wajib ada');
+    const mig018Stmts = splitSqlStatements(fs.readFileSync(mig018Path, 'utf8'));
+    assert(mig018Stmts.some(s => /CREATE TABLE IF NOT EXISTS jasa_contracts/i.test(s)));
+    assert(mig018Stmts.some(s => /CREATE TABLE IF NOT EXISTS player_jasa_claim_box/i.test(s)));
+    assert(mig018Stmts.some(s => /CREATE TABLE IF NOT EXISTS market_auctions/i.test(s)));
+    assert(mig018Stmts.some(s => /CREATE TABLE IF NOT EXISTS market_auction_claims/i.test(s)));
+
+    // /jasa bounds, tax sink & catalog safety
+    const jasaTradables = getJasaTradableItems();
+    assert(jasaTradables.length >= 5, 'Katalog /jasa harus memuat item non-perishable');
+    assert(jasaTradables.every(it => !isItemPerishable(it.id) && !it.durability && !it.lockedPrice), 'Katalog /jasa wajib bebas item perishable, tool, & lockedPrice');
+
+    const lowRewardCheck = validateJasaOrderInput('kayu_bulat', 10, 1000);
+    assert.strictEqual(lowRewardCheck.ok, false);
+    const highRewardCheck = validateJasaOrderInput('kayu_bulat', 10, 99999999);
+    assert.strictEqual(highRewardCheck.ok, false, 'Upah melebihi 5x harga dasar wajib ditolak');
+    const fairBaseReward = Math.max(JASA_CONSTANTS.MIN_REWARD_LP, getJasaItemBasePrice(getItem('kayu_bulat')) * 10);
+    const validJasaCheck = validateJasaOrderInput('kayu_bulat', 10, fairBaseReward);
+    assert.strictEqual(validJasaCheck.ok, true, 'Order kayu_bulat x10 dengan upah wajar wajib valid');
+    assert.strictEqual(validJasaCheck.taxLp + validJasaCheck.workerPayoutLp, validJasaCheck.rewardLp);
+
+    const jasaStateMock = {
+        player: ecoMockPlayer,
+        invRows: [{ id: 1, item_id: 'kayu_bulat', quantity: 20 }],
+        slotsUsed: 1,
+        openContracts: [{
+            id: 11,
+            requester_id: '777777777777777777',
+            requester_name: 'Pemesan',
+            target_city_id: 'kota_sentral',
+            item_id: 'kayu_bulat',
+            quantity: 10,
+            reward_lp: 25000,
+            status: 'open',
+            expires_at: nowEco + 3600000
+        }],
+        myContracts: [],
+        claimBoxes: [{ id: 2, contract_id: 8, item_id: 'bayam', quantity: 5, delivery_city_id: 'kota_sentral' }],
+        cityFilter: 'all'
+    };
+    checkPanelLimit(buildJasaPanel({ state: jasaStateMock, tab: 'board', now: nowEco }), 'jasa (board)');
+    checkPanelLimit(buildJasaPanel({ state: jasaStateMock, tab: 'create', now: nowEco }), 'jasa (create)');
+    checkPanelLimit(buildJasaPanel({ state: jasaStateMock, tab: 'mine', now: nowEco }), 'jasa (mine)');
+
+    // /lelang eligibility & anti-sniping
+    assert.strictEqual(isItemAuctionEligible(getItem('pancing_bambu'), { durability: 10 }), true, 'Alat utuh wajib layak lelang');
+    assert.strictEqual(isItemAuctionEligible(getItem('pancing_bambu'), { durability: 0 }), false, 'Alat rusak (0 durability) dilarang masuk lelang');
+    assert.strictEqual(isItemAuctionEligible(getItem('sampah_kardus'), null), false, 'Rongsokan tidak layak lelang');
+    const rareFish = CATALOG_ITEMS.find(it => it.tags?.includes('fish') && ['rare', 'epic', 'legendary'].includes(String(it.rarity || '').toLowerCase()));
+    if (rareFish) {
+        assert.strictEqual(isItemAuctionEligible(rareFish, { freshness_remaining_ms: 120000 }), true, 'Ikan Rare+ segar wajib layak lelang');
+        assert.strictEqual(isItemAuctionEligible(rareFish, { freshness_remaining_ms: 0 }), false, 'Ikan busuk dilarang masuk lelang');
+    }
+    const { STARTER_CLOTHING_IDS: AUCTION_STARTER_IDS, getClothing: getAuctionClothing } = require('../data/clothes');
+    assert.strictEqual(isClothingAuctionEligible(getAuctionClothing(AUCTION_STARTER_IDS[0])), false, 'Busana starter dilarang dilelang');
+
+    const auctionSample = {
+        id: 55,
+        status: 'active',
+        start_price: 20000,
+        current_bid: 50000,
+        highest_bidder_id: '111',
+        bid_count: 2,
+        ends_at: nowEco + 60000
+    };
+    const bidTooLow = calculateBidEvaluation(auctionSample, 51000, nowEco);
+    assert.strictEqual(bidTooLow.ok, false, 'Bid di bawah increment min harus ditolak');
+    const bidSnipe = calculateBidEvaluation(auctionSample, 60000, nowEco);
+    assert.strictEqual(bidSnipe.ok, true);
+    assert.strictEqual(bidSnipe.snipeTriggered, true, 'Bid saat sisa <120s wajib memicu anti-sniping');
+    assert.strictEqual(bidSnipe.newEndsAt, auctionSample.ends_at + AUCTION_CONSTANTS.ANTI_SNIPE_EXTEND_MS);
+
+    const bidNormal = calculateBidEvaluation({ ...auctionSample, ends_at: nowEco + 600000 }, 60000, nowEco);
+    assert.strictEqual(bidNormal.ok, true);
+    assert.strictEqual(bidNormal.snipeTriggered, false, 'Bid saat sisa >=120s tidak memperpanjang waktu');
+
+    const lelangStateMock = {
+        player: ecoMockPlayer,
+        invRows: [{ id: 4, item_id: 'pancing_bambu', quantity: 1, durability: 20 }],
+        slotsUsed: 1,
+        eligibleBagRows: [{ row: { id: 4, item_id: 'pancing_bambu', quantity: 1, durability: 20, freshness_remaining_ms: null }, item: getItem('pancing_bambu') }],
+        eligibleClothes: [],
+        activeAuctions: [{
+            id: 55,
+            seller_id: '777777777777777777',
+            seller_name: 'Kolektor',
+            item_kind: 'inventory',
+            item_id: 'pancing_bambu',
+            durability: 20,
+            freshness_remaining_ms: null,
+            start_price: 20000,
+            reserve_price: 0,
+            current_bid: 50000,
+            highest_bidder_id: '111',
+            bidder_name: 'Penawar1',
+            bid_count: 2,
+            status: 'active',
+            ends_at: nowEco + 600000
+        }],
+        mySellingAuctions: [],
+        myWinningBids: [],
+        myClaims: []
+    };
+    checkPanelLimit(buildLelangPanel({ state: lelangStateMock, tab: 'browse', now: nowEco }), 'lelang (browse)');
+    checkPanelLimit(buildLelangPanel({ state: lelangStateMock, tab: 'sell', now: nowEco }), 'lelang (sell)');
+    checkPanelLimit(buildLelangPanel({ state: lelangStateMock, tab: 'mine', now: nowEco }), 'lelang (mine)');
+
+    // Verifikasi /help seluruh kategori (home/life/career/activities/economy) <= 25 opsi
+    for (const hCat of ['home', 'life', 'career', 'activities', 'economy']) {
+        const hp = await buildHelpCategoryPayload(ecoMockPlayer.discord_id, hCat, false, null, nowEco);
+        checkPanelLimit(hp, `help (${hCat})`);
+    }
+    for (const hCmd of ['craft', 'ternak', 'news', 'traktir', 'jasa', 'lelang']) {
+        const hc = await buildHelpCategoryPayload(ecoMockPlayer.discord_id, 'home', false, hCmd, nowEco);
+        checkPanelLimit(hc, `help (detail ${hCmd})`);
+    }
+
+    console.log('✅ [30/30] Batch 3 (/jasa, /lelang Anti-Sniping & Kelayakan, Kategori /help 41 Command + Migrasi 018) terverifikasi.\n');
+
+    console.log('🎉 SELURUH PENGUJIAN UNIT BERHASIL (30/30 PASSED)!');
     process.exit(0);
 }
 

@@ -21,6 +21,7 @@ const { getJob, getRankForShifts, getNextRank } = require('../../data/jobs');
 const { getBackpackByTier } = require('../../data/backpacks');
 const { getLevelInfoFromXp } = require('../../data/locations');
 const { getCity, getCityZoning } = require('../../data/cities');
+const { getKarmaPerks } = require('../../data/karma');
 const { ITEMS } = require('../../data/items');
 const { formatLp, renderBar, formatDuration } = require('../../utils/uiBuilder');
 const { buildPanel, btn, userSelect } = require('../../utils/panelBuilder');
@@ -347,9 +348,13 @@ function buildProfilePanel({
             ? [[ '**⏱️ STATUS & TIMER AKTIF**', ...activeStatusLines ].join('\n')]
             : []),
         [
-            '**💰 RINCIAN KEUANGAN**',
+            '**💰 RINCIAN KEUANGAN & KARMA**',
             `💵 **Cash** · ${formatLp(p.cash)}`,
-            `🏦 **Bank** · ${formatLp(p.bank)}`
+            `🏦 **Bank** · ${formatLp(p.bank)}`,
+            (() => {
+                const kp = getKarmaPerks(p.karma_points || 0);
+                return `⭐ **Poin Karma** · **${kp.karmaPoints}** *(${kp.tierEmoji} ${kp.tierName})*`;
+            })()
         ].join('\n'),
         [
             '**📍 LOKASI & HUNIAN**',

@@ -2,6 +2,7 @@ const { getVehicle } = require('../data/vehicles');
 const { getPropertyTier, calculateMonthlyPbb, convertPresetToBlueprint } = require('../data/properties');
 const { getLandTier, getMaxLandLimit } = require('../data/buildingModules');
 const { getCity } = require('../data/cities');
+const { getKarmaPerks } = require('../data/karma');
 const { debitPlayerFunds, logLedger } = require('./economyService');
 const { calculateLandPurchasePrice, getPlayerLands, getTotalSkillLevelFromPlayerRow, buyLand } = require('./landService');
 
@@ -68,14 +69,20 @@ function getCreditableAsset(assetId) {
     return null;
 }
 
-function calculateCreditPlan(assetId, tenorWeeks) {
+function calculateCreditPlan(assetId, tenorWeeks, karmaPoints = 0) {
     const asset = getCreditableAsset(assetId);
     const tenor = Number(tenorWeeks);
-    const flatRate = TENOR_RATES[tenor];
+    const baseFlatRate = TENOR_RATES[tenor];
 
-    if (!asset || flatRate === undefined) {
+    if (!asset || baseFlatRate === undefined) {
         return null;
     }
+
+    const perks = getKarmaPerks(karmaPoints);
+    const karmaRateReduction = perks.creditRateReduction || 0;
+    const flatRate = karmaRateReduction > 0
+        ? Math.max(0.01, Number((baseFlatRate - karmaRateReduction).toFixed(4)))
+        : baseFlatRate;
 
     const totalPrice = Number(asset.price);
     const downPayment = Math.round(totalPrice * CREDIT_RULES.DOWN_PAYMENT_RATE);
@@ -90,6 +97,8 @@ function calculateCreditPlan(assetId, tenorWeeks) {
     return {
         asset,
         tenorWeeks: tenor,
+        baseFlatRate,
+        karmaRateReduction,
         flatRate,
         totalPrice,
         downPayment,
@@ -169,7 +178,7 @@ async function getPlayerNetIncomeLast7Days(conn, discordId, now = Date.now()) {
 }
 
 async function applyCredit(conn, player, assetId, tenorWeeks, now = Date.now()) {
-    const plan = calculateCreditPlan(assetId, tenorWeeks);
+    const plan = calculateCreditPlan(assetId, tenorWeeks, player.karma_points || 0);
     if (!plan) {
         return { error: 'INVALID_PLAN' };
     }
